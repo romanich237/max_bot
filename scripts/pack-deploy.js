@@ -9,7 +9,6 @@ const include = [
   'index.js',
   'config.json',
   'package.json',
-  'package-lock.json',
   'ecosystem.config.cjs',
   'src',
   'scripts',
