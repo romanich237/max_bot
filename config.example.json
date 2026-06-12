@@ -1,0 +1,32 @@
+{
+  "setupComplete": false,
+  "telegram": {
+    "token": "",
+    "chatIds": [],
+    "showTime": false,
+    "showServiceHeader": false
+  },
+  "max": {
+    "chatUrl": "",
+    "skipOwnMessages": true,
+    "ownAuthorNames": []
+  },
+  "profileRotate": {
+    "enabled": false,
+    "intervalMs": 60000,
+    "mode": "list",
+    "names": []
+  },
+  "alwaysOnline": {
+    "enabled": false,
+    "intervalMs": 30000
+  },
+  "database": {
+    "enabled": true,
+    "host": "",
+    "port": 3306,
+    "user": "",
+    "password": "",
+    "database": ""
+  }
+}

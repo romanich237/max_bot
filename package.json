@@ -1,0 +1,36 @@
+{
+  "name": "max-to-tg-bot",
+  "version": "1.0.0",
+  "description": "Пересылка уведомлений из мессенджера MAX в Telegram",
+  "main": "index.js",
+  "scripts": {
+    "auth": "node scripts/auth.js",
+    "export-session": "node scripts/export-session.js",
+    "import-session": "node scripts/import-session.js",
+    "init-db": "node scripts/init-db.js",
+    "setup": "node scripts/install.js",
+    "setup-vps": "node scripts/setup-vps.js",
+    "auth-qr": "node scripts/auth-qr.js",
+    "pack-deploy": "node scripts/pack-deploy.js",
+    "sync-github": "node scripts/sync-github.js",
+    "pm2": "node scripts/pm2-setup.js",
+    "prestart": "node scripts/ensure-deps.js",
+    "start": "node scripts/monitor.js",
+    "stop": "pm2 stop max-tg",
+    "logs": "pm2 logs max-tg",
+    "status": "pm2 status"
+  },
+  "keywords": [
+    "playwright",
+    "telegram",
+    "bot",
+    "max-messenger"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "mysql2": "^3.22.5",
+    "playwright": "^1.49.0"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+max_user_data/
+max_session.zip
+max-deploy.zip
+state.json
+config.json
+logs/
+data/
