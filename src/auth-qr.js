@@ -87,13 +87,14 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     return true;
   }
 
-  for (const chatId of chatIds) {
-    await sendMessage(
-      chatId,
-      '<b>Авторизация MAX</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
-      {},
-      options.token
-    );
+  if (options.introMessage !== false) {
+    const intro =
+      options.introMessage ||
+      '<b>Авторизация MAX</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.';
+
+    for (const chatId of chatIds) {
+      await sendMessage(chatId, intro, {}, options.token);
+    }
   }
 
   const ok = await waitForLogin(page, chatIds, options);

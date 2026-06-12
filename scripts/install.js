@@ -114,9 +114,11 @@ async function main() {
     await sendMessage(chatId, formatDatabaseTelegramMessage(dbCredentials));
   }
 
-  console.log('\n--- Авторизация MAX (скриншот в Telegram) ---\n');
+  console.log('\nПродолжите настройку в Telegram\n');
   await deleteWebhook();
-  await runAuthQrTelegram();
+  await runAuthQrTelegram({
+    introMessage: 'Продолжите настройку в Telegram.',
+  });
 
   console.log('\n--- Настройка бота в Telegram ---\n');
   await runSetupWizard();

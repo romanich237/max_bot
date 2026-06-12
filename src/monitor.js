@@ -106,11 +106,11 @@ async function startMonitor() {
 
   const onlineKeeper = startAlwaysOnline(page, getAlwaysOnline);
 
-  setReauthHandler(async () => {
+  async function performReauth(options = {}) {
     authBusy = true;
     profileBusy = true;
     try {
-      await runAuthQrOnPage(page, getAdminChatIds());
+      await runAuthQrOnPage(page, getAdminChatIds(), options);
       currentChatUrl = getMax().chatUrl;
       await page.goto(currentChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
       await page.waitForTimeout(3000);
@@ -120,6 +120,10 @@ async function startMonitor() {
       authBusy = false;
       profileBusy = false;
     }
+  }
+
+  setReauthHandler(async () => {
+    await performReauth({ introMessage: false });
   });
 
   startTelegramAdmin();
@@ -138,7 +142,15 @@ async function startMonitor() {
   await page.goto(currentChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForTimeout(4000);
 
-  messages = await waitForChat(page);
+  if (await isLoginPage(page)) {
+    console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
+    await performReauth({
+      introMessage:
+        '<b>Сессия MAX истекла</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
+    });
+  } else {
+    messages = await waitForChat(page);
+  }
   console.log(`В DOM найдено ${messages.length} сообщений (после прокрутки вниз).`);
 
   const forwardOnStart = getSettings().forwardOnStart;
@@ -223,9 +235,11 @@ async function startMonitor() {
       }
 
       if (await isLoginPage(page)) {
-        console.error(
-          'Сессия истекла. Отправьте боту /reauth или выполните: npm run auth-qr'
-        );
+        console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
+        await performReauth({
+          introMessage:
+            '<b>Сессия MAX истекла</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
+        });
         return;
       }
 
