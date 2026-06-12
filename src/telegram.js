@@ -57,6 +57,14 @@ function buildMessageText(message, isCatchUp = false) {
   return parts.filter((p) => p !== '').join('\n');
 }
 
+function isPrivateChat(chatId) {
+  return Number(chatId) > 0;
+}
+
+function replyMarkupForChat(chatId, replyMarkup) {
+  return replyMarkup && isPrivateChat(chatId) ? replyMarkup : null;
+}
+
 function buildReplyMarkup(message) {
   const id = replyStore.put(message);
   return {
@@ -73,10 +81,12 @@ function appendFormField(form, key, value) {
   }
 }
 
-async function callTelegram(method, fields, files = {}) {
+async function callTelegram(method, fields, files = {}, replyMarkup = null) {
   const { token, chatIds } = getTelegram();
   const url = `https://api.telegram.org/bot${token}/${method}`;
   let success = true;
+  const baseFields = { ...fields };
+  delete baseFields.reply_markup;
 
   await Promise.all(
     chatIds.map(async (id) => {
@@ -84,7 +94,11 @@ async function callTelegram(method, fields, files = {}) {
         const form = new FormData();
         form.append('chat_id', id);
 
-        for (const [key, value] of Object.entries(fields)) {
+        const chatFields = { ...baseFields };
+        const markup = replyMarkupForChat(id, replyMarkup);
+        if (markup) chatFields.reply_markup = markup;
+
+        for (const [key, value] of Object.entries(chatFields)) {
           appendFormField(form, key, value);
         }
 
@@ -156,8 +170,9 @@ async function sendPhotoGroup(message, photoFiles, isCatchUp, replyMarkup) {
           return;
         }
 
-        if (replyMarkup) {
-          await sendReplyPrompt(chatId, message, replyMarkup, token);
+        const markup = replyMarkupForChat(chatId, replyMarkup);
+        if (markup) {
+          await sendReplyPrompt(chatId, message, markup, token);
         }
       } catch (error) {
         console.error(`Не удалось отправить альбом для ID ${chatId}:`, error);
@@ -209,16 +224,15 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMark
     extra.parse_mode = 'HTML';
   }
 
-  if (replyMarkup && withCaption && method !== 'sendVoice') {
-    extra.reply_markup = replyMarkup;
-  }
-
-  await callTelegram(method, extra, { [field]: media.localPath });
+  const markup = withCaption && method !== 'sendVoice' ? replyMarkup : null;
+  await callTelegram(method, extra, { [field]: media.localPath }, markup);
 
   if (replyMarkup && method === 'sendVoice') {
     const { token, chatIds } = getTelegram();
     await Promise.all(
-      chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+      chatIds
+        .filter(isPrivateChat)
+        .map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
     );
   }
 }
@@ -229,9 +243,7 @@ async function sendToTelegram(message, options = {}) {
 
   if (!mediaFiles.length) {
     const text = buildMessageText(message, isCatchUp);
-    const fields = { text, parse_mode: 'HTML' };
-    if (replyMarkup) fields.reply_markup = replyMarkup;
-    await callTelegram('sendMessage', fields);
+    await callTelegram('sendMessage', { text, parse_mode: 'HTML' }, {}, replyMarkup);
     return;
   }
 
@@ -255,7 +267,9 @@ async function sendToTelegram(message, options = {}) {
       if (!captionUsed && replyMarkup) {
         const { token, chatIds } = getTelegram();
         await Promise.all(
-          chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+          chatIds
+            .filter(isPrivateChat)
+            .map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
         );
       }
       captionUsed = true;
