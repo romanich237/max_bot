@@ -63,8 +63,6 @@ function isOwnByAuthor(author) {
 }
 
 function shouldForward(message) {
-  const { skipOwnMessages = true } = getMax();
-  if (!skipOwnMessages) return true;
   return !message.isOwn;
 }
 

@@ -3,7 +3,6 @@ const { store } = require('./config');
 const TOGGLES = [
   { label: 'Бесконечный онлайн', path: ['alwaysOnline', 'enabled'] },
   { label: 'Ротация имени', path: ['profileRotate', 'enabled'] },
-  { label: 'Пропуск своих сообщений', path: ['max', 'skipOwnMessages'] },
   { label: 'Время в Telegram', path: ['telegram', 'showTime'] },
   { label: 'Заголовок в Telegram', path: ['telegram', 'showServiceHeader'] },
   { label: 'Автообновление с GitHub', path: ['autoUpdate', 'enabled'] },
