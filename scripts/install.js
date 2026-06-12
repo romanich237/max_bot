@@ -114,7 +114,7 @@ async function main() {
     await sendMessage(chatId, formatDatabaseTelegramMessage(dbCredentials));
   }
 
-  console.log('\n--- Авторизация MAX через QR в Telegram ---\n');
+  console.log('\n--- Авторизация MAX (скриншот в Telegram) ---\n');
   await deleteWebhook();
   await runAuthQrTelegram();
 

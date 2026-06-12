@@ -41,7 +41,7 @@ async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride) {
   const form = new FormData();
   form.append('chat_id', String(chatId));
   if (caption) form.append('caption', caption);
-  form.append('photo', new File([buffer], 'qr.png', { type: 'image/png' }));
+  form.append('photo', new File([buffer], 'max-login.png', { type: 'image/png' }));
 
   const response = await fetch(url, { method: 'POST', body: form });
   return response.json();

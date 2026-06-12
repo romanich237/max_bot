@@ -159,7 +159,7 @@ async function handleMessage(message) {
       return;
     }
 
-    await sendMessage(chatId, 'Отправляю новый QR-код для входа в MAX…');
+    await sendMessage(chatId, 'Отправляю скриншот страницы входа MAX…');
     try {
       await reauthHandler(chatId);
       await sendMessage(chatId, 'Сессия MAX обновлена. Мониторинг продолжается.');
@@ -176,7 +176,7 @@ async function handleMessage(message) {
         '<b>Команды</b>',
         '/menu — кнопки вкл/выкл',
         '/status — текущие настройки',
-        '/reauth — новый QR для входа в MAX',
+        '/reauth — скриншот входа MAX',
         '/set ключ значение — изменить параметр',
         '',
         '<b>Ключи для /set</b>',

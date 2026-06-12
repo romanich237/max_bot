@@ -10,11 +10,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/insta
 
 Нужны: **Telegram bot token** и **chat ID** (или `TG_TOKEN` + `TG_CHAT_ID`).
 
-Скрипт сам: ставит MariaDB, создаёт базу, шлёт QR для входа в MAX, настраивает бота кнопками в Telegram, запускает PM2.
+Скрипт сам: ставит MariaDB, создаёт базу, шлёт скриншот входа MAX в Telegram, настраивает бота кнопками, запускает PM2.
 
 ## Команды в Telegram
 
-`/menu` — настройки · `/status` — статус · `/reauth` — новый QR
+`/menu` — настройки · `/status` — статус · `/reauth` — скриншот входа
 
 ## На сервере
 

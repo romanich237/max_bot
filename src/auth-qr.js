@@ -11,24 +11,30 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function captureQrImage(page) {
-  const canvas = page.locator('canvas').first();
-  if (await canvas.isVisible({ timeout: 3000 }).catch(() => false)) {
-    return canvas.screenshot({ type: 'png' });
-  }
+async function captureLoginScreenshot(page) {
+  await page.waitForTimeout(1500);
 
-  const loginImg = page
-    .locator('img[src*="qr"], img[alt*="QR" i], img[alt*="qr" i]')
-    .first();
-  if (await loginImg.isVisible({ timeout: 2000 }).catch(() => false)) {
-    return loginImg.screenshot({ type: 'png' });
-  }
+  const qrLocator = page
+    .locator('canvas')
+    .first()
+    .or(page.locator('img[src*="qr"], img[alt*="QR" i], img[alt*="qr" i]').first())
+    .or(page.locator('[class*="qr" i]').first());
 
-  const loginPanel = page
-    .locator('main, [class*="login"], [class*="auth"], [class*="qr"]')
-    .first();
-  if (await loginPanel.isVisible({ timeout: 2000 }).catch(() => false)) {
-    return loginPanel.screenshot({ type: 'png' });
+  if (await qrLocator.isVisible({ timeout: 5000 }).catch(() => false)) {
+    const box = await qrLocator.boundingBox();
+    if (box?.width && box?.height) {
+      const padding = 48;
+      const viewport = page.viewportSize() || { width: 1280, height: 900 };
+      return page.screenshot({
+        type: 'png',
+        clip: {
+          x: Math.max(0, box.x - padding),
+          y: Math.max(0, box.y - padding),
+          width: Math.min(viewport.width - Math.max(0, box.x - padding), box.width + padding * 2),
+          height: Math.min(viewport.height - Math.max(0, box.y - padding), box.height + padding * 2),
+        },
+      });
+    }
   }
 
   return page.screenshot({ type: 'png', fullPage: false });
@@ -46,14 +52,14 @@ async function waitForLogin(page, chatIds, options = {}) {
     }
 
     if (Date.now() - lastQrSent >= refreshMs) {
-      const buffer = await captureQrImage(page);
+      const buffer = await captureLoginScreenshot(page);
       const caption =
-        'Отсканируйте QR-код в приложении MAX.\nКод обновляется каждые 45 секунд.';
+        'Скриншот входа MAX.\nОтсканируйте QR в приложении MAX.\nОбновляется каждые 45 сек.';
 
       for (const chatId of chatIds) {
         const result = await sendPhotoBuffer(chatId, buffer, caption, options.token);
         if (!result.ok) {
-          console.error(`Не удалось отправить QR в ${chatId}:`, result.description);
+          console.error(`Не удалось отправить скриншот в ${chatId}:`, result.description);
         }
       }
 
@@ -81,12 +87,14 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     return true;
   }
 
-  await sendMessage(
-    chatIds[0],
-    'Открыта страница входа MAX. Сейчас пришлю QR-код…',
-    {},
-    options.token
-  );
+  for (const chatId of chatIds) {
+    await sendMessage(
+      chatId,
+      '<b>Авторизация MAX</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
+      {},
+      options.token
+    );
+  }
 
   const ok = await waitForLogin(page, chatIds, options);
   if (!ok) {
@@ -106,12 +114,13 @@ async function runAuthQrTelegram(options = {}) {
   const settings = getSettings();
   const chatIds = (options.chatIds || getAdminChatIds()).map(String);
   if (!chatIds.length) {
-    throw new Error('Не задан telegram.chatIds для отправки QR');
+    throw new Error('Не задан telegram.chatIds для отправки скриншота');
   }
 
   const context = await chromium.launchPersistentContext(settings.userDataDir, {
     headless: true,
     viewport: { width: 1280, height: 900 },
+    deviceScaleFactor: 2,
     locale: 'ru-RU',
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
@@ -127,6 +136,7 @@ async function runAuthQrTelegram(options = {}) {
 module.exports = {
   runAuthQrTelegram,
   runAuthQrOnPage,
-  captureQrImage,
+  captureLoginScreenshot,
+  captureQrImage: captureLoginScreenshot,
   waitForLogin,
 };
