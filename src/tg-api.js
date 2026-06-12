@@ -35,12 +35,15 @@ async function sendMessage(chatId, text, extra = {}, tokenOverride) {
   );
 }
 
-async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride) {
+async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extra = {}) {
   const token = resolveToken(tokenOverride);
   const url = `https://api.telegram.org/bot${token}/sendPhoto`;
   const form = new FormData();
   form.append('chat_id', String(chatId));
   if (caption) form.append('caption', caption);
+  if (extra.reply_markup) {
+    form.append('reply_markup', JSON.stringify(extra.reply_markup));
+  }
   form.append('photo', new File([buffer], 'max-login.png', { type: 'image/png' }));
 
   const response = await fetch(url, { method: 'POST', body: form });

@@ -67,7 +67,7 @@ async function collectTelegramCredentials(config) {
   config.max = config.max || {};
   const browserPassword =
     process.env.MAX_BROWSER_PASSWORD ||
-    (await ask('Пароль для @Browser в MAX (из личного кабинета, Enter — пропустить): '));
+    (await ask('Пароль для  MAX (который вы назначали в личном кабинете'));
   if (browserPassword) {
     config.max.browserPassword = browserPassword;
   }
@@ -125,6 +125,7 @@ async function main() {
   await deleteWebhook();
   await runAuthQrTelegram({
     introMessage: 'Продолжите настройку в Telegram.',
+    useAuthCallbackPoll: true,
   });
 
   console.log('\n--- Настройка бота в Telegram ---\n');

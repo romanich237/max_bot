@@ -21,6 +21,7 @@ const {
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
 const replyStore = require('./reply-store');
+const { refreshAuthScreenshot, isAuthSessionActive } = require('./auth-qr');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -260,6 +261,21 @@ async function handleCallback(query) {
   }
 
   const data = query.data || '';
+
+  if (data === 'auth:refresh') {
+    await answerCallback(query.id, 'Обновляю…');
+    if (!isAuthSessionActive()) {
+      await sendMessage(chatId, 'Сейчас авторизация не идёт. Отправьте /reauth');
+      return;
+    }
+
+    try {
+      await refreshAuthScreenshot();
+    } catch (err) {
+      await sendMessage(chatId, escapeHtml(err.message));
+    }
+    return;
+  }
 
   if (data.startsWith('reply:')) {
     const target = replyStore.get(data.slice('reply:'.length));

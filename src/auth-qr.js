@@ -1,11 +1,27 @@
 const { chromium } = require('playwright');
 const { getSettings, getAdminChatIds, getMax } = require('./config');
-const { sendMessage, sendPhotoBuffer } = require('./tg-api');
+const { sendMessage, sendPhotoBuffer, answerCallback, pollUpdates } = require('./tg-api');
 const { isLoginPage, isBrowserPasswordPrompt } = require('./parser');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
 const QR_REFRESH_MS = 45000;
 const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
+
+let activeAuthSession = null;
+
+function buildScreenshotKeyboard() {
+  return {
+    inline_keyboard: [[{ text: '🔄 Обновить', callback_data: 'auth:refresh' }]],
+  };
+}
+
+function isAuthSessionActive() {
+  return Boolean(activeAuthSession);
+}
+
+function clearAuthSession() {
+  activeAuthSession = null;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,8 +61,33 @@ function buildScreenshotCaption() {
     lines.push(`Пароль: ${password}`);
   }
 
-  lines.push('Обновляется каждые 45 сек.');
+  lines.push('Обновляется каждые 45 сек. Или нажмите «Обновить».');
   return lines.join('\n');
+}
+
+async function sendAuthScreenshot(page, chatIds, options = {}) {
+  const buffer = await captureLoginScreenshot(page);
+  const caption = buildScreenshotCaption();
+  const replyMarkup = buildScreenshotKeyboard();
+
+  for (const chatId of chatIds) {
+    const result = await sendPhotoBuffer(chatId, buffer, caption, options.token, {
+      reply_markup: replyMarkup,
+    });
+    if (!result.ok) {
+      console.error(`Не удалось отправить скриншот в ${chatId}:`, result.description);
+    }
+  }
+}
+
+async function refreshAuthScreenshot() {
+  if (!activeAuthSession) {
+    throw new Error('Сейчас авторизация не идёт. Отправьте /reauth');
+  }
+
+  const { page, chatIds, options } = activeAuthSession;
+  await sendAuthScreenshot(page, chatIds, options);
+  activeAuthSession.lastQrSent = Date.now();
 }
 
 async function captureLoginScreenshot(page) {
@@ -78,13 +119,46 @@ async function captureLoginScreenshot(page) {
   return page.screenshot({ type: 'png', fullPage: false });
 }
 
+function startAuthCallbackPoll(options = {}) {
+  const adminIds = new Set((options.chatIds || getAdminChatIds()).map(String));
+
+  return pollUpdates(async (update) => {
+    const query = update.callback_query;
+    if (!query || query.data !== 'auth:refresh') return;
+
+    const chatId = String(query.message?.chat?.id || '');
+    if (!adminIds.has(chatId)) {
+      await answerCallback(query.id, 'Нет доступа', options.token);
+      return;
+    }
+
+    await answerCallback(query.id, 'Обновляю…', options.token);
+
+    try {
+      await refreshAuthScreenshot();
+    } catch (err) {
+      await sendMessage(chatId, err.message, {}, options.token);
+    }
+  }, {
+    token: options.token,
+    onError: (err) => console.error('auth-qr poll:', err.message),
+  });
+}
+
 async function waitForLogin(page, chatIds, options = {}) {
   const timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT_MS;
   const refreshMs = options.refreshMs ?? QR_REFRESH_MS;
   const started = Date.now();
   let lastQrSent = 0;
   let browserHintSent = false;
+  let stopAuthPoll = null;
 
+  activeAuthSession = { page, chatIds, options, lastQrSent: 0 };
+  if (options.useAuthCallbackPoll) {
+    stopAuthPoll = startAuthCallbackPoll({ ...options, chatIds });
+  }
+
+  try {
   while (Date.now() - started < timeoutMs) {
     if (!(await isLoginPage(page))) {
       return true;
@@ -98,17 +172,9 @@ async function waitForLogin(page, chatIds, options = {}) {
     }
 
     if (Date.now() - lastQrSent >= refreshMs) {
-      const buffer = await captureLoginScreenshot(page);
-      const caption = buildScreenshotCaption();
-
-      for (const chatId of chatIds) {
-        const result = await sendPhotoBuffer(chatId, buffer, caption, options.token);
-        if (!result.ok) {
-          console.error(`Не удалось отправить скриншот в ${chatId}:`, result.description);
-        }
-      }
-
+      await sendAuthScreenshot(page, chatIds, options);
       lastQrSent = Date.now();
+      if (activeAuthSession) activeAuthSession.lastQrSent = lastQrSent;
       options.onQrSent?.();
     }
 
@@ -116,6 +182,10 @@ async function waitForLogin(page, chatIds, options = {}) {
   }
 
   return false;
+  } finally {
+    stopAuthPoll?.();
+    clearAuthSession();
+  }
 }
 
 async function runAuthQrOnPage(page, chatIds, options = {}) {
@@ -190,4 +260,7 @@ module.exports = {
   captureLoginScreenshot,
   captureQrImage: captureLoginScreenshot,
   waitForLogin,
+  refreshAuthScreenshot,
+  isAuthSessionActive,
+  buildScreenshotKeyboard,
 };
