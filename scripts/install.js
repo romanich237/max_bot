@@ -64,6 +64,13 @@ async function collectTelegramCredentials(config) {
   config.telegram = config.telegram || {};
   config.telegram.token = token;
   config.telegram.chatIds = [String(chatId)];
+  config.max = config.max || {};
+  const browserPassword =
+    process.env.MAX_BROWSER_PASSWORD ||
+    (await ask('Пароль для @Browser в MAX (из личного кабинета, Enter — пропустить): '));
+  if (browserPassword) {
+    config.max.browserPassword = browserPassword;
+  }
   config.setupComplete = false;
   saveConfig(config);
 
@@ -77,7 +84,7 @@ function ensureDirs() {
 }
 
 async function main() {
-  console.log('=== Установка MAX → Telegram (VPS) ===\n');
+  console.log('=== Установка MAX → Telegram ===\n');
 
   checkNode();
   ensureConfigFile();
@@ -107,7 +114,7 @@ async function main() {
 
   store.reload();
 
-  console.log('\n--- MySQL (автоматически) ---\n');
+  console.log('\n--- Установка базы данных ---\n');
   const dbCredentials = await provisionLocalDatabase(store);
   const adminChatIds = store.getPath(['telegram', 'chatIds']) || [];
   for (const chatId of adminChatIds) {

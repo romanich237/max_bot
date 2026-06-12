@@ -9,7 +9,8 @@
   "max": {
     "chatUrl": "",
     "skipOwnMessages": true,
-    "ownAuthorNames": []
+    "ownAuthorNames": [],
+    "browserPassword": ""
   },
   "profileRotate": {
     "enabled": false,

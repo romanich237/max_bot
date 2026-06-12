@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
-const { getSettings, getAdminChatIds } = require('./config');
+const { getSettings, getAdminChatIds, getMax } = require('./config');
 const { sendMessage, sendPhotoBuffer } = require('./tg-api');
-const { isLoginPage } = require('./parser');
+const { isLoginPage, isBrowserPasswordPrompt } = require('./parser');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
 const QR_REFRESH_MS = 45000;
@@ -9,6 +9,44 @@ const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function buildBrowserPasswordHintHtml() {
+  const password = getMax().browserPassword;
+  const lines = [
+    'Если в MAX появится <code>@Browser</code> — введите пароль от аккаунта (тот, что задали в личном кабинете).',
+  ];
+
+  if (password) {
+    lines.push(`Пароль: <code>${escapeHtml(password)}</code>`);
+  } else {
+    lines.push('Задайте пароль: <code>/set browserpassword ваш_пароль</code>');
+  }
+
+  return lines.join('\n');
+}
+
+function buildScreenshotCaption() {
+  const password = getMax().browserPassword;
+  const lines = [
+    'Скриншот входа MAX.',
+    'Отсканируйте QR в приложении MAX.',
+    'Если появится @Browser — введите пароль от аккаунта (из личного кабинета).',
+  ];
+
+  if (password) {
+    lines.push(`Пароль: ${password}`);
+  }
+
+  lines.push('Обновляется каждые 45 сек.');
+  return lines.join('\n');
 }
 
 async function captureLoginScreenshot(page) {
@@ -45,16 +83,23 @@ async function waitForLogin(page, chatIds, options = {}) {
   const refreshMs = options.refreshMs ?? QR_REFRESH_MS;
   const started = Date.now();
   let lastQrSent = 0;
+  let browserHintSent = false;
 
   while (Date.now() - started < timeoutMs) {
     if (!(await isLoginPage(page))) {
       return true;
     }
 
+    if (!browserHintSent && (await isBrowserPasswordPrompt(page))) {
+      for (const chatId of chatIds) {
+        await sendMessage(chatId, buildBrowserPasswordHintHtml(), {}, options.token);
+      }
+      browserHintSent = true;
+    }
+
     if (Date.now() - lastQrSent >= refreshMs) {
       const buffer = await captureLoginScreenshot(page);
-      const caption =
-        'Скриншот входа MAX.\nОтсканируйте QR в приложении MAX.\nОбновляется каждые 45 сек.';
+      const caption = buildScreenshotCaption();
 
       for (const chatId of chatIds) {
         const result = await sendPhotoBuffer(chatId, buffer, caption, options.token);
@@ -93,7 +138,12 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
       '<b>Авторизация MAX</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.';
 
     for (const chatId of chatIds) {
-      await sendMessage(chatId, intro, {}, options.token);
+      await sendMessage(
+        chatId,
+        `${intro}\n\n${buildBrowserPasswordHintHtml()}`,
+        {},
+        options.token
+      );
     }
   }
 
