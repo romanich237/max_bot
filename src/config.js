@@ -62,6 +62,15 @@ function getDatabase() {
   };
 }
 
+function getAutoUpdate() {
+  const u = getRaw().autoUpdate || {};
+  return {
+    enabled: u.enabled ?? true,
+    intervalMs: u.intervalMs ?? 30 * 60 * 1000,
+    branch: u.branch || process.env.AUTO_UPDATE_BRANCH || 'main',
+  };
+}
+
 function getSettings() {
   return {
     checkIntervalMs: 2000,
@@ -88,6 +97,7 @@ module.exports = {
   getProfileRotate,
   getAlwaysOnline,
   getDatabase,
+  getAutoUpdate,
   getSettings,
   isSetupComplete,
 };

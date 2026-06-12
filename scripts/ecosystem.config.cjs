@@ -26,5 +26,23 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: 'max-tg-update',
+      script: 'scripts/auto-update.js',
+      cwd: root,
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '120M',
+      restart_delay: 10000,
+      env: {
+        NODE_ENV: 'production',
+      },
+      error_file: './logs/update-err.log',
+      out_file: './logs/update-out.log',
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

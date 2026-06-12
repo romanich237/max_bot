@@ -37,7 +37,7 @@ function buildMessageText(message, isCatchUp = false) {
   if (showServiceHeader) {
     parts.push(
       isCatchUp
-        ? '📩 <b>Сообщение из MAX</b> <i>(при старте)</i>'
+        ? '📩 <b>Сообщение из MAX</b> <i></i>'
         : '📩 <b>Новое сообщение из MAX</b>',
       ''
     );

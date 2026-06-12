@@ -13,6 +13,7 @@
     "pack-deploy": "node scripts/pack-deploy.js",
     "sync-github": "node scripts/sync-github.js",
     "pm2": "node scripts/pm2-setup.js",
+    "auto-update": "node scripts/auto-update.js",
     "prestart": "node scripts/ensure-deps.js",
     "start": "node scripts/monitor.js",
     "stop": "pm2 stop max-tg",

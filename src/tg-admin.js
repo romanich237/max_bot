@@ -5,6 +5,7 @@ const {
   getMax,
   getProfileRotate,
   getAlwaysOnline,
+  getAutoUpdate,
 } = require('./config');
 const {
   deleteWebhook,
@@ -63,6 +64,7 @@ function buildStatusText() {
   const profile = getProfileRotate();
   const online = getAlwaysOnline();
   const tg = getTelegram();
+  const autoUpdate = getAutoUpdate();
 
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
@@ -73,6 +75,7 @@ function buildStatusText() {
     `Пропуск своих: ${onFlag(max.skipOwnMessages)}`,
     `Время в TG: ${onFlag(tg.showTime)}`,
     `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
+    `Автообновление: ${onFlag(autoUpdate.enabled)} (${autoUpdate.intervalMs / 60000} мин)`,
     max.chatUrl ? `Чат MAX: <code>${max.chatUrl}</code>` : 'Чат MAX: не задан',
   ];
 

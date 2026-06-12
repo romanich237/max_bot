@@ -1,0 +1,135 @@
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('../src/config');
+const { sendMessage } = require('../src/tg-api');
+
+const APP_NAME = 'max-tg';
+
+function run(cmd, options = {}) {
+  return execSync(cmd, {
+    encoding: 'utf8',
+    cwd: ROOT,
+    shell: true,
+    stdio: options.silent ? 'pipe' : 'inherit',
+    ...options,
+  });
+}
+
+function runQuiet(cmd) {
+  return run(cmd, { silent: true })?.trim() || '';
+}
+
+function isGitRepo() {
+  return fs.existsSync(path.join(ROOT, '.git'));
+}
+
+function hasLocalChanges() {
+  const status = runQuiet('git status --porcelain');
+  return status
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line) => !line.endsWith('config.json') && !line.includes(' package-lock.json'));
+}
+
+async function notifyAdmins(text) {
+  const chatIds = getAdminChatIds();
+  if (!chatIds.length) return;
+
+  for (const chatId of chatIds) {
+    try {
+      await sendMessage(chatId, text);
+    } catch (err) {
+      console.error(`auto-update: не удалось уведомить ${chatId}:`, err.message);
+    }
+  }
+}
+
+async function checkAndUpdate() {
+  store.reload();
+  const cfg = getAutoUpdate();
+
+  if (!cfg.enabled) {
+    console.log('auto-update: выключено в config.json');
+    return false;
+  }
+
+  if (!isGitRepo()) {
+    console.log('auto-update: не git-репозиторий, пропуск');
+    return false;
+  }
+
+  try {
+    runQuiet(`git fetch origin ${cfg.branch}`);
+
+    const local = runQuiet('git rev-parse HEAD');
+    const remote = runQuiet(`git rev-parse origin/${cfg.branch}`);
+
+    if (!remote) {
+      console.error(`auto-update: не найдена ветка origin/${cfg.branch}`);
+      return false;
+    }
+
+    if (local === remote) {
+      console.log(`auto-update: актуально (${local.slice(0, 7)})`);
+      return false;
+    }
+
+    if (hasLocalChanges()) {
+      console.error('auto-update: есть локальные изменения, обновление пропущено');
+      await notifyAdmins(
+        '⚠️ <b>Автообновление пропущено</b>\nНа сервере есть локальные изменения в репозитории.'
+      );
+      return false;
+    }
+
+    const fromSha = local.slice(0, 7);
+    const toSha = remote.slice(0, 7);
+    console.log(`auto-update: обновление ${fromSha} → ${toSha}`);
+
+    run(`git pull --ff-only origin ${cfg.branch}`);
+    run('npm install --omit=dev --ignore-scripts');
+    run(`pm2 restart ${APP_NAME}`);
+
+    console.log('auto-update: бот перезапущен');
+    await notifyAdmins(
+      `🔄 <b>Бот обновлён</b>\n<code>${fromSha}</code> → <code>${toSha}</code>`
+    );
+    return true;
+  } catch (err) {
+    console.error('auto-update: ошибка —', err.message);
+    await notifyAdmins(`⚠️ <b>Ошибка автообновления</b>\n<code>${err.message}</code>`);
+    return false;
+  }
+}
+
+function scheduleAutoUpdate() {
+  store.reload();
+  const { enabled, intervalMs } = getAutoUpdate();
+
+  if (!enabled) {
+    console.log('auto-update: выключено (autoUpdate.enabled = false)');
+    return;
+  }
+
+  console.log(`auto-update: проверка репозитория каждые ${Math.round(intervalMs / 60000)} мин`);
+
+  const tick = async () => {
+    try {
+      await checkAndUpdate();
+    } catch (err) {
+      console.error('auto-update:', err.message);
+    }
+
+    store.reload();
+    const next = getAutoUpdate();
+    if (next.enabled) {
+      setTimeout(tick, next.intervalMs);
+    }
+  };
+
+  tick();
+}
+
+scheduleAutoUpdate();

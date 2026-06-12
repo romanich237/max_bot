@@ -22,6 +22,11 @@
     "enabled": false,
     "intervalMs": 30000
   },
+  "autoUpdate": {
+    "enabled": true,
+    "intervalMs": 1800000,
+    "branch": "main"
+  },
   "database": {
     "enabled": true,
     "host": "",
