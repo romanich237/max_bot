@@ -33,7 +33,7 @@ function saveProfileNames(names) {
 }
 
 const PROFILE_NAMES_HINT =
-  'Отправьте имена для ротации через запятую.\nПример: <code>к, ки, кир, кири, кирил, кирилл</code>';
+  'Отправьте имена для ротации через запятую.\nПример: <code>в, ва, вас, вася</code>';
 
 module.exports = {
   TOGGLES,
