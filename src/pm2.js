@@ -49,7 +49,7 @@ function setupPm2(options = {}) {
     /* first run */
   }
 
-  run('pm2 start ecosystem.config.cjs');
+  run('pm2 start scripts/ecosystem.config.cjs');
   run('pm2 save');
 
   console.log('\nАвтозапуск после перезагрузки VPS...');

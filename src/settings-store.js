@@ -4,7 +4,7 @@ const { EventEmitter } = require('events');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
-const EXAMPLE_PATH = path.join(ROOT, 'config.example.json');
+const EXAMPLE_PATH = path.join(__dirname, 'config.example.json');
 
 function getByPath(obj, keys) {
   let cur = obj;

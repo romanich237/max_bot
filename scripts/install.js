@@ -5,7 +5,7 @@ const { execSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const configPath = path.join(root, 'config.json');
-const examplePath = path.join(root, 'config.example.json');
+const examplePath = path.join(root, 'src', 'config.example.json');
 
 function run(cmd) {
   console.log(`> ${cmd}`);

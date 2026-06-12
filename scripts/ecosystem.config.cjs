@@ -1,9 +1,13 @@
+const path = require('path');
+
+const root = path.join(__dirname, '..');
+
 module.exports = {
   apps: [
     {
       name: 'max-tg',
-      script: 'index.js',
-      cwd: __dirname,
+      script: 'scripts/monitor.js',
+      cwd: root,
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,

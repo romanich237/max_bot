@@ -6,10 +6,8 @@ const root = path.join(__dirname, '..');
 const output = path.join(root, 'max-deploy.zip');
 
 const include = [
-  'index.js',
   'config.json',
   'package.json',
-  'ecosystem.config.cjs',
   'src',
   'scripts',
 ];
