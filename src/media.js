@@ -279,4 +279,5 @@ module.exports = {
   bodyWithMedia,
   downloadMessageMedia,
   mediaLabel,
+  findWrapperIndex,
 };

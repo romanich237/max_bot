@@ -10,8 +10,9 @@ const {
 } = require('./config');
 const { rotateDisplayName } = require('./profile');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setReplyHandler } = require('./tg-admin');
 const { runAuthQrOnPage } = require('./auth-qr');
+const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
 const { downloadMessageMedia } = require('./media');
@@ -124,6 +125,24 @@ async function startMonitor() {
 
   setReauthHandler(async () => {
     await performReauth({ introMessage: false });
+  });
+
+  setReplyHandler(async (targetMessage, text) => {
+    if (authBusy) {
+      throw new Error('Идёт авторизация MAX, повторите позже');
+    }
+
+    profileBusy = true;
+    try {
+      if (await isLoginPage(page)) {
+        throw new Error('Сессия MAX истекла. Отправьте /reauth');
+      }
+
+      await sendReplyInMax(page, targetMessage, text, MESSAGE_WRAPPER_SELECTOR);
+      console.log(`Ответ в MAX для ${targetMessage.author}: "${text.slice(0, 50)}"`);
+    } finally {
+      profileBusy = false;
+    }
   });
 
   startTelegramAdmin();

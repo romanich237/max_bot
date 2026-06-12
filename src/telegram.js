@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
 const { getTelegram } = require('./config');
+const replyStore = require('./reply-store');
 
 function escapeHtml(text) {
   return text
@@ -56,6 +57,22 @@ function buildMessageText(message, isCatchUp = false) {
   return parts.filter((p) => p !== '').join('\n');
 }
 
+function buildReplyMarkup(message) {
+  const id = replyStore.put(message);
+  return {
+    inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${id}` }]],
+  };
+}
+
+function appendFormField(form, key, value) {
+  if (value == null || value === '') return;
+  if (key === 'reply_markup') {
+    form.append(key, JSON.stringify(value));
+  } else {
+    form.append(key, String(value));
+  }
+}
+
 async function callTelegram(method, fields, files = {}) {
   const { token, chatIds } = getTelegram();
   const url = `https://api.telegram.org/bot${token}/${method}`;
@@ -68,7 +85,7 @@ async function callTelegram(method, fields, files = {}) {
         form.append('chat_id', id);
 
         for (const [key, value] of Object.entries(fields)) {
-          if (value != null && value !== '') form.append(key, String(value));
+          appendFormField(form, key, value);
         }
 
         for (const [fieldName, filePath] of Object.entries(files)) {
@@ -105,7 +122,7 @@ function endpointForMedia(type) {
   return map[type] || map.file;
 }
 
-async function sendPhotoGroup(message, photoFiles, isCatchUp) {
+async function sendPhotoGroup(message, photoFiles, isCatchUp, replyMarkup) {
   const { token, chatIds } = getTelegram();
   const caption = buildMessageText(message, isCatchUp);
 
@@ -136,12 +153,33 @@ async function sendPhotoGroup(message, photoFiles, isCatchUp) {
 
         if (!data.ok) {
           console.error(`Ошибка sendMediaGroup для ID ${chatId}:`, data.description);
+          return;
+        }
+
+        if (replyMarkup) {
+          await sendReplyPrompt(chatId, message, replyMarkup, token);
         }
       } catch (error) {
         console.error(`Не удалось отправить альбом для ID ${chatId}:`, error);
       }
     })
   );
+}
+
+async function sendReplyPrompt(chatId, message, replyMarkup, token) {
+  const author = escapeHtml(message.author || 'Неизвестно');
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('text', `↩️ Ответить: ${author}`);
+  form.append('parse_mode', 'HTML');
+  form.append('reply_markup', JSON.stringify(replyMarkup));
+
+  const response = await fetch(url, { method: 'POST', body: form });
+  const data = await response.json();
+  if (!data.ok) {
+    console.error(`Ошибка кнопки «Ответить» для ID ${chatId}:`, data.description);
+  }
 }
 
 async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp) {
@@ -162,7 +200,7 @@ async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp) 
   }
 }
 
-async function sendSingleMedia(message, media, isCatchUp, withCaption) {
+async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMarkup) {
   const { method, field } = endpointForMedia(media.type);
   const extra = {};
 
@@ -171,15 +209,29 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption) {
     extra.parse_mode = 'HTML';
   }
 
+  if (replyMarkup && withCaption && method !== 'sendVoice') {
+    extra.reply_markup = replyMarkup;
+  }
+
   await callTelegram(method, extra, { [field]: media.localPath });
+
+  if (replyMarkup && method === 'sendVoice') {
+    const { token, chatIds } = getTelegram();
+    await Promise.all(
+      chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+    );
+  }
 }
 
 async function sendToTelegram(message, options = {}) {
   const { isCatchUp = false, mediaFiles = [] } = options;
+  const replyMarkup = isCatchUp ? null : buildReplyMarkup(message);
 
   if (!mediaFiles.length) {
     const text = buildMessageText(message, isCatchUp);
-    await callTelegram('sendMessage', { text, parse_mode: 'HTML' });
+    const fields = { text, parse_mode: 'HTML' };
+    if (replyMarkup) fields.reply_markup = replyMarkup;
+    await callTelegram('sendMessage', fields);
     return;
   }
 
@@ -188,10 +240,10 @@ async function sendToTelegram(message, options = {}) {
   let captionUsed = false;
 
   if (photos.length > 1) {
-    await sendPhotoGroup(message, photos, isCatchUp);
+    await sendPhotoGroup(message, photos, isCatchUp, replyMarkup);
     captionUsed = true;
   } else if (photos.length === 1) {
-    await sendSingleMedia(message, photos[0], isCatchUp, true);
+    await sendSingleMedia(message, photos[0], isCatchUp, true, replyMarkup);
     captionUsed = true;
   }
 
@@ -200,14 +252,21 @@ async function sendToTelegram(message, options = {}) {
 
     if (media.type === 'voice') {
       await sendVoiceWithContext(message, media, !captionUsed, isCatchUp);
+      if (!captionUsed && replyMarkup) {
+        const { token, chatIds } = getTelegram();
+        await Promise.all(
+          chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+        );
+      }
       captionUsed = true;
       continue;
     }
 
     const withCaption = !captionUsed && i === 0;
-    await sendSingleMedia(message, media, isCatchUp, withCaption);
+    const markup = !captionUsed && i === 0 ? replyMarkup : null;
+    await sendSingleMedia(message, media, isCatchUp, withCaption, markup);
     if (withCaption) captionUsed = true;
   }
 }
 
-module.exports = { sendToTelegram, buildMessageText };
+module.exports = { sendToTelegram, buildMessageText, buildReplyMarkup };

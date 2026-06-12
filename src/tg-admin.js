@@ -19,6 +19,7 @@ const {
   saveProfileNames,
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
+const replyStore = require('./reply-store');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -29,10 +30,28 @@ const SETTABLE = {
 };
 
 let reauthHandler = null;
+let replyHandler = null;
 const waitingInput = new Map();
 
 function setReauthHandler(fn) {
   reauthHandler = fn;
+}
+
+function setReplyHandler(fn) {
+  replyHandler = fn;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function previewText(text, max = 80) {
+  const value = (text || '').trim();
+  if (!value) return '—';
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
 function onFlag(value) {
@@ -128,8 +147,40 @@ async function handleMessage(message) {
   const text = (message.text || '').trim();
   const waitKey = waitingInput.get(String(chatId));
 
+  if (waitKey?.startsWith('reply:') && text && !text.startsWith('/')) {
+    const target = replyStore.get(waitKey.slice('reply:'.length));
+    waitingInput.delete(String(chatId));
+
+    if (!target) {
+      await sendMessage(chatId, 'Сообщение устарело. Нажмите «Ответить» на новом сообщении из MAX.');
+      return;
+    }
+
+    if (!replyHandler) {
+      await sendMessage(chatId, 'Ответы недоступны — перезапустите бота: <code>pm2 restart max-tg</code>');
+      return;
+    }
+
+    try {
+      await replyHandler(target, text);
+      await sendMessage(
+        chatId,
+        `Ответ отправлен в MAX для <b>${escapeHtml(target.author || 'пользователя')}</b>.`
+      );
+    } catch (err) {
+      await sendMessage(chatId, `Не удалось отправить ответ: ${escapeHtml(err.message)}`);
+    }
+    return;
+  }
+
   if (waitKey === 'profileNames' && text && !text.startsWith('/')) {
     await handleProfileNamesInput(chatId, text);
+    return;
+  }
+
+  if (/^\/cancel$/i.test(text)) {
+    waitingInput.delete(String(chatId));
+    await sendMessage(chatId, 'Отменено.');
     return;
   }
 
@@ -173,7 +224,10 @@ async function handleMessage(message) {
         '/menu — кнопки вкл/выкл',
         '/status — текущие настройки',
         '/reauth — скриншот входа MAX',
+        '/cancel — отменить ввод ответа',
         '/set ключ значение — изменить параметр',
+        '',
+        'На сообщениях из MAX — кнопка <b>↩️ Ответить</b>',
         '',
         '<b>Ключи для /set</b>',
         'chatUrl, browserPassword, profileInterval, onlineInterval, profileNames',
@@ -204,6 +258,27 @@ async function handleCallback(query) {
   }
 
   const data = query.data || '';
+
+  if (data.startsWith('reply:')) {
+    const target = replyStore.get(data.slice('reply:'.length));
+    if (!target) {
+      await answerCallback(query.id, 'Сообщение устарело');
+      return;
+    }
+
+    waitingInput.set(String(chatId), data);
+    await answerCallback(query.id, 'Жду ответ');
+    await sendMessage(
+      chatId,
+      [
+        `<b>Ответ для ${escapeHtml(target.author || 'пользователя')}</b>`,
+        `<i>${escapeHtml(previewText(target.body))}</i>`,
+        '',
+        'Напишите текст ответа (или /cancel).',
+      ].join('\n')
+    );
+    return;
+  }
 
   if (data === 'action:profileNames') {
     waitingInput.set(String(chatId), 'profileNames');
@@ -262,6 +337,7 @@ function startTelegramAdmin() {
 module.exports = {
   startTelegramAdmin,
   setReauthHandler,
+  setReplyHandler,
   buildStatusText,
   buildMenuKeyboard,
 };
