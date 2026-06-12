@@ -5,7 +5,6 @@ const {
   getMax,
   getProfileRotate,
   getAlwaysOnline,
-  getDatabase,
 } = require('./config');
 const {
   deleteWebhook,
@@ -43,7 +42,6 @@ function buildStatusText() {
   const max = getMax();
   const profile = getProfileRotate();
   const online = getAlwaysOnline();
-  const db = getDatabase();
   const tg = getTelegram();
 
   const lines = [
@@ -55,9 +53,6 @@ function buildStatusText() {
     `Пропуск своих: ${onFlag(max.skipOwnMessages)}`,
     `Время в TG: ${onFlag(tg.showTime)}`,
     `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
-    `MySQL: ${onFlag(db.enabled)}`,
-    db.enabled && db.host ? `MySQL хост: <code>${db.host}:${db.port}</code>` : null,
-    db.enabled && db.database ? `MySQL база: <code>${db.database}</code>` : null,
     max.chatUrl ? `Чат MAX: <code>${max.chatUrl}</code>` : 'Чат MAX: не задан',
   ];
 
