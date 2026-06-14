@@ -1,24 +1,31 @@
 const { getSettings, getAdminChatIds } = require('./config');
-const { sendMessage, sendPhotoBuffer, editPhotoBuffer, editMessageCaption, answerCallback, pollUpdates, editMessageText } = require('./tg-api');
+const { sendMessage, answerCallback, pollUpdates } = require('./tg-api');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
 const { isLoginPage } = require('./parser');
 const { runAuthPhoneOnPage } = require('./auth-phone');
 const {
   isBrowserPasswordPrompt,
   buildBrowserPasswordHintHtml,
-  buildScreenshotCaptionForPage,
   captureBrowserScreenshot,
   tryHandleBrowserPasswordPrompt,
   qrRefreshSeconds,
-  qrSecondsRemaining,
 } = require('./auth-browser');
+const {
+  DEFAULT_QR_REFRESH_MS,
+  buildScreenshotKeyboard,
+  beginCaptionSession,
+  endCaptionSession,
+  isCaptionSessionActive,
+  getCaptionSession,
+  markQrRefreshed,
+  upsertAuthScreenshot,
+  upsertAuthText,
+} = require('./auth-caption');
 const { launchMaxContext } = require('./browser-context');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
-const QR_REFRESH_MS = 45000;
+const QR_REFRESH_MS = DEFAULT_QR_REFRESH_MS;
 const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
-
-let activeAuthSession = null;
 
 function buildAuthModeKeyboard(options = {}) {
   const rows = [];
@@ -29,110 +36,26 @@ function buildAuthModeKeyboard(options = {}) {
   return { inline_keyboard: rows };
 }
 
-function buildScreenshotKeyboard() {
-  return {
-    inline_keyboard: [[{ text: '🔄 Обновить', callback_data: 'auth:refresh' }]],
-  };
-}
-
 function isAuthSessionActive() {
-  return Boolean(activeAuthSession);
+  return isCaptionSessionActive();
 }
 
 function clearAuthSession() {
-  activeAuthSession = null;
+  endCaptionSession();
 }
 
-function isEditOk(result) {
-  if (result.ok) return true;
-  const desc = result.description || '';
-  return /message is not modified/i.test(desc);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function upsertAuthText(page, chatIds, options = {}) {
-  const text = buildEventMessage({
-    title: 'Ожидание входа в MAX',
-    status: 'progress',
-    lines: [
-      'Вход выполняется в Telegram (без фото).',
-      'Рекомендуется <b>номер телефона</b>: /reauth → «Номер телефона».',
-      'Если появится @Browser — пришлю скриншот для ввода пароля.',
-      `Обновление каждые ${qrRefreshSeconds(QR_REFRESH_MS)} сек.`,
-    ],
-  });
-  const replyMarkup = buildScreenshotKeyboard();
-  const messageIds = activeAuthSession?.textMessageIds || {};
-
-  for (const chatId of chatIds) {
-    const key = String(chatId);
-    const existingId = messageIds[key];
-    let result;
-
-    if (existingId) {
-      result = await editMessageText(key, existingId, text, { reply_markup: replyMarkup }, options.token);
-      if (!isEditOk(result)) {
-        result = await sendMessage(key, text, { reply_markup: replyMarkup }, options.token);
-      }
-    } else {
-      result = await sendMessage(key, text, { reply_markup: replyMarkup }, options.token);
-    }
-
-    if (!result.ok && !isEditOk(result)) {
-      console.error(`Не удалось отправить статус в ${key}:`, result.description);
-      continue;
-    }
-
-    if (result.result?.message_id) {
-      messageIds[key] = result.result.message_id;
-    }
+async function captureAuthScreenshot(page) {
+  if (await isBrowserPasswordPrompt(page)) {
+    return captureBrowserScreenshot(page);
   }
-
-  if (activeAuthSession) {
-    activeAuthSession.textMessageIds = messageIds;
-  }
+  return captureLoginScreenshot(page);
 }
 
-async function upsertAuthCaption(page, chatIds, options = {}) {
-  const lastQrSent = activeAuthSession?.lastQrSent ?? 0;
-  const refreshMs = options.refreshMs ?? QR_REFRESH_MS;
-  const secondsRemaining = qrSecondsRemaining(lastQrSent, refreshMs);
-  if (activeAuthSession?.lastCaptionSec === secondsRemaining) return;
-
-  const caption = await buildScreenshotCaptionForPage(page, {
-    ...options,
-    secondsRemaining,
-  });
-  const replyMarkup = buildScreenshotKeyboard();
-  const messageIds = activeAuthSession?.photoMessageIds || {};
-  let updated = false;
-
-  for (const chatId of chatIds) {
-    const key = String(chatId);
-    const existingId = messageIds[key];
-    if (!existingId) continue;
-
-    const result = await editMessageCaption(
-      key,
-      existingId,
-      caption,
-      { reply_markup: replyMarkup },
-      options.token
-    );
-
-    if (!isEditOk(result) && !result.ok) {
-      console.warn(`Не удалось обновить подпись в ${key}: ${result.description}`);
-      continue;
-    }
-
-    updated = true;
-  }
-
-  if (updated && activeAuthSession) {
-    activeAuthSession.lastCaptionSec = secondsRemaining;
-  }
-}
-
-async function upsertAuthScreenshot(page, chatIds, options = {}) {
+async function upsertLoginScreenshot(page, chatIds, options = {}) {
   const isPassword = await isBrowserPasswordPrompt(page);
 
   if (!isPassword && options.sendQrPhotos === false) {
@@ -140,61 +63,7 @@ async function upsertAuthScreenshot(page, chatIds, options = {}) {
     return;
   }
 
-  const buffer = isPassword ? await captureBrowserScreenshot(page) : await captureLoginScreenshot(page);
-  const lastQrSent = activeAuthSession?.lastQrSent ?? Date.now();
-  const secondsRemaining = qrSecondsRemaining(lastQrSent, options.refreshMs ?? QR_REFRESH_MS);
-  const caption = await buildScreenshotCaptionForPage(page, {
-    ...options,
-    secondsRemaining,
-  });
-  const replyMarkup = buildScreenshotKeyboard();
-  const messageIds = activeAuthSession?.photoMessageIds || {};
-
-  for (const chatId of chatIds) {
-    const key = String(chatId);
-    const existingId = messageIds[key];
-    let result;
-
-    if (existingId) {
-      result = await editPhotoBuffer(key, existingId, buffer, caption, options.token, {
-        reply_markup: replyMarkup,
-      });
-
-      if (!isEditOk(result)) {
-        console.warn(`Не удалось обновить скриншот в ${key}: ${result.description}`);
-        result = await sendPhotoBuffer(key, buffer, caption, options.token, {
-          reply_markup: replyMarkup,
-        });
-      }
-    } else {
-      result = await sendPhotoBuffer(key, buffer, caption, options.token, {
-        reply_markup: replyMarkup,
-      });
-    }
-
-    if (!result.ok && !isEditOk(result)) {
-      console.error(`Не удалось отправить скриншот в ${key}:`, result.description);
-      continue;
-    }
-
-    if (result.result?.message_id) {
-      messageIds[key] = result.result.message_id;
-    }
-  }
-
-  if (activeAuthSession) {
-    activeAuthSession.photoMessageIds = messageIds;
-    activeAuthSession.lastCaptionSec = secondsRemaining;
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function buildScreenshotCaption(options = {}) {
-  const { buildQrScreenshotCaption } = require('./auth-browser');
-  return buildQrScreenshotCaption(options);
+  await upsertAuthScreenshot(page, chatIds, options, captureAuthScreenshot);
 }
 
 async function ensureQrLoginView(page) {
@@ -240,15 +109,15 @@ async function refreshQrCodeSession(page) {
 }
 
 async function refreshAuthScreenshot() {
-  if (!activeAuthSession) {
+  const session = getCaptionSession();
+  if (!session) {
     throw new Error('Сейчас авторизация не идёт. Отправьте /reauth');
   }
 
-  const { page, chatIds, options } = activeAuthSession;
+  const { page, chatIds, options } = session;
   await refreshQrCodeSession(page);
-  await upsertAuthScreenshot(page, chatIds, options);
-  activeAuthSession.lastQrSent = Date.now();
-  activeAuthSession.lastCaptionSec = null;
+  await upsertLoginScreenshot(page, chatIds, options);
+  markQrRefreshed();
 }
 
 async function captureLoginScreenshot(page) {
@@ -318,7 +187,7 @@ async function waitForLogin(page, chatIds, options = {}) {
   let lastQrSent = 0;
   let stopAuthPoll = null;
 
-  activeAuthSession = { page, chatIds, options, lastQrSent: 0, lastCaptionSec: null, photoMessageIds: {}, textMessageIds: {} };
+  beginCaptionSession(chatIds, options, page);
   if (options.useAuthCallbackPoll) {
     stopAuthPoll = startAuthCallbackPoll({ ...options, chatIds });
   }
@@ -333,15 +202,10 @@ async function waitForLogin(page, chatIds, options = {}) {
 
     if (Date.now() - lastQrSent >= refreshMs) {
       await refreshQrCodeSession(page);
-      await upsertAuthScreenshot(page, chatIds, options);
+      await upsertLoginScreenshot(page, chatIds, options);
       lastQrSent = Date.now();
-      if (activeAuthSession) {
-        activeAuthSession.lastQrSent = lastQrSent;
-        activeAuthSession.lastCaptionSec = null;
-      }
+      markQrRefreshed();
       options.onQrSent?.();
-    } else if (activeAuthSession?.photoMessageIds && Object.keys(activeAuthSession.photoMessageIds).length) {
-      await upsertAuthCaption(page, chatIds, options);
     }
 
     await sleep(2000);
@@ -350,7 +214,7 @@ async function waitForLogin(page, chatIds, options = {}) {
   return false;
   } finally {
     stopAuthPoll?.();
-    clearAuthSession();
+    endCaptionSession();
   }
 }
 

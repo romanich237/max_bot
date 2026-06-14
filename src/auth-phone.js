@@ -8,6 +8,7 @@ const {
   tryHandleBrowserPasswordPrompt,
 } = require('./auth-browser');
 const { isCaptchaPage, waitForCaptchaResolved, hasVisibleSmsInputs } = require('./auth-captcha');
+const { beginCaptionSession, endCaptionSession } = require('./auth-caption');
 
 const AUTH_STEPS = 5;
 const MAX_LOGIN_URL = 'https://web.max.ru/';
@@ -155,6 +156,9 @@ async function waitForLoginComplete(page, timeoutMs = AUTH_TIMEOUT_MS) {
 }
 
 async function runAuthPhoneOnPage(page, chatIds, options = {}) {
+  beginCaptionSession(chatIds, options, page);
+
+  try {
   await page.goto(MAX_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForTimeout(2500);
 
@@ -342,6 +346,9 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   });
 
   return true;
+  } finally {
+    endCaptionSession();
+  }
 }
 
 module.exports = {

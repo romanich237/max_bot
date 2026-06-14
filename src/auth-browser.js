@@ -1,5 +1,5 @@
 const { getMax, store } = require('./config');
-const { sendMessage, sendPhotoBuffer } = require('./tg-api');
+const { sendMessage } = require('./tg-api');
 const { promptTelegramText } = require('./auth-prompt');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
 
@@ -237,14 +237,19 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
   if (!(await isBrowserPasswordPrompt(page))) return false;
 
   if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
-    const buffer = await captureBrowserScreenshot(page);
-    const caption = buildBrowserScreenshotCaption({
-      refreshMs: options.refreshMs,
-      secondsRemaining: options.secondsRemaining,
-    });
-    for (const chatId of chatIds) {
-      await sendPhotoBuffer(chatId, buffer, caption, options.token);
+    const {
+      isCaptionSessionActive,
+      beginCaptionSession,
+      upsertAuthScreenshot,
+      markQrRefreshed,
+    } = require('./auth-caption');
+
+    if (!isCaptionSessionActive()) {
+      beginCaptionSession(chatIds, options, page);
     }
+
+    await upsertAuthScreenshot(page, chatIds, options, captureBrowserScreenshot);
+    markQrRefreshed();
     options.browserScreenshotSent = true;
   }
 
