@@ -50,6 +50,22 @@ http://ВАШ_IP:3847/setup/ТОКЕН
 
 Требования: **Linux VPS в Европе**, `curl`, `sudo` (или root).
 
+### Если установка упала на Node.js
+
+Node уже может быть установлен (nvm). Проверьте и продолжите:
+
+```bash
+source ~/.nvm/nvm.sh && node -v
+cd ~/max-tg && git pull --ff-only
+TG_TOKEN="ваш_токен" TG_CHAT_ID="ваш_id" bash scripts/resume-setup.sh
+```
+
+Или переустановите с нуля после обновления скрипта:
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
+```
+
 ## Команды в Telegram
 
 | Команда | Описание |

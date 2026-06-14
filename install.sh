@@ -29,14 +29,16 @@ apt_install() {
   run_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"
 }
 
-refresh_path() {
+prepend_nvm_to_path() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  local bin_dir
+  bin_dir="$(ls -1d "$NVM_DIR/versions/node/v"*/bin 2>/dev/null | sort -V | tail -n1)"
+  [ -n "$bin_dir" ] && [ -x "$bin_dir/node" ] && PATH="$bin_dir:$PATH"
+  export PATH
+}
 
-  if [ -s "$NVM_DIR/nvm.sh" ]; then
-    # shellcheck disable=SC1091
-    . "$NVM_DIR/nvm.sh"
-    nvm use default &>/dev/null || nvm use 20 &>/dev/null || true
-  fi
+refresh_path() {
+  prepend_nvm_to_path
 
   if [ -d "$HOME/.local/node/bin" ]; then
     PATH="$HOME/.local/node/bin:$PATH"
@@ -49,25 +51,34 @@ refresh_path() {
   export PATH
 }
 
+resolve_node_bin() {
+  refresh_path
+  if [ -x "$HOME/.local/node/bin/node" ]; then
+    echo "$HOME/.local/node/bin/node"
+    return
+  fi
+  type -P node 2>/dev/null || type -P nodejs 2>/dev/null || true
+}
+
 node_major() {
-  local cmd ver
-  cmd="$(command -v node 2>/dev/null || command -v nodejs 2>/dev/null || true)"
-  [ -z "$cmd" ] && { echo 0; return; }
-  ver="$("$cmd" -v 2>/dev/null | head -n1)"
+  local bin ver
+  bin="$(resolve_node_bin)"
+  [ -z "$bin" ] && { echo 0; return; }
+  ver="$("$bin" -v 2>/dev/null)"
   ver="${ver#v}"
   ver="${ver%%.*}"
   [[ "$ver" =~ ^[0-9]+$ ]] && echo "$ver" || echo 0
 }
 
-node_cmd() {
-  refresh_path
-  if command -v node >/dev/null 2>&1; then
-    echo node
-  elif command -v nodejs >/dev/null 2>&1; then
-    echo nodejs
-  else
-    echo node
-  fi
+node_version_label() {
+  local bin
+  bin="$(resolve_node_bin)"
+  [ -z "$bin" ] && echo "не найден" && return
+  "$bin" -v 2>/dev/null || echo "не найден"
+}
+
+has_node() {
+  [ -n "$(resolve_node_bin)" ]
 }
 
 ensure_curl() {
@@ -137,7 +148,7 @@ install_node_via_nvm() {
 
   nvm install 20
   nvm alias default 20
-  nvm use default &>/dev/null
+  prepend_nvm_to_path
   return 0
 }
 
@@ -157,9 +168,16 @@ install_node_via_nodesource() {
   ensure_curl || return 1
   ensure_apt_packages curl ca-certificates gnupg || return 1
 
-  if ! curl -fsSL https://deb.nodesource.com/setup_20.x | run_root -E bash -; then
-    echo "  NodeSource setup не удался"
-    return 1
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; then
+      echo "  NodeSource setup не удался"
+      return 1
+    fi
+  else
+    if ! curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -; then
+      echo "  NodeSource setup не удался"
+      return 1
+    fi
   fi
 
   apt_install install -y nodejs || return 1
@@ -196,12 +214,12 @@ ensure_node() {
   major="$(node_major)"
 
   if [ "$major" -ge 18 ]; then
-    echo "Node.js $($(node_cmd) -v)"
+    echo "Node.js $(node_version_label)"
     return 0
   fi
 
-  if command -v node >/dev/null 2>&1 || command -v nodejs >/dev/null 2>&1; then
-    echo "Node.js $($(node_cmd) -v) устарел, ставлю 20.x..."
+  if has_node; then
+    echo "Node.js $(node_version_label) устарел, ставлю 20.x..."
   else
     echo "Node.js не найден, ставлю 20.x..."
   fi
@@ -212,7 +230,7 @@ ensure_node() {
   major="$(node_major)"
   if [ "$major" -ge 18 ]; then
     set -e
-    echo "Node.js $($(node_cmd) -v) готов (nvm)"
+    echo "Node.js $(node_version_label) готов (nvm)"
     return 0
   fi
 
@@ -221,7 +239,7 @@ ensure_node() {
   major="$(node_major)"
   if [ "$major" -ge 18 ]; then
     set -e
-    echo "Node.js $($(node_cmd) -v) готов (nodesource)"
+    echo "Node.js $(node_version_label) готов (nodesource)"
     return 0
   fi
 
@@ -231,15 +249,18 @@ ensure_node() {
   set -e
 
   if [ "$major" -ge 18 ]; then
-    echo "Node.js $($(node_cmd) -v) готов (binary)"
+    echo "Node.js $(node_version_label) готов (binary)"
     return 0
   fi
 
   echo ""
   echo "Ошибка: не удалось установить Node.js 18+"
-  echo "Попробуйте вручную:"
+  echo "Если Node уже установлен, продолжите установку бота:"
+  echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
+  echo "Или вручную:"
   echo "  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
   echo "  source ~/.nvm/nvm.sh && nvm install 20"
+  echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
   exit 1
 }
 
@@ -312,7 +333,7 @@ cd "$INSTALL_DIR"
 refresh_path
 open_portal_port
 echo ""
-echo "Node: $(command -v node || command -v nodejs) ($($(node_cmd) -v))"
+echo "Node: $(resolve_node_bin) ($(node_version_label))"
 echo "npm:  $(command -v npm) ($(npm -v))"
 echo ""
 

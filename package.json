@@ -8,6 +8,7 @@
     "import-session": "node scripts/import-session.js",
     "init-db": "node scripts/init-db.js",
     "setup": "node scripts/install.js",
+    "setup-resume": "bash scripts/resume-setup.sh",
     "setup-web": "node scripts/install.js",
     "setup-vps": "node scripts/setup-vps.js",
     "auth-qr": "node scripts/auth-qr.js",
