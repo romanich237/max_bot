@@ -156,6 +156,8 @@ async function main() {
   ensureConfigFile();
   ensureDirs();
 
+  run('npm install --omit=dev --ignore-scripts');
+
   await ensureTelegramCredentials();
 
   const { checkTelegramConnectivity } = require('../src/tg-api');
@@ -167,7 +169,6 @@ async function main() {
       : 'Telegram API доступен\n'
   );
 
-  run('npm install --omit=dev --ignore-scripts');
   run('npx playwright install chromium');
 
   try {

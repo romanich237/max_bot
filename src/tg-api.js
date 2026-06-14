@@ -1,12 +1,14 @@
 const { File } = require('node:buffer');
-const { ProxyAgent } = require('undici');
 const { getTelegram } = require('./config');
 
-const TELEGRAM_API = 'https://api.telegram.org';
-const FETCH_TIMEOUT_MS = 30_000;
-const FETCH_RETRIES = 4;
-
 let proxyDispatcher = null;
+
+function getProxyAgent() {
+  if (proxyDispatcher) return proxyDispatcher;
+  const { ProxyAgent } = require('undici');
+  proxyDispatcher = new ProxyAgent(process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
+  return proxyDispatcher;
+}
 
 function resolveToken(tokenOverride) {
   const token = tokenOverride || getTelegram().token;
@@ -18,13 +20,14 @@ function getFetchInit(baseInit = {}) {
   const init = { ...baseInit };
   const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   if (proxy && !init.dispatcher) {
-    if (!proxyDispatcher) {
-      proxyDispatcher = new ProxyAgent(proxy);
-    }
-    init.dispatcher = proxyDispatcher;
+    init.dispatcher = getProxyAgent();
   }
   return init;
 }
+
+const TELEGRAM_API = 'https://api.telegram.org';
+const FETCH_TIMEOUT_MS = 30_000;
+const FETCH_RETRIES = 4;
 
 function wrapFetchError(err, context) {
   const cause = err.cause?.message || err.message || String(err);
