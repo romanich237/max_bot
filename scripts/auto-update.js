@@ -83,14 +83,13 @@ async function checkAndUpdate() {
     const toSha = remote.slice(0, 7);
     console.log(`auto-update: обновление ${fromSha} → ${toSha}`);
 
+    await notifyAdmins('🔄 Вышла новая версия бота, обновляю сервер…');
+
     run(`git pull --ff-only origin ${cfg.branch}`);
     run('npm install --omit=dev --ignore-scripts');
     run(`pm2 restart ${APP_NAME}`);
 
     console.log('auto-update: бот перезапущен');
-    await notifyAdmins(
-      `🔄 <b>Бот обновлён</b>\n<code>${fromSha}</code> → <code>${toSha}</code>`
-    );
     return true;
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
