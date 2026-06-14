@@ -133,6 +133,7 @@ async function runWebSetup(options = {}) {
 
         store.setPath(['telegram', 'token'], token);
         store.setPath(['telegram', 'chatIds'], [chatId]);
+        store.setPath(['telegram', 'adminChatIds'], [chatId]);
         store.setPath(['setupComplete'], false);
         store.reload();
 

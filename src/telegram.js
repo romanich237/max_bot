@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram, getMaxDisplayName, getMonitorChatUrls } = require('./config');
+const { getTelegram, getNotificationChatIds, getMaxDisplayName, getMonitorChatUrls } = require('./config');
 const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
 
@@ -89,7 +89,8 @@ function appendFormField(form, key, value) {
 }
 
 async function callTelegram(method, fields, files = {}, replyMarkup = null) {
-  const { token, chatIds } = getTelegram();
+  const { token } = getTelegram();
+  const chatIds = getNotificationChatIds();
   const url = `https://api.telegram.org/bot${token}/${method}`;
   let success = true;
   const baseFields = { ...fields };
@@ -144,7 +145,8 @@ function endpointForMedia(type) {
 }
 
 async function sendPhotoGroup(message, photoFiles, isCatchUp, replyMarkup, meta = {}) {
-  const { token, chatIds } = getTelegram();
+  const { token } = getTelegram();
+  const chatIds = getNotificationChatIds();
   const caption = buildMessageText(message, isCatchUp, meta);
 
   await Promise.all(
@@ -235,7 +237,8 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMark
   await callTelegram(method, extra, { [field]: media.localPath }, markup);
 
   if (replyMarkup && method === 'sendVoice') {
-    const { token, chatIds } = getTelegram();
+    const { token } = getTelegram();
+    const chatIds = getNotificationChatIds();
     await Promise.all(
       chatIds
         .filter(isPrivateChat)
@@ -273,7 +276,8 @@ async function sendToTelegram(message, options = {}) {
     if (media.type === 'voice') {
       await sendVoiceWithContext(message, media, !captionUsed, isCatchUp, meta);
       if (!captionUsed && replyMarkup) {
-        const { token, chatIds } = getTelegram();
+        const { token } = getTelegram();
+        const chatIds = getNotificationChatIds();
         await Promise.all(
           chatIds
             .filter(isPrivateChat)

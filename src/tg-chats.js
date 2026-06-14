@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { store, resolveFromRoot } = require('./config');
+const { store, resolveFromRoot, getNotificationChatIds, isPrivateChatId } = require('./config');
 
 const KNOWN_CHATS_PATH = resolveFromRoot('data/known-chats.json');
 const CHATS_PER_PAGE = 8;
@@ -137,6 +137,7 @@ function buildChatInfoText(chat, freshTitle) {
   lines.push(
     '',
     'Скопируйте ID или нажмите «Привязать», чтобы сюда приходили уведомления из MAX.',
+    'ЛС получает уведомления всегда; для группы — дублирование в ЛС и в группу.',
     'Добавьте бота в этот чат, чтобы сообщения стабильно приходили куда надо.'
   );
   return lines.join('\n');
@@ -163,7 +164,7 @@ function buildDiscoverEmptyText() {
 }
 
 function buildNotifyChatText() {
-  const chatIds = store.getPath(['telegram', 'chatIds']) || [];
+  const chatIds = getNotificationChatIds();
   const lines = ['<b>Чат для уведомлений из MAX</b>', ''];
 
   if (!chatIds.length) {
@@ -171,12 +172,16 @@ function buildNotifyChatText() {
   } else {
     for (const id of chatIds) {
       const known = getKnownChat(id);
-      const label = known?.title ? `${known.title} ` : '';
-      lines.push(`${label}(<code>${id}</code>)`);
+      const title = known?.title || 'Без названия';
+      const kind = isPrivateChatId(id) ? 'ЛС' : 'группа';
+      lines.push(`${kind}: <b>${escapeHtml(title)}</b> (<code>${id}</code>)`);
     }
   }
 
   lines.push(
+    '',
+    'По умолчанию уведомления приходят в ЛС.',
+    'При привязке группы — дублируются в ЛС и в группу.',
     '',
     'Нажмите «🔍 Узнать ID» внизу — выберите чат из списка Telegram.'
   );
@@ -185,14 +190,25 @@ function buildNotifyChatText() {
 
 function bindNotificationChat(targetChatId, adminChatId) {
   const targetId = String(targetChatId);
+  const adminId = String(adminChatId);
   const { getAdminChatIds } = require('./config');
   const adminIds = new Set(getAdminChatIds().map(String));
-  adminIds.add(String(adminChatId));
-  adminIds.delete(targetId);
+  adminIds.add(adminId);
 
-  store.setPath(['telegram', 'chatIds'], [targetId]);
+  let privateId = isPrivateChatId(adminId) ? adminId : [...adminIds].find(isPrivateChatId);
+  if (!privateId) privateId = adminId;
+
+  let chatIds;
+  if (isPrivateChatId(targetId)) {
+    chatIds = [targetId];
+  } else {
+    chatIds = [privateId, targetId];
+  }
+
+  chatIds = [...new Set(chatIds)];
+  store.setPath(['telegram', 'chatIds'], chatIds);
   store.setPath(['telegram', 'adminChatIds'], [...adminIds]);
-  return targetId;
+  return { targetId, chatIds };
 }
 
 function escapeHtml(text) {

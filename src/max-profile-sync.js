@@ -47,6 +47,31 @@ function mergeOwnAuthorNames(newNames = []) {
   return { merged, changed };
 }
 
+function replaceOwnAuthorNames(names = []) {
+  const normalized = [];
+  const seen = new Set();
+
+  for (const raw of names) {
+    const name = normalizeName(raw);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(name);
+  }
+
+  const prev = store.getPath(['max', 'ownAuthorNames']) || [];
+  const changed =
+    prev.length !== normalized.length ||
+    prev.some((item, index) => item.toLowerCase() !== normalized[index]?.toLowerCase());
+
+  if (changed) {
+    store.setPath(['max', 'ownAuthorNames'], normalized);
+  }
+
+  return { merged: normalized, changed };
+}
+
 async function notifyOwnNamesUpdate(currentName, allNames, reason) {
   const privateChatIds = getAdminChatIds().filter((id) => Number(id) > 0);
   if (!privateChatIds.length) return;
@@ -70,34 +95,40 @@ async function notifyOwnNamesUpdate(currentName, allNames, reason) {
 }
 
 async function syncOwnNames(page, options = {}) {
-  const names = new Set(options.extraNames || []);
-  let profileName = '';
-
   const rotation = getProfileRotate();
-  for (const name of rotation.names || []) {
-    const normalized = normalizeName(name);
-    if (normalized) names.add(normalized);
-  }
-
-  for (const name of collectNamesFromMessages(options.messages || [])) {
-    names.add(name);
-  }
+  const configuredNames = (rotation.names || []).map(normalizeName).filter(Boolean);
+  let profileFirstName = '';
 
   if (options.readProfile && page) {
     try {
       const profile = await readProfileNames(page, options.chatUrl);
-      profileName = profile.displayName || profile.firstName || '';
-      if (profileName) names.add(profileName);
-      if (profile.firstName) names.add(profile.firstName);
+      profileFirstName = normalizeName(profile.firstName);
     } catch (err) {
       console.warn('Не удалось прочитать имя из профиля MAX:', err.message);
     }
   }
 
-  const nameList = [...names];
-  const { merged, changed } = mergeOwnAuthorNames(nameList);
+  let merged;
+  let changed;
+
+  if (configuredNames.length > 0) {
+    ({ merged, changed } = replaceOwnAuthorNames(configuredNames));
+  } else {
+    const names = new Set(options.extraNames || []);
+
+    for (const name of collectNamesFromMessages(options.messages || [])) {
+      names.add(name);
+    }
+
+    if (profileFirstName) names.add(profileFirstName);
+
+    ({ merged, changed } = mergeOwnAuthorNames([...names]));
+  }
+
+  const rotatedName = normalizeName(options.extraNames?.[0]);
   const currentName =
-    profileName ||
+    rotatedName ||
+    profileFirstName ||
     store.getPath(['max', 'currentDisplayName']) ||
     (merged.length ? merged[merged.length - 1] : '');
   const prevName = store.getPath(['max', 'currentDisplayName']) || '';
@@ -123,6 +154,14 @@ async function syncOwnNames(page, options = {}) {
 }
 
 function syncOwnNamesFromMessages(messages, options = {}) {
+  const configuredNames = (getProfileRotate().names || []).map(normalizeName).filter(Boolean);
+  if (configuredNames.length > 0) {
+    return {
+      changed: false,
+      ownAuthorNames: store.getPath(['max', 'ownAuthorNames']) || configuredNames,
+    };
+  }
+
   const names = collectNamesFromMessages(messages);
   if (!names.length) {
     return { changed: false, ownAuthorNames: store.getPath(['max', 'ownAuthorNames']) || [] };
@@ -145,6 +184,7 @@ function syncOwnNamesFromMessages(messages, options = {}) {
 module.exports = {
   collectNamesFromMessages,
   mergeOwnAuthorNames,
+  replaceOwnAuthorNames,
   syncOwnNames,
   syncOwnNamesFromMessages,
 };

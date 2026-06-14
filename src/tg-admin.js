@@ -8,6 +8,7 @@ const {
   getAlwaysOnline,
   getDefaultChatUrl,
   getMonitorChatUrls,
+  getNotificationChatIds,
 } = require('./config');
 const {
   setDefaultChatUrl,
@@ -145,12 +146,12 @@ function onFlag(value) {
 function buildStatusText() {
   const profile = getProfileRotate();
   const online = getAlwaysOnline();
-  const tg = getTelegram();
 
   const maxName = getMaxDisplayName();
 
   const defaultUrl = getDefaultChatUrl();
   const monitorUrls = getMonitorChatUrls();
+  const notifyIds = getNotificationChatIds();
 
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
@@ -172,8 +173,8 @@ function buildStatusText() {
           })
           .join('\n')
       : 'не заданы',
-    tg.chatIds?.length
-      ? `Уведомления в TG: ${tg.chatIds.map((id) => `<code>${id}</code>`).join(', ')}`
+    notifyIds.length
+      ? `Уведомления в TG: ${notifyIds.map((id) => `<code>${id}</code>`).join(', ')}`
       : 'Уведомления в TG: не задан',
   ];
 
@@ -1022,7 +1023,7 @@ async function handleCallback(query) {
   if (data.startsWith('bindchat:')) {
     const targetChatId = data.slice('bindchat:'.length);
     const known = getKnownChat(targetChatId);
-    bindNotificationChat(targetChatId, chatId);
+    const { chatIds: boundChatIds } = bindNotificationChat(targetChatId, chatId);
     await answerCallback(query.id, 'Привязано');
     await sendMessage(
       chatId,
@@ -1032,7 +1033,9 @@ async function handleCallback(query) {
         lines: [
           known?.title ? `Название: <b>${escapeHtml(known.title)}</b>` : null,
           `ID: <code>${targetChatId}</code>`,
-          'Сообщения из MAX будут приходить в этот чат.',
+          boundChatIds.length > 1
+            ? 'Сообщения из MAX будут приходить в ЛС и в этот чат.'
+            : 'Сообщения из MAX будут приходить в ЛС.',
         ].filter(Boolean),
       }),
       { reply_markup: buildMenuKeyboard() }

@@ -64,6 +64,7 @@ async function applyTelegramCredentials(config, token, chatId) {
   config.telegram = config.telegram || {};
   config.telegram.token = String(token).trim();
   config.telegram.chatIds = [String(chatId).trim()];
+  config.telegram.adminChatIds = [String(chatId).trim()];
   config.setupComplete = false;
   saveConfig(config);
   console.log('Telegram настройки сохранены в config.json');

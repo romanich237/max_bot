@@ -27,6 +27,26 @@ function getAdminChatIds() {
   return (t.chatIds || []).map(String);
 }
 
+function isPrivateChatId(chatId) {
+  return Number(chatId) > 0;
+}
+
+function getNotificationChatIds() {
+  const t = getTelegram();
+  const ids = (t.chatIds || []).map(String);
+  if (!ids.length) return [];
+
+  const admins = getAdminChatIds();
+  const privateAdmin = admins.find(isPrivateChatId);
+  const hasGroup = ids.some((id) => !isPrivateChatId(id));
+
+  if (hasGroup && privateAdmin && !ids.includes(privateAdmin)) {
+    return [privateAdmin, ...ids];
+  }
+
+  return [...new Set(ids)];
+}
+
 function getMax() {
   const m = getRaw().max || {};
   return {
@@ -119,6 +139,8 @@ module.exports = {
   getRaw,
   getTelegram,
   getAdminChatIds,
+  getNotificationChatIds,
+  isPrivateChatId,
   getMax,
   getMaxDisplayName,
   getDefaultChatUrl: maxChats.getDefaultChatUrl,
