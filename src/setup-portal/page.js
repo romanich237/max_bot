@@ -181,7 +181,12 @@ function renderSetupPage(token) {
         inputBox.classList.remove('hidden');
         document.getElementById('authInputLabel').textContent = st.waitingInput.label;
         document.getElementById('authInputHint').textContent = st.waitingInput.hint || '';
-        document.getElementById('authInput').type = st.waitingInput.field === 'password' ? 'password' : 'text';
+        const authInput = document.getElementById('authInput');
+        authInput.type = st.waitingInput.field === 'password' ? 'password' : (st.waitingInput.field === 'tel' ? 'tel' : 'text');
+        authInput.inputMode = st.waitingInput.field === 'tel' ? 'numeric' : 'text';
+        authInput.placeholder = st.waitingInput.field === 'tel' && /код|sms/i.test(st.waitingInput.label || '')
+          ? '123456'
+          : (st.waitingInput.field === 'tel' ? '+79001234567' : '');
       } else if (st.step === 'auth') {
         choices.classList.toggle('hidden', st.hasScreenshot);
         inputBox.classList.add('hidden');

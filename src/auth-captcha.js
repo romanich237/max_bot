@@ -7,7 +7,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function hasVisibleSmsInputs(page) {
+  const otpInputs = page.locator(
+    'input[maxlength="1"], input[autocomplete="one-time-code"], input[inputmode="numeric"]'
+  );
+  const count = await otpInputs.count();
+  if (count >= 4 && count <= 8) {
+    const visible = await otpInputs.first().isVisible({ timeout: 300 }).catch(() => false);
+    if (visible) return true;
+  }
+
+  const single = page
+    .locator(
+      'input[placeholder*="код" i], input[placeholder*="code" i], input[aria-label*="код" i], input[name*="code" i]'
+    )
+    .first();
+  return single.isVisible({ timeout: 300 }).catch(() => false);
+}
+
 async function isCaptchaPage(page) {
+  if (await hasVisibleSmsInputs(page)) return false;
+
   const hasIframe = await page
     .locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]')
     .first()
@@ -138,6 +158,10 @@ async function waitForCaptchaResolved(page, options = {}) {
   let notified = false;
 
   while (Date.now() - started < timeoutMs) {
+    if (await hasVisibleSmsInputs(page)) {
+      return true;
+    }
+
     if (!(await isCaptchaPage(page))) {
       return true;
     }
@@ -160,6 +184,7 @@ async function waitForCaptchaResolved(page, options = {}) {
 
 module.exports = {
   CAPTCHA_TIMEOUT_MS,
+  hasVisibleSmsInputs,
   isCaptchaPage,
   tryClickCaptcha,
   captureCaptchaScreenshot,

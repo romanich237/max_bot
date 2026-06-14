@@ -13,6 +13,7 @@ const {
   sendMessage,
   answerCallback,
   editMessageText,
+  getChat,
   pollUpdates,
 } = require('./tg-api');
 const {
@@ -23,6 +24,18 @@ const {
 } = require('./tg-settings');
 const replyStore = require('./reply-store');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard } = require('./auth-qr');
+const {
+  recordChatFromUpdate,
+  recordChat,
+  listKnownChats,
+  getKnownChat,
+  buildDiscoverKeyboard,
+  buildDiscoverEmptyText,
+  buildChatInfoText,
+  buildChatInfoKeyboard,
+  buildNotifyChatText,
+  bindNotificationChat,
+} = require('./tg-chats');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -123,6 +136,9 @@ function buildStatusText() {
     `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
     `Автообновление: ✅ всегда (${updateLabel})`,
     max.chatUrl ? `Чат MAX: <code>${max.chatUrl}</code>` : 'Чат MAX: не задан',
+    tg.chatIds?.length
+      ? `Уведомления в TG: ${tg.chatIds.map((id) => `<code>${id}</code>`).join(', ')}`
+      : 'Уведомления в TG: не задан',
   ];
 
   return lines.filter(Boolean).join('\n');
@@ -131,6 +147,10 @@ function buildStatusText() {
 function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
   rows.push([{ text: '✏️ Имена ротации', callback_data: 'action:profileNames' }]);
+  rows.push([
+    { text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' },
+    { text: '🔍 Узнать ID', callback_data: 'discover:page:0' },
+  ]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
   if (isMonitoringEnabled()) {
     rows.push([{ text: '⏹ Остановить MAX', callback_data: 'action:stopMax' }]);
@@ -224,6 +244,67 @@ async function handleAuthInput(chatId, text) {
   clearAuthInputWaiter();
   waiter.onValid(text);
   return true;
+}
+
+async function showDiscoverChats(chatId, messageId, page = 0) {
+  const chats = listKnownChats();
+  const keyboard = buildDiscoverKeyboard(page);
+
+  if (!chats.length) {
+    const text = buildDiscoverEmptyText();
+    if (messageId) {
+      await editMessageText(chatId, messageId, text, {
+        reply_markup: { inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]] },
+      });
+    } else {
+      await sendMessage(chatId, text, {
+        reply_markup: { inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]] },
+      });
+    }
+    return;
+  }
+
+  const text = [
+    '<b>Узнать ID чата</b>',
+    '',
+    'Выберите чат — бот пришлёт ID и название.',
+    'Можно привязать чат для уведомлений из MAX.',
+  ].join('\n');
+
+  if (messageId) {
+    await editMessageText(chatId, messageId, text, { reply_markup: keyboard });
+  } else {
+    await sendMessage(chatId, text, { reply_markup: keyboard });
+  }
+}
+
+async function showChatInfo(chatId, messageId, targetChatId) {
+  let known = getKnownChat(targetChatId);
+  let freshTitle = known?.title;
+
+  try {
+    const data = await getChat(targetChatId);
+    if (data.ok && data.result) {
+      recordChat(data.result);
+      known = getKnownChat(targetChatId) || known;
+      freshTitle = data.result.title || data.result.first_name || freshTitle;
+    }
+  } catch {
+    /* use cached */
+  }
+
+  if (!known) {
+    known = {
+      id: String(targetChatId),
+      title: freshTitle || 'Без названия',
+      type: 'unknown',
+    };
+  }
+
+  const text = buildChatInfoText(known, freshTitle);
+  await editMessageText(chatId, messageId, text, {
+    reply_markup: buildChatInfoKeyboard(targetChatId),
+  });
 }
 
 async function handleMessage(message) {
@@ -383,6 +464,9 @@ async function handleMessage(message) {
         '',
         'На сообщениях из MAX — кнопка <b>↩️ Ответить</b>',
         '',
+        '<b>Меню</b>',
+        '«Чат уведомлений» — куда приходят сообщения из MAX',
+        '«Узнать ID» — список чатов с ID и названием',
         '<b>Ключи для /set</b>',
         'chatUrl, profileInterval, onlineInterval, profileNames, browserPassword',
       ].join('\n')
@@ -504,6 +588,68 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data === 'action:notifyChat') {
+    await answerCallback(query.id, 'Чат уведомлений');
+    await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔍 Узнать ID', callback_data: 'discover:page:0' }],
+          [{ text: '« В меню', callback_data: 'discover:menu' }],
+        ],
+      },
+    });
+    return;
+  }
+
+  if (data === 'discover:menu') {
+    await answerCallback(query.id, 'Меню');
+    await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
+      reply_markup: buildMenuKeyboard(),
+    });
+    return;
+  }
+
+  if (data === 'discover:noop') {
+    await answerCallback(query.id);
+    return;
+  }
+
+  if (data.startsWith('discover:page:')) {
+    const page = Number.parseInt(data.slice('discover:page:'.length), 10) || 0;
+    await answerCallback(query.id, 'Список чатов');
+    await showDiscoverChats(chatId, query.message.message_id, page);
+    return;
+  }
+
+  if (data.startsWith('chatinfo:')) {
+    const targetChatId = data.slice('chatinfo:'.length);
+    await answerCallback(query.id, 'Информация о чате');
+    await showChatInfo(chatId, query.message.message_id, targetChatId);
+    return;
+  }
+
+  if (data.startsWith('bindchat:')) {
+    const targetChatId = data.slice('bindchat:'.length);
+    const known = getKnownChat(targetChatId);
+    bindNotificationChat(targetChatId, chatId);
+    await answerCallback(query.id, 'Привязано');
+    await sendMessage(
+      chatId,
+      [
+        '✅ <b>Чат привязан для уведомлений из MAX</b>',
+        '',
+        known?.title ? `Название: <b>${escapeHtml(known.title)}</b>` : null,
+        `ID: <code>${targetChatId}</code>`,
+        '',
+        'Сообщения из MAX будут приходить в этот чат.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      { reply_markup: buildMenuKeyboard() }
+    );
+    return;
+  }
+
   if (data === 'status') {
     await answerCallback(query.id, 'Обновлено');
     await editMessageText(chatId, query.message.message_id, buildStatusText(), {
@@ -558,9 +704,11 @@ function startTelegramAdmin() {
     });
 
   return pollUpdates(async (update) => {
+    recordChatFromUpdate(update);
     if (update.message) await handleMessage(update.message);
     if (update.callback_query) await handleCallback(update.callback_query);
   }, {
+    allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
     onError: (err) => console.error('Ошибка панели Telegram:', err.message),
   });
 }

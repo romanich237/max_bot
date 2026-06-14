@@ -55,7 +55,13 @@ async function runMaxAuth(state, mode) {
       try {
         if (page.isClosed()) return;
         const buffer = await captureLoginScreenshot(page);
-        setScreenshot(state, buffer, mode === 'qr' ? 'Сканируйте QR в приложении MAX' : 'Страница входа MAX');
+        const caption =
+          mode === 'qr'
+            ? 'Сканируйте QR в приложении MAX'
+            : state.waitingInput?.label?.includes('SMS')
+              ? 'Капча и экран SMS на MAX'
+              : 'Страница входа MAX';
+        setScreenshot(state, buffer, caption);
       } catch {
         /* page navigating */
       }

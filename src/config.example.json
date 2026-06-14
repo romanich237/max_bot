@@ -3,6 +3,7 @@
   "telegram": {
     "token": "",
     "chatIds": [],
+    "adminChatIds": [],
     "showTime": false,
     "showServiceHeader": false
   },
