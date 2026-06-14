@@ -211,6 +211,14 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
     }
   );
 
+  await notifyAuthDone(chatIds, options, {
+    title: 'Вхожу в MAX',
+    status: 'progress',
+    step: 2,
+    total: AUTH_STEPS,
+    lines: [`Номер: <code>${maskPhone(phone)}</code>`],
+  });
+
   await fillPhoneNumber(page, phone);
   await clickSignIn(page);
 
