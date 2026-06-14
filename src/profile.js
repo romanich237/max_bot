@@ -1,5 +1,13 @@
 const CYRILLIC_LETTERS = 'абвгдежзийклмнопрстуфхцчшщъыьэюя';
 
+let profileEditChain = Promise.resolve();
+
+function withProfileEdit(fn) {
+  const run = profileEditChain.then(() => fn());
+  profileEditChain = run.catch(() => {});
+  return run;
+}
+
 function nextDisplayName(options = {}, index = 0) {
   const { mode = 'letter', baseName = '', names = [] } = options;
 
@@ -136,20 +144,22 @@ async function readInputValue(input) {
 }
 
 async function readProfileFirstNameOnly(page, chatUrl) {
-  await openProfileEditor(page);
-  await page.waitForTimeout(400);
+  return withProfileEdit(async () => {
+    await openProfileEditor(page);
+    await page.waitForTimeout(400);
 
-  const input = await getProfileFirstNameInput(page);
-  const firstName = await readInputValue(input);
+    const input = await getProfileFirstNameInput(page);
+    const firstName = await readInputValue(input);
 
-  await closeProfileEditor(page);
+    await closeProfileEditor(page);
 
-  if (chatUrl) {
-    await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-    await page.waitForTimeout(2000);
-  }
+    if (chatUrl) {
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2000);
+    }
 
-  return firstName;
+    return firstName;
+  });
 }
 
 async function readProfileNames(page, chatUrl) {
@@ -224,8 +234,33 @@ async function fillProfileField(page, input, text) {
   const tag = await target.evaluate((el) => el.tagName.toLowerCase());
   const isContentEditable = await target.evaluate((el) => el.isContentEditable);
 
-  if (tag === 'textarea' || isContentEditable) {
-    await dispatchFieldInput(target, text);
+  if (tag === 'textarea') {
+    try {
+      await target.fill(text);
+    } catch {
+      /* fallback below */
+    }
+
+    const entered = await target.inputValue().catch(() => '');
+    if (entered.trim() !== String(text).trim()) {
+      await page.keyboard.press('Control+A');
+      await page.keyboard.press('Backspace');
+      await page.waitForTimeout(50);
+      try {
+        await page.keyboard.insertText(text);
+      } catch {
+        await dispatchFieldInput(target, text);
+      }
+    }
+  } else if (isContentEditable) {
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(50);
+    try {
+      await page.keyboard.insertText(text);
+    } catch {
+      await dispatchFieldInput(target, text);
+    }
   } else {
     try {
       await target.fill(text);
@@ -238,25 +273,24 @@ async function fillProfileField(page, input, text) {
     }
   }
 
-  await target.blur();
+  await target.dispatchEvent('input').catch(() => {});
   await page.waitForTimeout(300);
 }
 
-async function clickProfileSave(page) {
+async function waitForProfileSaveButton(page) {
   const saveBtn = page
     .getByRole('button', { name: /^(save|сохранить)$/i })
     .or(page.locator('button[aria-label="Save"], button[aria-label="Сохранить"]'))
     .first();
 
   await saveBtn.waitFor({ state: 'visible', timeout: 10000 });
+  return saveBtn;
+}
+
+async function clickProfileSave(page) {
+  const saveBtn = await waitForProfileSaveButton(page);
   await saveBtn.click();
-
-  await page
-    .getByRole('button', { name: /^(save|сохранить)$/i })
-    .waitFor({ state: 'hidden', timeout: 15000 })
-    .catch(() => {});
-
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(2000);
 }
 
 async function saveFirstName(page, firstName) {
@@ -300,23 +334,28 @@ async function saveProfileBio(page, bioText) {
   }
 
   await fillProfileField(page, input, bioText);
+  await waitForProfileSaveButton(page);
   await clickProfileSave(page);
 }
 
 async function rotateProfileBio(page, chatUrl, options = {}) {
-  const { renderBioDescription } = require('./profile-bio');
-  const bioText = await renderBioDescription(options);
-  const preview = bioText.length > 80 ? `${bioText.slice(0, 80)}…` : bioText;
-  console.log(`Обновление описания MAX (${bioText.length} симв.): «${preview}»`);
+  return withProfileEdit(async () => {
+    const { renderBioDescription } = require('./profile-bio');
+    const bioText = await renderBioDescription(options);
+    const preview = bioText.length > 80 ? `${bioText.slice(0, 80)}…` : bioText;
+    console.log(`Обновление описания MAX (${bioText.length} симв.): «${preview}»`);
 
-  await openProfileEditor(page);
-  await saveProfileBio(page, bioText);
-  await closeProfileEditor(page);
+    await openProfileEditor(page);
+    await saveProfileBio(page, bioText);
+    await closeProfileEditor(page);
 
-  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.waitForTimeout(2000);
+    if (chatUrl) {
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2000);
+    }
 
-  return bioText;
+    return bioText;
+  });
 }
 
 async function closeProfileEditor(page) {
@@ -334,17 +373,21 @@ async function closeProfileEditor(page) {
 }
 
 async function rotateDisplayName(page, chatUrl, options = {}) {
-  const firstName = nextDisplayName(options, options._index ?? 0);
-  console.log(`Смена имени в MAX → «${firstName}»`);
+  return withProfileEdit(async () => {
+    const firstName = nextDisplayName(options, options._index ?? 0);
+    console.log(`Смена имени в MAX → «${firstName}»`);
 
-  await openProfileEditor(page);
-  await saveFirstName(page, firstName);
-  await closeProfileEditor(page);
+    await openProfileEditor(page);
+    await saveFirstName(page, firstName);
+    await closeProfileEditor(page);
 
-  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.waitForTimeout(2000);
+    if (chatUrl) {
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2000);
+    }
 
-  return firstName;
+    return firstName;
+  });
 }
 
 module.exports = {

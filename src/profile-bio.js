@@ -48,9 +48,6 @@ async function renderBioDescription(options = {}) {
   }
 
   const apiKey = settings.weatherApiKey;
-  if (!apiKey) {
-    throw new Error('Не задан OpenWeatherMap API key (profileBio.weatherApiKey).');
-  }
 
   const weather = await fetchWeatherText(city, apiKey);
   const { resolveCity } = require('./weather');

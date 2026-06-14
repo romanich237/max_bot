@@ -246,8 +246,6 @@ async function startMonitor() {
   let bioTimer = null;
   let monitorTimer = null;
   const reauthPromptIds = {};
-  let lastProfileNameSync = 0;
-  const PROFILE_NAME_RETRY_MS = 5 * 60 * 1000;
   const defaultChatUrl = getDefaultChatUrl();
 
   function isEditOk(result) {
@@ -558,19 +556,13 @@ async function startMonitor() {
       const current = getProfileBio();
       if (!current.enabled || !isMonitoringEnabled()) return;
 
-      if (authBusy || profileBusy) {
+      if (authBusy) {
         bioTimer = setTimeout(tick, 30000);
         return;
       }
 
       if (!String(current.city || '').trim()) {
         console.warn('Авто описание: город не задан');
-        bioTimer = setTimeout(tick, current.intervalMs);
-        return;
-      }
-
-      if (!current.weatherApiKey) {
-        console.warn('Авто описание: не задан OpenWeatherMap API key');
         bioTimer = setTimeout(tick, current.intervalMs);
         return;
       }
@@ -647,22 +639,6 @@ async function startMonitor() {
       }
 
       if (sessionExpired) return;
-
-      if (Date.now() - lastProfileNameSync > PROFILE_NAME_RETRY_MS) {
-        lastProfileNameSync = Date.now();
-        profileBusy = true;
-        try {
-          await syncOwnNames(page, {
-            readProfile: true,
-            chatUrl: getDefaultChatUrl(),
-            notify: false,
-          });
-        } catch (err) {
-          console.warn('Синхронизация имени MAX:', err.message);
-        } finally {
-          profileBusy = false;
-        }
-      }
 
       await saveState(persistChatStates(chatStates));
     } catch (err) {
