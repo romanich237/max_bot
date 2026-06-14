@@ -119,6 +119,20 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
           return;
         }
 
+        if (/^\/set\s+browserpassword\s+/i.test(text)) {
+          const pwd = text.replace(/^\/set\s+browserpassword\s+/i, '').trim();
+          if (pwd) {
+            const { store } = require('./config');
+            store.setPath(['max', 'browserPassword'], pwd);
+            finish(pwd);
+            return;
+          }
+        }
+
+        if (text.startsWith('/') && !/^\/cancel$/i.test(text)) {
+          return;
+        }
+
         if (options.validate) {
           const validated = options.validate(text);
           if (validated === false || validated == null) {

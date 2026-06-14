@@ -230,24 +230,63 @@ async function handleAuthInput(chatId, text) {
     return true;
   }
 
-  if (authInputWaiter.validate) {
-    const validated = authInputWaiter.validate(text);
-    if (validated === false || validated == null) {
+  if (/^\/set\s+browserpassword\s+/i.test(text)) {
+    const setResult = parseSetCommand(text);
+    if (setResult?.ok) {
+      const waiter = authInputWaiter;
+      clearAuthInputWaiter();
+      waiter.onValid(setResult.value);
       await sendMessage(
         chatId,
-        authInputWaiter.invalidMessage || 'Неверный формат. Попробуйте ещё раз или /cancel.'
+        buildEventMessage({
+          title: 'Пароль @Browser сохранён',
+          status: 'done',
+          lines: ['Продолжаю вход в MAX.'],
+        })
       );
       return true;
     }
-    const waiter = authInputWaiter;
-    clearAuthInputWaiter();
-    waiter.onValid(typeof validated === 'string' ? validated : text);
-    return true;
+    return false;
+  }
+
+  if (text.startsWith('/') && !/^\/cancel$/i.test(text)) {
+    return false;
+  }
+
+  if (authInputWaiter.validate) {
+        const validated = authInputWaiter.validate(text);
+        if (validated === false || validated == null) {
+          await sendMessage(
+            chatId,
+            authInputWaiter.invalidMessage || 'Неверный формат. Попробуйте ещё раз или /cancel.'
+          );
+          return true;
+        }
+        const waiter = authInputWaiter;
+        clearAuthInputWaiter();
+        waiter.onValid(typeof validated === 'string' ? validated : text);
+        await sendMessage(
+          chatId,
+          buildEventMessage({
+            title: 'Пароль получен',
+            status: 'done',
+            lines: ['Продолжаю вход в MAX.'],
+          })
+        );
+        return true;
   }
 
   const waiter = authInputWaiter;
   clearAuthInputWaiter();
   waiter.onValid(text);
+  await sendMessage(
+    chatId,
+    buildEventMessage({
+      title: 'Пароль получен',
+      status: 'done',
+      lines: ['Продолжаю вход в MAX.'],
+    })
+  );
   return true;
 }
 
@@ -514,19 +553,36 @@ async function handleMessage(message) {
       await sendMessage(chatId, result.error);
       return;
     }
-    await sendMessage(
-      chatId,
-      buildEventMessage({
-        title: 'Сохранено',
-        status: 'done',
-        lines: [
-          `<code>${result.key}</code> = <code>${result.value}</code>`,
-          '',
-          buildStatusText(),
-        ],
-      }),
-      { reply_markup: buildMenuKeyboard() }
-    );
+    if (result?.ok && result.key === 'browserpassword' && authInputWaiter) {
+      const waiter = authInputWaiter;
+      clearAuthInputWaiter();
+      waiter.onValid(result.value);
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Пароль @Browser сохранён',
+          status: 'done',
+          lines: ['Продолжаю вход в MAX.'],
+        })
+      );
+      return;
+    }
+    if (result?.ok) {
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Сохранено',
+          status: 'done',
+          lines: [
+            `<code>${result.key}</code> = <code>${result.value}</code>`,
+            '',
+            buildStatusText(),
+          ],
+        }),
+        { reply_markup: buildMenuKeyboard() }
+      );
+      return;
+    }
   }
 }
 

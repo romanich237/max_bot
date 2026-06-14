@@ -1,4 +1,4 @@
-const { getMax } = require('./config');
+const { getMax, store } = require('./config');
 const { sendMessage, sendPhotoBuffer } = require('./tg-api');
 const { promptTelegramText } = require('./auth-prompt');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
@@ -135,7 +135,17 @@ async function fillBrowserPassword(page, password) {
 
   await input.waitFor({ state: 'visible', timeout: 10000 });
   await input.click();
-  await input.fill(password);
+  await input.fill('');
+  await input.pressSequentially(password, { delay: 40 });
+
+  const continueBtn = page
+    .getByRole('button', { name: /продолжить|continue|войти|sign in|далее|next|готово|done|подтвердить|confirm/i })
+    .first();
+
+  if (await continueBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await continueBtn.click({ timeout: 5000 });
+    return;
+  }
 
   const submit = page.getByRole('button', {
     name: /войти|sign in|продолжить|continue|подтвердить|confirm|далее|next|готово|done/i,
@@ -182,8 +192,18 @@ async function resolveBrowserPassword(chatIds, options = {}) {
 async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
   const configured = getBrowserPassword();
   const password = configured || (await resolveBrowserPassword(chatIds, options));
+
+  if (!configured && password) {
+    store.setPath(['max', 'browserPassword'], password);
+  }
+
   await fillBrowserPassword(page, password);
   await page.waitForTimeout(2500);
+
+  if (await isBrowserPasswordPrompt(page)) {
+    throw new Error('Пароль @Browser не принят. Проверьте пароль и отправьте /reauth');
+  }
+
   return true;
 }
 
@@ -218,7 +238,27 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
     options.browserScreenshotSent = true;
   }
 
-  await handleBrowserPasswordPrompt(page, chatIds, options);
+  try {
+    await handleBrowserPasswordPrompt(page, chatIds, options);
+  } catch (err) {
+    for (const chatId of chatIds) {
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Пароль @Browser не принят',
+          status: 'fail',
+          lines: [
+            err.message,
+            'Отправьте пароль <b>текстом</b> (без команды) или:',
+            '<code>/set browserpassword ваш_пароль</code>',
+          ],
+        }),
+        {},
+        options.token
+      );
+    }
+    return false;
+  }
 
   await notifyEvent(
     chatIds,
