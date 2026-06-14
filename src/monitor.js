@@ -10,7 +10,7 @@ const {
 } = require('./config');
 const { rotateDisplayName } = require('./profile');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setReplyHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
 const { runAuthQrOnPage } = require('./auth-qr');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
@@ -94,7 +94,40 @@ async function startMonitor() {
   let authBusy = false;
   let profileIndex = 0;
   let profileTimer = null;
+  let monitorTimer = null;
   let currentChatUrl = max.chatUrl;
+
+  function isMonitoringEnabled() {
+    return getMax().monitoringEnabled !== false;
+  }
+
+  function clearMonitorTimer() {
+    if (monitorTimer) {
+      clearTimeout(monitorTimer);
+      monitorTimer = null;
+    }
+  }
+
+  function clearProfileTimer() {
+    if (profileTimer) {
+      clearTimeout(profileTimer);
+      profileTimer = null;
+    }
+  }
+
+  function pauseMonitoring() {
+    store.setPath(['max', 'monitoringEnabled'], false);
+    clearMonitorTimer();
+    clearProfileTimer();
+    console.log('Мониторинг MAX остановлен');
+  }
+
+  function resumeMonitoring() {
+    store.setPath(['max', 'monitoringEnabled'], true);
+    scheduleProfileRotate();
+    scheduleMonitor();
+    console.log('Мониторинг MAX запущен');
+  }
 
   const context = await chromium.launchPersistentContext(settings.userDataDir, {
     headless: settings.headless,
@@ -133,6 +166,14 @@ async function startMonitor() {
     await performReauth({ introMessage: false });
   });
 
+  setStopHandler(() => {
+    pauseMonitoring();
+  });
+
+  setStartHandler(() => {
+    resumeMonitoring();
+  });
+
   setReplyHandler(async (targetMessage, text) => {
     if (authBusy) {
       throw new Error('Идёт авторизация MAX, повторите позже');
@@ -155,7 +196,11 @@ async function startMonitor() {
 
   store.on('change', () => {
     onlineKeeper.reschedule();
-    scheduleProfileRotate();
+    if (isMonitoringEnabled()) {
+      scheduleProfileRotate();
+    } else {
+      clearProfileTimer();
+    }
   });
 
   console.log(`Подключение к чату MAX: ${currentChatUrl}`);
@@ -204,10 +249,9 @@ async function startMonitor() {
   console.log('Управление: отправьте /menu боту в Telegram');
 
   function scheduleProfileRotate() {
-    if (profileTimer) {
-      clearTimeout(profileTimer);
-      profileTimer = null;
-    }
+    clearProfileTimer();
+
+    if (!isMonitoringEnabled()) return;
 
     const profileRotate = getProfileRotate();
     if (!profileRotate.enabled) return;
@@ -220,7 +264,7 @@ async function startMonitor() {
       const current = getProfileRotate();
       profileTimer = setTimeout(tick, current.intervalMs);
 
-      if (!current.enabled || profileBusy || authBusy) return;
+      if (!current.enabled || profileBusy || authBusy || !isMonitoringEnabled()) return;
 
       profileBusy = true;
       try {
@@ -241,10 +285,12 @@ async function startMonitor() {
     profileTimer = setTimeout(tick, profileRotate.intervalMs);
   }
 
-  scheduleProfileRotate();
+  if (isMonitoringEnabled()) {
+    scheduleProfileRotate();
+  }
 
   async function monitorTick() {
-    if (profileBusy || authBusy) return;
+    if (!isMonitoringEnabled() || profileBusy || authBusy) return;
 
     try {
       const maxCfg = getMax();
@@ -301,14 +347,21 @@ async function startMonitor() {
   }
 
   const scheduleMonitor = () => {
+    clearMonitorTimer();
+    if (!isMonitoringEnabled()) return;
+
     const delay = getSettings().checkIntervalMs;
-    setTimeout(async () => {
+    monitorTimer = setTimeout(async () => {
       await monitorTick();
       scheduleMonitor();
     }, delay);
   };
 
-  scheduleMonitor();
+  if (isMonitoringEnabled()) {
+    scheduleMonitor();
+  } else {
+    console.log('Мониторинг MAX выключен. Запустите через /menu в Telegram.');
+  }
 }
 
 module.exports = { startMonitor };

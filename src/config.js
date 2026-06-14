@@ -28,7 +28,11 @@ function getAdminChatIds() {
 }
 
 function getMax() {
-  return getRaw().max || {};
+  const m = getRaw().max || {};
+  return {
+    ...m,
+    monitoringEnabled: m.monitoringEnabled !== false,
+  };
 }
 
 function getProfileRotate() {

@@ -32,6 +32,8 @@ const SETTABLE = {
 
 let reauthHandler = null;
 let replyHandler = null;
+let stopHandler = null;
+let startHandler = null;
 const waitingInput = new Map();
 
 function setReauthHandler(fn) {
@@ -40,6 +42,18 @@ function setReauthHandler(fn) {
 
 function setReplyHandler(fn) {
   replyHandler = fn;
+}
+
+function setStopHandler(fn) {
+  stopHandler = fn;
+}
+
+function setStartHandler(fn) {
+  startHandler = fn;
+}
+
+function isMonitoringEnabled() {
+  return getMax().monitoringEnabled !== false;
 }
 
 function escapeHtml(text) {
@@ -69,6 +83,7 @@ function buildStatusText() {
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
     '',
+    `Мониторинг MAX: ${onFlag(isMonitoringEnabled())}`,
     `Бесконечный онлайн: ${onFlag(online.enabled)} (${online.intervalMs / 1000} с)`,
     `Ротация имени: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
     profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : 'Имена: не заданы',
@@ -85,6 +100,11 @@ function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
   rows.push([{ text: '✏️ Имена ротации', callback_data: 'action:profileNames' }]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
+  if (isMonitoringEnabled()) {
+    rows.push([{ text: '⏹ Остановить MAX', callback_data: 'action:stopMax' }]);
+  } else {
+    rows.push([{ text: '▶️ Запустить MAX', callback_data: 'action:startMax' }]);
+  }
   return { inline_keyboard: rows };
 }
 
@@ -199,6 +219,30 @@ async function handleMessage(message) {
     return;
   }
 
+  if (/^\/(stop|pause)$/i.test(text)) {
+    if (!stopHandler) {
+      await sendMessage(chatId, 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>');
+      return;
+    }
+    stopHandler();
+    await sendMessage(chatId, '⏹ Мониторинг MAX остановлен.', {
+      reply_markup: buildMenuKeyboard(),
+    });
+    return;
+  }
+
+  if (/^\/(start|resume)$/i.test(text)) {
+    if (!startHandler) {
+      await sendMessage(chatId, 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>');
+      return;
+    }
+    startHandler();
+    await sendMessage(chatId, '▶️ Мониторинг MAX запущен.', {
+      reply_markup: buildMenuKeyboard(),
+    });
+    return;
+  }
+
   if (/^\/reauth$/i.test(text)) {
     if (!reauthHandler) {
       await sendMessage(
@@ -225,6 +269,8 @@ async function handleMessage(message) {
         '<b>Команды</b>',
         '/menu — кнопки вкл/выкл',
         '/status — текущие настройки',
+        '/stop — остановить мониторинг MAX',
+        '/start — запустить мониторинг MAX',
         '/reauth — скриншот входа MAX',
         '/cancel — отменить ввод ответа',
         '/set ключ значение — изменить параметр',
@@ -297,6 +343,32 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data === 'action:stopMax') {
+    await answerCallback(query.id, 'Остановлено');
+    if (!stopHandler) {
+      await sendMessage(chatId, 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>');
+      return;
+    }
+    stopHandler();
+    await sendMessage(chatId, '⏹ Мониторинг MAX остановлен. Сообщения не пересылаются.', {
+      reply_markup: buildMenuKeyboard(),
+    });
+    return;
+  }
+
+  if (data === 'action:startMax') {
+    await answerCallback(query.id, 'Запущено');
+    if (!startHandler) {
+      await sendMessage(chatId, 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>');
+      return;
+    }
+    startHandler();
+    await sendMessage(chatId, '▶️ Мониторинг MAX запущен.', {
+      reply_markup: buildMenuKeyboard(),
+    });
+    return;
+  }
+
   if (data === 'action:profileNames') {
     waitingInput.set(String(chatId), 'profileNames');
     await answerCallback(query.id, 'Жду имена');
@@ -355,6 +427,8 @@ module.exports = {
   startTelegramAdmin,
   setReauthHandler,
   setReplyHandler,
+  setStopHandler,
+  setStartHandler,
   buildStatusText,
   buildMenuKeyboard,
 };
