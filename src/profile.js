@@ -78,6 +78,21 @@ async function closeProfileEditor(page) {
   }
 }
 
+async function readProfileFirstName(page, chatUrl) {
+  await openProfileEditor(page);
+  const input = page.getByRole('textbox', { name: /^first name$/i });
+  await input.waitFor({ state: 'visible', timeout: 10000 });
+  const name = (await input.inputValue()).trim();
+  await closeProfileEditor(page);
+
+  if (chatUrl) {
+    await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.waitForTimeout(2000);
+  }
+
+  return name;
+}
+
 async function rotateDisplayName(page, chatUrl, options = {}) {
   const firstName = nextDisplayName(options, options._index ?? 0);
   console.log(`Смена имени в MAX → «${firstName}»`);
@@ -94,5 +109,6 @@ async function rotateDisplayName(page, chatUrl, options = {}) {
 
 module.exports = {
   nextDisplayName,
+  readProfileFirstName,
   rotateDisplayName,
 };

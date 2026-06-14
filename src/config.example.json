@@ -10,6 +10,7 @@
     "chatUrl": "",
     "skipOwnMessages": true,
     "ownAuthorNames": [],
+    "currentDisplayName": "",
     "monitoringEnabled": true
   },
   "profileRotate": {

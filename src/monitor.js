@@ -9,6 +9,7 @@ const {
   store,
 } = require('./config');
 const { rotateDisplayName } = require('./profile');
+const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
 const { runAuthQrOnPage } = require('./auth-qr');
@@ -221,6 +222,14 @@ async function startMonitor() {
   }
   console.log(`В DOM найдено ${messages.length} сообщений (после прокрутки вниз).`);
 
+  await syncOwnNames(page, {
+    messages,
+    readProfile: true,
+    chatUrl: currentChatUrl,
+    notify: true,
+    reason: 'Бот определил ваше имя в MAX.',
+  });
+
   const forwardOnStart = getSettings().forwardOnStart;
   if (forwardOnStart > 0) {
     const recent = messages.filter(shouldForward).slice(-forwardOnStart);
@@ -275,6 +284,12 @@ async function startMonitor() {
         });
         profileIndex += 1;
         console.log(`Имя обновлено: «${name}»`);
+        await syncOwnNames(page, {
+          extraNames: [name],
+          chatUrl,
+          notify: true,
+          reason: 'Имя сменилось при ротации — добавлено в список «своих».',
+        });
       } catch (err) {
         console.error('Ошибка смены имени:', err.message);
       } finally {
@@ -321,6 +336,8 @@ async function startMonitor() {
       }
 
       messages = await readMessages(page);
+      syncOwnNamesFromMessages(messages);
+
       const byKeys = findNewMessages(messages, seenKeys);
       const byTail = diffByTail(lastSnapshot, messages);
       const toSend = byKeys.length >= byTail.length ? byKeys : byTail;

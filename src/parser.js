@@ -103,7 +103,10 @@ async function scrollChatToBottom(page) {
 function isOwnByAuthor(author) {
   const names = ownNamesLower();
   if (!names.length) return false;
-  return names.includes(author.toLowerCase().trim());
+  const normalized = author.toLowerCase().trim();
+  return names.some(
+    (name) => normalized === name || normalized.startsWith(name) || name.startsWith(normalized)
+  );
 }
 
 function shouldForward(message) {
@@ -270,7 +273,12 @@ async function parseMessages(page) {
 
         const bubble = wrapper.querySelector('[data-bubbles-variant]');
         const variant = bubble?.getAttribute('data-bubbles-variant') || '';
-        const isOwn = variant === 'outgoing';
+        const wrapperClass = wrapper.className || '';
+        const bubbleClass = bubble?.className || '';
+        const isOwn =
+          variant === 'outgoing' ||
+          /outgoing|isOwn|myMessage|messageWrapper--out/i.test(wrapperClass) ||
+          /outgoing|isOwn/i.test(bubbleClass);
 
         if (!body && media.length === 1) {
           const labels = {
