@@ -13,11 +13,6 @@ async function isLoginPage(page) {
   return /войдите в max|qr-код|войти по номеру телефона/i.test(bodyText);
 }
 
-async function isBrowserPasswordPrompt(page) {
-  const bodyText = await page.locator('body').innerText();
-  return /@browser/i.test(bodyText);
-}
-
 async function scrollChatToBottom(page) {
   await page.evaluate(() => {
     const scrollables = new Set();
@@ -330,7 +325,6 @@ async function waitForChat(page) {
 module.exports = {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
-  isBrowserPasswordPrompt,
   readMessages,
   findNewMessages,
   diffByTail,

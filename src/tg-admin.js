@@ -27,7 +27,6 @@ const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
   chaturl: { path: ['max', 'chatUrl'], type: 'string' },
-  browserpassword: { path: ['max', 'browserPassword'], type: 'string' },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
 };
 
@@ -233,7 +232,7 @@ async function handleMessage(message) {
         'На сообщениях из MAX — кнопка <b>↩️ Ответить</b>',
         '',
         '<b>Ключи для /set</b>',
-        'chatUrl, browserPassword, profileInterval, onlineInterval, profileNames',
+        'chatUrl, profileInterval, onlineInterval, profileNames',
       ].join('\n')
     );
     return;

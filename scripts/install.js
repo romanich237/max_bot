@@ -64,13 +64,6 @@ async function collectTelegramCredentials(config) {
   config.telegram = config.telegram || {};
   config.telegram.token = token;
   config.telegram.chatIds = [String(chatId)];
-  config.max = config.max || {};
-  const browserPassword =
-    process.env.MAX_BROWSER_PASSWORD ||
-    (await ask('Пароль для  MAX (который вы назначали в личном кабинете'));
-  if (browserPassword) {
-    config.max.browserPassword = browserPassword;
-  }
   config.setupComplete = false;
   saveConfig(config);
 
