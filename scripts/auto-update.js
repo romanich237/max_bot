@@ -3,8 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('../src/config');
 const { sendMessage } = require('../src/tg-api');
-
-const APP_NAME = 'max-tg';
+const { restartPm2Apps, restartPm2App, APP_NAME, UPDATE_APP_NAME } = require('../src/pm2');
 
 function run(cmd, options = {}) {
   return execSync(cmd, {
@@ -87,13 +86,20 @@ async function checkAndUpdate() {
 
     run(`git pull --ff-only origin ${cfg.branch}`);
     run('npm install --omit=dev --ignore-scripts');
-    run(`pm2 restart ${APP_NAME}`);
+    await restartPm2Apps([APP_NAME]);
 
+    await notifyAdmins('✅ <b>Бот обновлён</b>\nСервер перезапущен с новой версией.');
     console.log('auto-update: бот перезапущен');
+
+    void restartPm2App(UPDATE_APP_NAME).catch((err) => {
+      console.warn(`auto-update: не удалось перезапустить ${UPDATE_APP_NAME}:`, err.message);
+    });
     return true;
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
-    await notifyAdmins(`⚠️ <b>Ошибка автообновления</b>\n<code>${err.message}</code>`);
+    await notifyAdmins(
+      `⚠️ <b>Ошибка автообновления</b>\n<code>${err.message}</code>\n\nПопробуйте вручную:\n<code>cd ~/max-tg && git pull && npm install --omit=dev && npm run pm2</code>`
+    );
     return false;
   }
 }
