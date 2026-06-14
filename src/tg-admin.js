@@ -30,7 +30,8 @@ const {
   pollUpdates,
 } = require('./tg-api');
 const {
-  buildToggleRows,
+  TOGGLES,
+  buildToggleButton,
   parseNameList,
   saveProfileNames,
   saveProfileBioCity,
@@ -222,18 +223,29 @@ function isDiscoverIdRequest(text) {
 }
 
 function buildMenuKeyboard() {
-  const rows = buildToggleRows('toggle:');
-  rows.push([{ text: '✏️ Имена авто', callback_data: 'action:profileNames' }]);
-  rows.push([{ text: '🏙 Город', callback_data: 'action:profileBioCity' }]);
-  rows.push([{ text: '📝 Шаблон описания', callback_data: 'action:profileBioTemplate' }]);
-  rows.push([{ text: '💬 Чаты MAX', callback_data: 'maxchat:list' }]);
-  rows.push([{ text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' }]);
-  rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
+  const prefix = 'toggle:';
+  const rows = [
+    [buildToggleButton(prefix, TOGGLES[0])],
+    [buildToggleButton(prefix, TOGGLES[1]), buildToggleButton(prefix, TOGGLES[2])],
+    [{ text: 'Имена авто', callback_data: 'action:profileNames' }],
+    [
+      { text: 'Шаблон описания', callback_data: 'action:profileBioTemplate' },
+      { text: 'Город', callback_data: 'action:profileBioCity' },
+    ],
+    [
+      { text: 'Чаты МАХ', callback_data: 'maxchat:list' },
+      { text: 'Чат уведомлений', callback_data: 'action:notifyChat' },
+    ],
+  ];
+
+  const statusRow = [{ text: 'Обновить статус', callback_data: 'status' }];
   if (isMonitoringEnabled()) {
-    rows.push([{ text: '⏹ Остановить MAX', callback_data: 'action:stopMax' }]);
+    statusRow.push({ text: 'Остановить МАХ', callback_data: 'action:stopMax' });
   } else {
-    rows.push([{ text: '▶️ Запустить MAX', callback_data: 'action:startMax' }]);
+    statusRow.push({ text: 'Запустить МАХ', callback_data: 'action:startMax' });
   }
+  rows.push(statusRow);
+
   return { inline_keyboard: rows };
 }
 

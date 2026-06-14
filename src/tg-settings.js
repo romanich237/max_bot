@@ -7,15 +7,17 @@ const TOGGLES = [
   { label: 'Авто описание', path: ['profileBio', 'enabled'] },
 ];
 
-function buildToggleRows(prefix) {
+function buildToggleButton(prefix, item) {
   const cfg = store.get();
-  return TOGGLES.map((item) => {
-    const value = item.path.reduce((cur, key) => cur?.[key], cfg);
-    return [{
-      text: `${item.label}: ${value ? '✅' : '❌'}`,
-      callback_data: `${prefix}${item.path.join('.')}`,
-    }];
-  });
+  const value = item.path.reduce((cur, key) => cur?.[key], cfg);
+  return {
+    text: `${item.label}: ${value ? '✅' : '❌'}`,
+    callback_data: `${prefix}${item.path.join('.')}`,
+  };
+}
+
+function buildToggleRows(prefix) {
+  return TOGGLES.map((item) => [buildToggleButton(prefix, item)]);
 }
 
 function parseNameList(text) {
@@ -53,6 +55,7 @@ function saveProfileBioTemplate(template) {
 
 module.exports = {
   TOGGLES,
+  buildToggleButton,
   buildToggleRows,
   parseNameList,
   saveProfileNames,
