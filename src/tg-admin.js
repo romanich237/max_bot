@@ -58,6 +58,7 @@ let reauthHandler = null;
 let replyHandler = null;
 let stopHandler = null;
 let startHandler = null;
+let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 
 let authInputWaiter = null;
@@ -72,6 +73,10 @@ function clearAuthInputWaiter() {
 
 function setReauthHandler(fn) {
   reauthHandler = fn;
+}
+
+function setAuthBusyCheck(fn) {
+  isAuthBusyCheck = typeof fn === 'function' ? fn : () => false;
 }
 
 function setReplyHandler(fn) {
@@ -614,29 +619,35 @@ async function handleCallback(query) {
       return;
     }
 
+    if (isAuthBusyCheck() || isAuthSessionActive()) {
+      await answerCallback(query.id, 'Уже идёт вход');
+      return;
+    }
+
     const mode = data === 'auth:mode:phone' ? 'phone' : 'qr';
     await answerCallback(query.id, mode === 'phone' ? 'Вход по номеру' : 'Вход по QR');
 
-    try {
-      await reauthHandler({ mode });
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Сессия MAX обновлена',
-          status: 'done',
-          lines: ['Мониторинг продолжается.'],
-        })
-      );
-    } catch (err) {
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Ошибка входа в MAX',
-          status: 'fail',
-          lines: [err.message],
-        })
-      );
-    }
+    void reauthHandler({ mode })
+      .then(async () => {
+        await sendMessage(
+          chatId,
+          buildEventMessage({
+            title: 'Сессия MAX обновлена',
+            status: 'done',
+            lines: ['Мониторинг продолжается.'],
+          })
+        );
+      })
+      .catch(async (err) => {
+        await sendMessage(
+          chatId,
+          buildEventMessage({
+            title: 'Ошибка входа в MAX',
+            status: 'fail',
+            lines: [err.message],
+          })
+        );
+      });
     return;
   }
 
@@ -848,6 +859,7 @@ module.exports = {
   registerAuthInputWaiter,
   clearAuthInputWaiter,
   setReauthHandler,
+  setAuthBusyCheck,
   setReplyHandler,
   setStopHandler,
   setStartHandler,

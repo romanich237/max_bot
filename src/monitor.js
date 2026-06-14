@@ -11,7 +11,7 @@ const {
 const { rotateDisplayName } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
 const { runAuthOnPage, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
@@ -222,6 +222,8 @@ async function startMonitor() {
   setReauthHandler(async (authOptions = {}) => {
     await performReauth({ introMessage: false, ...authOptions });
   });
+
+  setAuthBusyCheck(() => authBusy);
 
   setStopHandler(() => {
     pauseMonitoring();
