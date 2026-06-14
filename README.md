@@ -8,7 +8,7 @@
 
 На российских VPS часто блокируется `api.telegram.org`, а вход в MAX по телефону упирается в капчу. Европейский сервер обычно стабильнее для Telegram API и веб-входа MAX.
 
-Рекомендуемые провайдеры: Hetzner, DigitalOcean (AMS/FRA), Vultr, Timeweb Cloud (EU).
+Рекомендуемый провайдер: [play2go.cloud](https://play2go.cloud/?ref_id=k5jH0xQ4-_g)
 
 Откройте порт **3847** для веб-настройки и `/site`. При установке скрипт пробует **ufw → firewalld → iptables**. Если локального файрвола нет — откройте порт в **панели VPS**:
 
