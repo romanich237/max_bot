@@ -35,7 +35,7 @@ refresh_path() {
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm use default 2>/dev/null || nvm use 20 2>/dev/null || true
+    nvm use default &>/dev/null || nvm use 20 &>/dev/null || true
   fi
 
   if [ -d "$HOME/.local/node/bin" ]; then
@@ -50,14 +50,13 @@ refresh_path() {
 }
 
 node_major() {
-  refresh_path
-  if command -v node >/dev/null 2>&1; then
-    node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
-  elif command -v nodejs >/dev/null 2>&1; then
-    nodejs -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
-  else
-    echo 0
-  fi
+  local cmd ver
+  cmd="$(command -v node 2>/dev/null || command -v nodejs 2>/dev/null || true)"
+  [ -z "$cmd" ] && { echo 0; return; }
+  ver="$("$cmd" -v 2>/dev/null | head -n1)"
+  ver="${ver#v}"
+  ver="${ver%%.*}"
+  [[ "$ver" =~ ^[0-9]+$ ]] && echo "$ver" || echo 0
 }
 
 node_cmd() {
@@ -138,7 +137,7 @@ install_node_via_nvm() {
 
   nvm install 20
   nvm alias default 20
-  nvm use default
+  nvm use default &>/dev/null
   return 0
 }
 
