@@ -99,7 +99,7 @@ async function upsertAuthScreenshot(page, chatIds, options = {}) {
   }
 
   const buffer = isPassword ? await captureBrowserScreenshot(page) : await captureLoginScreenshot(page);
-  const caption = await buildScreenshotCaptionForPage(page);
+  const caption = await buildScreenshotCaptionForPage(page, options);
   const replyMarkup = buildScreenshotKeyboard();
   const messageIds = activeAuthSession?.photoMessageIds || {};
 
@@ -144,9 +144,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildScreenshotCaption() {
+function buildScreenshotCaption(options = {}) {
   const { buildQrScreenshotCaption } = require('./auth-browser');
-  return buildQrScreenshotCaption();
+  return buildQrScreenshotCaption(options.refreshMs);
 }
 
 async function ensureQrLoginView(page) {
@@ -264,6 +264,7 @@ function startAuthCallbackPoll(options = {}) {
 async function waitForLogin(page, chatIds, options = {}) {
   const timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT_MS;
   const refreshMs = options.refreshMs ?? QR_REFRESH_MS;
+  options.refreshMs = refreshMs;
   const started = Date.now();
   let lastQrSent = 0;
   let stopAuthPoll = null;
