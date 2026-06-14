@@ -24,11 +24,17 @@ ufw enable
 
 ## Установка (VPS)
 
+Скрипт **сразу спросит в консоли** Telegram bot token и chat ID:
+
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
 ```
 
-Установка **сразу спросит в консоли** Telegram bot token и chat ID (или заранее: `TG_TOKEN=... TG_CHAT_ID=... bash <(curl -Ls ...)`).
+Или передайте заранее:
+
+```bash
+TG_TOKEN="ваш_токен" TG_CHAT_ID="ваш_id" bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
+```
 
 После этого бот пришлёт в Telegram ссылку на настройку MAX:
 

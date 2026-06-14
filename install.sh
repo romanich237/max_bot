@@ -8,6 +8,10 @@ NODE_VERSION="${NODE_VERSION:-20.18.1}"
 NVM_VERSION="${NVM_VERSION:-0.40.3}"
 
 echo "=== MAX → Telegram — установка ==="
+echo ""
+echo "Установка: bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)"
+echo "С token/chat ID заранее: TG_TOKEN=... TG_CHAT_ID=... bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)"
+echo ""
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
