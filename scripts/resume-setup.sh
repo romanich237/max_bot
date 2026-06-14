@@ -45,7 +45,7 @@ if [ -z "$node_bin" ]; then
   exit 1
 fi
 
-echo "Node: $node_bin ($("$node_bin" -v))"
+echo "Node: $node_bin ($("$node_bin" -v 2>/dev/null || echo "неизвестно"))"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "Ошибка: npm не найден"

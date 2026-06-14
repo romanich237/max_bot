@@ -63,18 +63,29 @@ resolve_node_bin() {
 node_major() {
   local bin ver
   bin="$(resolve_node_bin)"
-  [ -z "$bin" ] && { echo 0; return; }
-  ver="$("$bin" -v 2>/dev/null)"
+  if [ -z "$bin" ]; then
+    echo 0
+    return 0
+  fi
+  ver="$("$bin" -v 2>/dev/null || true)"
   ver="${ver#v}"
   ver="${ver%%.*}"
-  [[ "$ver" =~ ^[0-9]+$ ]] && echo "$ver" || echo 0
+  if [[ "$ver" =~ ^[0-9]+$ ]]; then
+    echo "$ver"
+  else
+    echo 0
+  fi
 }
 
 node_version_label() {
-  local bin
+  local bin ver
   bin="$(resolve_node_bin)"
-  [ -z "$bin" ] && echo "не найден" && return
-  "$bin" -v 2>/dev/null || echo "не найден"
+  if [ -z "$bin" ]; then
+    echo "не найден"
+    return 0
+  fi
+  ver="$("$bin" -v 2>/dev/null || true)"
+  [ -n "$ver" ] && echo "$ver" || echo "не найден"
 }
 
 has_node() {
@@ -308,7 +319,9 @@ open_portal_port() {
   echo "Откройте порт ${port}/tcp в панели хостинга (Security Groups / Firewall)"
 }
 
+echo "Проверка git..."
 ensure_git
+echo "Проверка Node.js..."
 ensure_node
 refresh_path
 
