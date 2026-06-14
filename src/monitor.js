@@ -20,6 +20,7 @@ const db = require('./db');
 const {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
+  openChatWhenReady,
   readMessages,
   findNewMessages,
   diffByTail,
@@ -111,11 +112,16 @@ async function startMonitor() {
     authBusy = true;
     profileBusy = true;
     try {
-      await runAuthQrOnPage(page, getAdminChatIds(), options);
-      currentChatUrl = getMax().chatUrl;
-      await page.goto(currentChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      await page.waitForTimeout(3000);
-      messages = await waitForChat(page);
+      const chatUrl = getMax().chatUrl;
+      await runAuthQrOnPage(page, getAdminChatIds(), {
+        ...options,
+        afterLoginChatUrl: chatUrl,
+      });
+      currentChatUrl = chatUrl;
+      messages = (await openChatWhenReady(page, chatUrl)) || [];
+      if (!messages.length && (await isLoginPage(page))) {
+        throw new Error('Вход выполнен, но чат MAX недоступен. Проверьте chatUrl.');
+      }
       lastSnapshot = snapshotFrom(messages);
     } finally {
       authBusy = false;
@@ -158,17 +164,15 @@ async function startMonitor() {
     console.log('Состояние и сообщения сохраняются в MySQL');
   }
 
-  await page.goto(currentChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.waitForTimeout(4000);
-
-  if (await isLoginPage(page)) {
+  const loaded = await openChatWhenReady(page, currentChatUrl);
+  if (loaded === null) {
     console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
     await performReauth({
       introMessage:
         '<b>Сессия MAX истекла</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
     });
   } else {
-    messages = await waitForChat(page);
+    messages = loaded;
   }
   console.log(`В DOM найдено ${messages.length} сообщений (после прокрутки вниз).`);
 
@@ -254,6 +258,14 @@ async function startMonitor() {
       }
 
       if (await isLoginPage(page)) {
+        const chatUrl = maxCfg.chatUrl || currentChatUrl;
+        const reopened = chatUrl ? await openChatWhenReady(page, chatUrl, 2) : null;
+        if (reopened !== null) {
+          messages = reopened;
+          lastSnapshot = snapshotFrom(messages);
+          return;
+        }
+
         console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
         await performReauth({
           introMessage:

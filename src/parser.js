@@ -9,8 +9,57 @@ function ownNamesLower() {
 }
 
 async function isLoginPage(page) {
+  const url = page.url();
+  if (/web\.max\.ru\/-\d+/.test(url)) {
+    const inChat = await page
+      .locator('.messageWrapper, .openedChat')
+      .first()
+      .isVisible({ timeout: 1500 })
+      .catch(() => false);
+    if (inChat) return false;
+  }
+
+  const qrVisible = await page
+    .locator('canvas')
+    .first()
+    .or(page.locator('img[src*="qr"], img[alt*="QR" i], img[alt*="qr" i]').first())
+    .isVisible({ timeout: 1000 })
+    .catch(() => false);
+  if (qrVisible) return true;
+
   const bodyText = await page.locator('body').innerText();
-  return /войдите в max|qr-код|войти по номеру телефона/i.test(bodyText);
+  return /войдите в max/i.test(bodyText) && /qr-код/i.test(bodyText);
+}
+
+async function openChatWhenReady(page, chatUrl, maxAttempts = 3) {
+  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await page.waitForTimeout(3000);
+
+    if (await isLoginPage(page)) {
+      if (attempt < maxAttempts - 1) {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        continue;
+      }
+      return null;
+    }
+
+    const messages = await readMessages(page);
+    if (messages.length > 0) {
+      return messages;
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+    }
+  }
+
+  if (await isLoginPage(page)) {
+    return null;
+  }
+
+  return readMessages(page);
 }
 
 async function scrollChatToBottom(page) {
@@ -325,6 +374,7 @@ async function waitForChat(page) {
 module.exports = {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
+  openChatWhenReady,
   readMessages,
   findNewMessages,
   diffByTail,

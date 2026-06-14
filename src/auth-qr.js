@@ -215,6 +215,14 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     );
   }
 
+  if (options.afterLoginChatUrl) {
+    await page.goto(options.afterLoginChatUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 90000,
+    });
+    await page.waitForTimeout(3000);
+  }
+
   for (const chatId of chatIds) {
     await sendMessage(chatId, 'Вход в MAX выполнен.', {}, options.token);
   }
