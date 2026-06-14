@@ -21,7 +21,7 @@ const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
 function buildWizardKeyboard() {
   const rows = buildToggleRows('wizard:toggle:');
-  rows.push([{ text: '✏️ Имена ротации', callback_data: 'wizard:profileNames' }]);
+  rows.push([{ text: '✏️ Имена авто', callback_data: 'wizard:profileNames' }]);
   rows.push([{ text: '✅ Готово, запустить бота', callback_data: 'wizard:finish' }]);
   return { inline_keyboard: rows };
 }
@@ -91,7 +91,7 @@ function runSetupWizard(options = {}) {
               const names = store.getPath(['profileRotate', 'names']) || [];
               if (!names.length) {
                 step = 'profileNames';
-                await sendMessage(chatId, 'Ротация включена. ' + PROFILE_NAMES_HINT, {}, options.token);
+                await sendMessage(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT, {}, options.token);
               }
             }
 
@@ -158,7 +158,7 @@ function runSetupWizard(options = {}) {
           await sendMessage(
             chatId,
             buildEventMessage({
-              title: 'Имена ротации сохранены',
+              title: 'Имена авто сохранены',
               status: 'done',
               step: 3,
               total: WIZARD_STEPS,

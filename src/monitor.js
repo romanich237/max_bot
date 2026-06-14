@@ -328,7 +328,7 @@ async function startMonitor() {
     if (!profileRotate.enabled) return;
 
     console.log(
-      `Ротация имени: каждые ${profileRotate.intervalMs / 1000} с (режим: ${profileRotate.mode})`
+      `Авто имя: каждые ${profileRotate.intervalMs / 1000} с (режим: ${profileRotate.mode})`
     );
 
     const tick = async () => {

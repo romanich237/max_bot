@@ -2,7 +2,7 @@ const { store } = require('./config');
 
 const TOGGLES = [
   { label: 'Бесконечный онлайн', path: ['alwaysOnline', 'enabled'] },
-  { label: 'Ротация имени', path: ['profileRotate', 'enabled'] },
+  { label: 'Авто имя', path: ['profileRotate', 'enabled'] },
   { label: 'Время в Telegram', path: ['telegram', 'showTime'] },
   { label: 'Заголовок в Telegram', path: ['telegram', 'showServiceHeader'] },
 ];
@@ -32,7 +32,7 @@ function saveProfileNames(names) {
 }
 
 const PROFILE_NAMES_HINT =
-  'Отправьте имена для ротации через запятую.\nПример: <code>в, ва, вас, вася</code>';
+  'Отправьте имена авто через запятую.\nПример: <code>в, ва, вас, вася</code>';
 
 module.exports = {
   TOGGLES,

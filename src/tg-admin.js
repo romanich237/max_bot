@@ -130,7 +130,7 @@ function buildStatusText() {
     '',
     `Мониторинг MAX: ${onFlag(isMonitoringEnabled())}`,
     `Бесконечный онлайн: ${onFlag(online.enabled)} (${online.intervalMs / 1000} с)`,
-    `Ротация имени: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
+    `Авто имя: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
     profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : 'Имена: не заданы',
     maxName
       ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
@@ -148,10 +148,31 @@ function buildStatusText() {
 }
 
 const DISCOVER_ID_BUTTON = '🔍 Узнать ID';
+const DISCOVER_CHAT_REQUEST_ID = 1;
+const DISCOVER_CHANNEL_REQUEST_ID = 2;
 
 function buildDiscoverReplyKeyboard() {
   return {
-    keyboard: [[{ text: DISCOVER_ID_BUTTON }]],
+    keyboard: [
+      [
+        {
+          text: DISCOVER_ID_BUTTON,
+          request_chat: {
+            request_id: DISCOVER_CHAT_REQUEST_ID,
+            chat_is_channel: false,
+          },
+        },
+      ],
+      [
+        {
+          text: '🔍 ID канала',
+          request_chat: {
+            request_id: DISCOVER_CHANNEL_REQUEST_ID,
+            chat_is_channel: true,
+          },
+        },
+      ],
+    ],
     resize_keyboard: true,
     is_persistent: true,
   };
@@ -164,7 +185,7 @@ function isDiscoverIdRequest(text) {
 
 function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
-  rows.push([{ text: '✏️ Имена ротации', callback_data: 'action:profileNames' }]);
+  rows.push([{ text: '✏️ Имена авто', callback_data: 'action:profileNames' }]);
   rows.push([{ text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' }]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
   if (isMonitoringEnabled()) {
@@ -221,7 +242,7 @@ async function handleProfileNamesInput(chatId, text) {
   await sendMessage(
     chatId,
     buildEventMessage({
-      title: 'Имена ротации сохранены',
+      title: 'Имена авто сохранены',
       status: 'done',
       lines: [`Список: ${names.join(' → ')}`, '', buildStatusText()],
     }),
@@ -313,16 +334,22 @@ async function handleAuthInput(chatId, text) {
   return true;
 }
 
-async function replyCurrentChatId(chatId, chat) {
-  recordChat(chat);
-  let known = getKnownChat(chatId);
-  let freshTitle = known?.title;
+async function replyChatInfo(adminChatId, targetChatId, hintTitle, chatType) {
+  const chatIdStr = String(targetChatId);
+  recordChat({
+    id: chatIdStr,
+    title: hintTitle,
+    type: chatType || 'unknown',
+  });
+
+  let known = getKnownChat(chatIdStr);
+  let freshTitle = known?.title || hintTitle;
 
   try {
-    const data = await getChat(chatId);
+    const data = await getChat(chatIdStr);
     if (data.ok && data.result) {
       recordChat(data.result);
-      known = getKnownChat(chatId) || known;
+      known = getKnownChat(chatIdStr) || known;
       freshTitle = data.result.title || data.result.first_name || freshTitle;
     }
   } catch {
@@ -331,16 +358,21 @@ async function replyCurrentChatId(chatId, chat) {
 
   if (!known) {
     known = {
-      id: String(chatId),
+      id: chatIdStr,
       title: freshTitle || 'Без названия',
-      type: chat.type || 'unknown',
-      username: chat.username || null,
+      type: chatType || 'unknown',
     };
   }
 
-  await sendMessage(chatId, buildChatInfoText(known, freshTitle), {
-    reply_markup: buildChatInfoKeyboard(known.id),
+  await sendMessage(adminChatId, buildChatInfoText(known, freshTitle), {
+    reply_markup: buildChatInfoKeyboard(chatIdStr),
   });
+}
+
+async function handleChatShared(adminChatId, shared) {
+  const targetChatId = String(shared.chat_id);
+  const chatType = shared.request_id === DISCOVER_CHANNEL_REQUEST_ID ? 'channel' : 'supergroup';
+  await replyChatInfo(adminChatId, targetChatId, shared.title, chatType);
 }
 
 async function showDiscoverChats(chatId, messageId, page = 0) {
@@ -413,6 +445,11 @@ async function handleMessage(message) {
 
   const text = (message.text || '').trim();
 
+  if (message.chat_shared) {
+    await handleChatShared(chatId, message.chat_shared);
+    return;
+  }
+
   if (await handleAuthInput(chatId, text)) return;
 
   const waitKey = waitingInput.get(String(chatId));
@@ -466,7 +503,11 @@ async function handleMessage(message) {
   }
 
   if (isDiscoverIdRequest(text)) {
-    await replyCurrentChatId(chatId, message.chat);
+    await sendMessage(
+      chatId,
+      'Нажмите «🔍 Узнать ID» внизу и выберите чат из списка Telegram.',
+      { reply_markup: buildDiscoverReplyKeyboard() }
+    );
     return;
   }
 
@@ -479,7 +520,7 @@ async function handleMessage(message) {
         '',
         'Бот пересылает сообщения из MAX в Telegram.',
         'Управление — кнопками ниже.',
-        `ID чата — нажмите «${DISCOVER_ID_BUTTON}» внизу (в нужном чате с ботом).`,
+        `ID чата — «${DISCOVER_ID_BUTTON}» внизу, затем выберите чат из списка.`,
       ].join('\n'),
       { reply_markup: buildDiscoverReplyKeyboard() }
     );
@@ -844,7 +885,7 @@ async function handleCallback(query) {
       const names = store.getPath(['profileRotate', 'names']) || [];
       if (!names.length) {
         waitingInput.set(String(chatId), 'profileNames');
-        await sendMessage(chatId, 'Ротация включена. ' + PROFILE_NAMES_HINT);
+        await sendMessage(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT);
       }
     }
 

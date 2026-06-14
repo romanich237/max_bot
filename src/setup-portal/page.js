@@ -60,10 +60,10 @@ function renderSetupPage(token) {
       <label>Пароль для входа (если есть)</label>
       <input id="browserPassword" type="password" placeholder="из личного кабинета MAX" autocomplete="off" />
       <div class="checks">
-        <label><input type="checkbox" id="profileRotate" /> Ротация имени</label>
+        <label><input type="checkbox" id="profileRotate" /> Авто имя</label>
         <label><input type="checkbox" id="alwaysOnline" /> Бесконечный онлайн</label>
       </div>
-      <label>Имена для ротации (через запятую)</label>
+      <label>Имена авто (через запятую)</label>
       <input id="profileNames" placeholder="в, ва, вас, вася" />
       <div style="margin-top:16px"><button class="primary" id="saveMax">Сохранить и перейти к входу</button></div>
     </div>
