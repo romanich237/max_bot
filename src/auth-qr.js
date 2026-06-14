@@ -74,7 +74,7 @@ async function upsertAuthScreenshot(page, chatIds, options = {}) {
       });
     }
 
-    if (!result.ok) {
+    if (!result.ok && !isEditOk(result)) {
       console.error(`Не удалось отправить скриншот в ${key}:`, result.description);
       continue;
     }
