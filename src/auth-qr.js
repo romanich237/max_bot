@@ -98,12 +98,55 @@ function buildScreenshotCaption() {
   return buildQrScreenshotCaption();
 }
 
+async function ensureQrLoginView(page) {
+  const qrForm = page.locator('form.auth--qr-code');
+  if (await qrForm.isVisible({ timeout: 1500 }).catch(() => false)) {
+    return;
+  }
+
+  const qrTab = page.getByRole('button', { name: /qr|qr-код/i });
+  if (await qrTab.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await qrTab.click();
+    await page.waitForTimeout(1000);
+    return;
+  }
+
+  await page.goto(MAX_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForTimeout(2000);
+}
+
+async function refreshQrCodeSession(page) {
+  if (await isBrowserPasswordPrompt(page)) {
+    return { ok: false, reason: 'browser-password' };
+  }
+
+  await ensureQrLoginView(page);
+
+  const refreshBtn = page
+    .getByRole('button', { name: /refresh qr code/i })
+    .or(page.locator('button[aria-label="Refresh QR code"]'))
+    .or(page.locator('form.auth--qr-code .qr button.button--primary[type="button"]'))
+    .or(page.locator('form.auth--qr-code button.button--primary[type="button"]'));
+
+  const btn = refreshBtn.first();
+  if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await btn.click();
+    await page.waitForTimeout(2000);
+    return { ok: true, method: 'button' };
+  }
+
+  await page.goto(MAX_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForTimeout(2500);
+  return { ok: true, method: 'reload' };
+}
+
 async function refreshAuthScreenshot() {
   if (!activeAuthSession) {
     throw new Error('Сейчас авторизация не идёт. Отправьте /reauth');
   }
 
   const { page, chatIds, options } = activeAuthSession;
+  await refreshQrCodeSession(page);
   await upsertAuthScreenshot(page, chatIds, options);
   activeAuthSession.lastQrSent = Date.now();
 }
@@ -188,6 +231,7 @@ async function waitForLogin(page, chatIds, options = {}) {
     await tryHandleBrowserPasswordPrompt(page, chatIds, options);
 
     if (Date.now() - lastQrSent >= refreshMs) {
+      await refreshQrCodeSession(page);
       await upsertAuthScreenshot(page, chatIds, options);
       lastQrSent = Date.now();
       if (activeAuthSession) activeAuthSession.lastQrSent = lastQrSent;
@@ -393,6 +437,7 @@ module.exports = {
   captureQrImage: captureLoginScreenshot,
   waitForLogin,
   refreshAuthScreenshot,
+  refreshQrCodeSession,
   isAuthSessionActive,
   buildScreenshotKeyboard,
 };
