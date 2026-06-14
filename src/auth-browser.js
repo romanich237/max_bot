@@ -74,22 +74,14 @@ function buildQrScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
 }
 
 function buildBrowserScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
-  const password = getBrowserPassword();
   const sec = qrRefreshSeconds(refreshMs);
-  const lines = [
-    'Вход @Browser в MAX.',
-    'Введите пароль от аккаунта (из личного кабинета).',
-  ];
-
-  if (password) {
-    lines.push(`Пароль: ${password}`);
-    lines.push('Бот вводит пароль автоматически.');
-  } else {
-    lines.push('Задайте: /set browserpassword ваш_пароль');
-  }
-
-  lines.push(`Обновляется каждые ${sec} сек. Или нажмите «Обновить».`);
-  return lines.join('\n');
+  return [
+    'Вход в MAX',
+    'Пароль: из личного кабинета.',
+    'Установка: /set browserpassword [пароль]',
+    `Обновление: ${sec} с · кнопка «Обновить»`,
+    'Статус: в процессе',
+  ].join('\n');
 }
 
 async function buildScreenshotCaptionForPage(page, options = {}) {
@@ -230,10 +222,7 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
   if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
     const buffer = await captureBrowserScreenshot(page);
-    const caption = [
-      '🔄 Вход @Browser · в процессе',
-      buildBrowserScreenshotCaption(options.refreshMs),
-    ].join('\n');
+    const caption = buildBrowserScreenshotCaption(options.refreshMs);
     for (const chatId of chatIds) {
       await sendPhotoBuffer(chatId, buffer, caption, options.token);
     }

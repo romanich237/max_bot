@@ -13,7 +13,7 @@ const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
 const { runAuthOnPage, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { sendMessage: sendTgMessage } = require('./tg-api');
+const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
@@ -98,6 +98,18 @@ async function startMonitor() {
   let profileTimer = null;
   let monitorTimer = null;
   let currentChatUrl = max.chatUrl;
+  const reauthPromptIds = {};
+
+  function isEditOk(result) {
+    if (result?.ok) return true;
+    return /message is not modified/i.test(result?.description || '');
+  }
+
+  function clearReauthPromptIds() {
+    for (const key of Object.keys(reauthPromptIds)) {
+      delete reauthPromptIds[key];
+    }
+  }
 
   function isMonitoringEnabled() {
     return getMax().monitoringEnabled !== false;
@@ -144,10 +156,30 @@ async function startMonitor() {
     const text =
       introMessage ||
       '<b>Сессия MAX истекла</b>\nВыберите способ входа в MAX:';
+    const replyMarkup = buildAuthModeKeyboard();
+
     for (const chatId of getAdminChatIds()) {
-      await sendTgMessage(chatId, text, {
-        reply_markup: buildAuthModeKeyboard(),
-      });
+      const key = String(chatId);
+      const existingId = reauthPromptIds[key];
+      let result;
+
+      if (existingId) {
+        result = await editMessageText(key, existingId, text, { reply_markup: replyMarkup });
+        if (!isEditOk(result)) {
+          result = await sendTgMessage(key, text, { reply_markup: replyMarkup });
+        }
+      } else {
+        result = await sendTgMessage(key, text, { reply_markup: replyMarkup });
+      }
+
+      if (!isEditOk(result) && !result?.ok) {
+        console.error(`Не удалось обновить запрос входа в ${key}:`, result?.description);
+        continue;
+      }
+
+      if (result?.result?.message_id) {
+        reauthPromptIds[key] = result.result.message_id;
+      }
     }
   }
 
@@ -171,6 +203,7 @@ async function startMonitor() {
         throw new Error('Вход выполнен, но чат MAX недоступен. Проверьте chatUrl.');
       }
       lastSnapshot = snapshotFrom(messages);
+      clearReauthPromptIds();
     } finally {
       authBusy = false;
       profileBusy = false;
@@ -342,6 +375,7 @@ async function startMonitor() {
         if (reopened !== null) {
           messages = reopened;
           lastSnapshot = snapshotFrom(messages);
+          clearReauthPromptIds();
           return;
         }
 
