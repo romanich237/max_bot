@@ -150,6 +150,39 @@ function previewText(text, max = 80) {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
+async function dispatchMaxReply(chatId, target, text) {
+  if (!target) {
+    await sendMessage(chatId, 'Сообщение устарело. Нажмите «Ответить» на новом сообщении из MAX.');
+    return;
+  }
+
+  if (!replyHandler) {
+    await sendMessage(chatId, 'Ответы недоступны — перезапустите бота: <code>pm2 restart max-tg</code>');
+    return;
+  }
+
+  try {
+    await replyHandler(target, text);
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Ответ отправлен в MAX',
+        status: 'done',
+        lines: [`Получатель: <b>${escapeHtml(target.author || 'пользователь')}</b>`],
+      })
+    );
+  } catch (err) {
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Не удалось отправить ответ',
+        status: 'fail',
+        lines: [escapeHtml(err.message)],
+      })
+    );
+  }
+}
+
 function onFlag(value) {
   return value ? '✅ вкл' : '❌ выкл';
 }
@@ -632,38 +665,16 @@ async function handleMessage(message) {
   if (waitKey?.startsWith('reply:') && text && !text.startsWith('/')) {
     const target = replyStore.get(waitKey.slice('reply:'.length));
     waitingInput.delete(String(chatId));
-
-    if (!target) {
-      await sendMessage(chatId, 'Сообщение устарело. Нажмите «Ответить» на новом сообщении из MAX.');
-      return;
-    }
-
-    if (!replyHandler) {
-      await sendMessage(chatId, 'Ответы недоступны — перезапустите бота: <code>pm2 restart max-tg</code>');
-      return;
-    }
-
-    try {
-      await replyHandler(target, text);
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Ответ отправлен в MAX',
-          status: 'done',
-          lines: [`Получатель: <b>${escapeHtml(target.author || 'пользователь')}</b>`],
-        })
-      );
-    } catch (err) {
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Не удалось отправить ответ',
-          status: 'fail',
-          lines: [escapeHtml(err.message)],
-        })
-      );
-    }
+    await dispatchMaxReply(chatId, target, text);
     return;
+  }
+
+  if (text && !text.startsWith('/') && !waitKey && message.reply_to_message?.message_id) {
+    const target = replyStore.getByTelegramMessage(chatId, message.reply_to_message.message_id);
+    if (target) {
+      await dispatchMaxReply(chatId, target, text);
+      return;
+    }
   }
 
   if (waitKey === 'profileNames' && text && !text.startsWith('/')) {

@@ -1,7 +1,9 @@
 const crypto = require('crypto');
 
 const store = new Map();
+const tgLinks = new Map();
 const MAX_ENTRIES = 500;
+const MAX_TG_LINKS = 2000;
 
 function makeId(messageKey) {
   return crypto.createHash('md5').update(messageKey).digest('hex').slice(0, 12);
@@ -27,8 +29,23 @@ function put(message, maxChatUrl) {
   return id;
 }
 
+function linkTelegramMessage(chatId, messageId, id) {
+  if (!chatId || !messageId || !id) return;
+  tgLinks.set(`${String(chatId)}:${messageId}`, id);
+
+  if (tgLinks.size > MAX_TG_LINKS) {
+    const oldest = tgLinks.keys().next().value;
+    tgLinks.delete(oldest);
+  }
+}
+
 function get(id) {
   return store.get(id) || null;
 }
 
-module.exports = { put, get };
+function getByTelegramMessage(chatId, messageId) {
+  const id = tgLinks.get(`${String(chatId)}:${messageId}`);
+  return id ? get(id) : null;
+}
+
+module.exports = { put, get, linkTelegramMessage, getByTelegramMessage };

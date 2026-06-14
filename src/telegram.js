@@ -71,19 +71,22 @@ function buildMessageText(message, isCatchUp = false, meta = {}) {
   return parts.filter((p) => p !== '').join('\n');
 }
 
-function isPrivateChat(chatId) {
-  return Number(chatId) > 0;
-}
-
 function replyMarkupForChat(chatId, replyMarkup) {
-  return replyMarkup && isPrivateChat(chatId) ? replyMarkup : null;
+  return replyMarkup || null;
 }
 
 function buildReplyMarkup(message, maxChatUrl) {
   const id = replyStore.put(message, maxChatUrl);
   return {
+    _storeId: id,
     inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${id}` }]],
   };
+}
+
+function stripReplyMarkup(markup) {
+  if (!markup) return null;
+  const { _storeId, ...rest } = markup;
+  return rest;
 }
 
 function appendFormField(form, key, value) {
@@ -111,7 +114,7 @@ async function callTelegram(method, fields, files = {}, replyMarkup = null) {
 
         const chatFields = { ...baseFields };
         const markup = replyMarkupForChat(id, replyMarkup);
-        if (markup) chatFields.reply_markup = markup;
+        if (markup) chatFields.reply_markup = stripReplyMarkup(markup);
 
         for (const [key, value] of Object.entries(chatFields)) {
           appendFormField(form, key, value);
@@ -129,6 +132,8 @@ async function callTelegram(method, fields, files = {}, replyMarkup = null) {
         if (!data.ok) {
           success = false;
           console.error(`Ошибка Telegram API (${method}) для ID ${id}:`, data.description);
+        } else if (replyMarkup?._storeId && data.result?.message_id) {
+          replyStore.linkTelegramMessage(id, data.result.message_id, replyMarkup._storeId);
         }
       } catch (error) {
         success = false;
@@ -204,12 +209,14 @@ async function sendReplyPrompt(chatId, message, replyMarkup, token) {
   form.append('chat_id', String(chatId));
   form.append('text', `↩️ Ответить: ${author}`);
   form.append('parse_mode', 'HTML');
-  form.append('reply_markup', JSON.stringify(replyMarkup));
+  form.append('reply_markup', JSON.stringify(stripReplyMarkup(replyMarkup)));
 
   const response = await fetch(url, { method: 'POST', body: form });
   const data = await response.json();
   if (!data.ok) {
     console.error(`Ошибка кнопки «Ответить» для ID ${chatId}:`, data.description);
+  } else if (replyMarkup?._storeId && data.result?.message_id) {
+    replyStore.linkTelegramMessage(chatId, data.result.message_id, replyMarkup._storeId);
   }
 }
 
@@ -247,9 +254,7 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMark
     const { token } = getTelegram();
     const chatIds = getNotificationChatIds();
     await Promise.all(
-      chatIds
-        .filter(isPrivateChat)
-        .map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+      chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
     );
   }
 }
@@ -286,9 +291,7 @@ async function sendToTelegram(message, options = {}) {
         const { token } = getTelegram();
         const chatIds = getNotificationChatIds();
         await Promise.all(
-          chatIds
-            .filter(isPrivateChat)
-            .map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
+          chatIds.map((chatId) => sendReplyPrompt(chatId, message, replyMarkup, token))
         );
       }
       captionUsed = true;

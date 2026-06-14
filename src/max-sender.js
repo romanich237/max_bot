@@ -34,8 +34,11 @@ async function resolveReplyWrapper(page, message, wrapperSelector) {
 }
 
 async function openReplyOnMessage(page, wrapper) {
-  await wrapper.scrollIntoViewIfNeeded();
-  await wrapper.hover();
+  const messageEl = wrapper.locator('.message').first();
+  const target = (await messageEl.count()) ? messageEl : wrapper;
+
+  await target.scrollIntoViewIfNeeded();
+  await target.hover();
   await page.waitForTimeout(200);
 
   const replyInBubble = wrapper.locator(
@@ -47,12 +50,12 @@ async function openReplyOnMessage(page, wrapper) {
     return true;
   }
 
-  await wrapper.click({ button: 'right' });
+  await target.click({ button: 'right' });
   await page.waitForTimeout(300);
 
   const menuReply = page
-    .getByRole('menuitem', { name: /ответить/i })
-    .or(page.getByText(/^ответить$/i))
+    .getByRole('menuitem', { name: /^(reply|ответить)$/i })
+    .or(page.getByRole('menuitem', { name: /reply|ответить/i }))
     .first();
 
   if (await menuReply.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -66,7 +69,8 @@ async function openReplyOnMessage(page, wrapper) {
 
 async function findComposer(page) {
   const candidates = [
-    page.locator('[contenteditable="true"]').last(),
+    page.getByRole('textbox', { name: /^(message|сообщение)$/i }),
+    page.locator('[contenteditable="true"], [contenteditable=""]').last(),
     page.locator('textarea').last(),
     page.getByRole('textbox').last(),
   ];
@@ -82,30 +86,41 @@ async function findComposer(page) {
 
 async function typeInComposer(page, input, text) {
   await input.click();
-  await input.fill('');
   await page.waitForTimeout(100);
 
+  const isContentEditable = await input.evaluate((el) => el.isContentEditable);
+  if (isContentEditable) {
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(50);
+    await page.keyboard.insertText(text);
+    return;
+  }
+
   const tag = await input.evaluate((el) => el.tagName.toLowerCase());
-  if (tag === 'textarea' || (await input.getAttribute('role')) === 'textbox') {
+  if (tag === 'textarea') {
     await input.fill(text);
-  } else {
-    await input.evaluate((el, value) => {
-      el.focus();
-      el.textContent = value;
-      el.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    }, text);
+    return;
+  }
+
+  try {
+    await input.fill(text);
+  } catch {
+    await page.keyboard.insertText(text);
   }
 }
 
 async function submitComposer(page) {
   const sendBtn = page
-    .getByRole('button', { name: /^(send|отправить)$/i })
-    .or(page.locator('button[type="submit"]'))
+    .getByRole('button', { name: /send message|^send$|отправить/i })
+    .or(page.locator('button[aria-label*="Send" i], button[aria-label*="отправить" i]'))
     .last();
 
   if (await sendBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await sendBtn.click();
-    return;
+    if (await sendBtn.isEnabled().catch(() => true)) {
+      await sendBtn.click();
+      return;
+    }
   }
 
   await page.keyboard.press('Enter');
@@ -134,7 +149,11 @@ async function sendReplyInMax(page, message, text, wrapperSelector) {
     throw new Error('Сообщение не найдено в чате MAX');
   }
 
-  await openReplyOnMessage(page, wrapper);
+  const opened = await openReplyOnMessage(page, wrapper);
+  if (!opened) {
+    throw new Error('Не удалось открыть ответ на сообщение в MAX');
+  }
+
   const input = await findComposer(page);
   await typeInComposer(page, input, trimmed);
   await page.waitForTimeout(150);
