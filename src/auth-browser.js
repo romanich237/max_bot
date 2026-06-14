@@ -63,8 +63,17 @@ function qrRefreshSeconds(refreshMs = DEFAULT_QR_REFRESH_MS) {
   return Math.max(1, Math.round(refreshMs / 1000));
 }
 
-function buildQrScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
-  const sec = qrRefreshSeconds(refreshMs);
+function qrSecondsRemaining(lastQrSent, refreshMs = DEFAULT_QR_REFRESH_MS) {
+  const totalSec = qrRefreshSeconds(refreshMs);
+  if (!lastQrSent) return totalSec;
+  const elapsed = Date.now() - lastQrSent;
+  const remainingMs = refreshMs - (elapsed % refreshMs);
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+}
+
+function buildQrScreenshotCaption(options = {}) {
+  const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
+  const sec = options.secondsRemaining ?? qrRefreshSeconds(refreshMs);
   return [
     '🔐 Вход в MAX',
     'Отсканируйте QR-код в приложении MAX.',
@@ -73,8 +82,9 @@ function buildQrScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
   ].join('\n');
 }
 
-function buildBrowserScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
-  const sec = qrRefreshSeconds(refreshMs);
+function buildBrowserScreenshotCaption(options = {}) {
+  const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
+  const sec = options.secondsRemaining ?? qrRefreshSeconds(refreshMs);
   return [
     'Вход в MAX',
     'Пароль: из личного кабинета.',
@@ -86,10 +96,14 @@ function buildBrowserScreenshotCaption(refreshMs = DEFAULT_QR_REFRESH_MS) {
 
 async function buildScreenshotCaptionForPage(page, options = {}) {
   const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
+  const captionOptions = {
+    refreshMs,
+    secondsRemaining: options.secondsRemaining,
+  };
   if (await isBrowserPasswordPrompt(page)) {
-    return buildBrowserScreenshotCaption(refreshMs);
+    return buildBrowserScreenshotCaption(captionOptions);
   }
-  return buildQrScreenshotCaption(refreshMs);
+  return buildQrScreenshotCaption(captionOptions);
 }
 
 async function captureBrowserScreenshot(page) {
@@ -224,7 +238,10 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
   if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
     const buffer = await captureBrowserScreenshot(page);
-    const caption = buildBrowserScreenshotCaption(options.refreshMs);
+    const caption = buildBrowserScreenshotCaption({
+      refreshMs: options.refreshMs,
+      secondsRemaining: options.secondsRemaining,
+    });
     for (const chatId of chatIds) {
       await sendPhotoBuffer(chatId, buffer, caption, options.token);
     }
@@ -274,6 +291,7 @@ module.exports = {
   buildBrowserScreenshotCaption,
   buildScreenshotCaptionForPage,
   qrRefreshSeconds,
+  qrSecondsRemaining,
   DEFAULT_QR_REFRESH_MS,
   captureBrowserScreenshot,
   fillBrowserPassword,

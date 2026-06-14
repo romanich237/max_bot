@@ -1,5 +1,5 @@
 const { getSettings, getAdminChatIds } = require('./config');
-const { sendMessage, sendPhotoBuffer, editPhotoBuffer, answerCallback, pollUpdates, editMessageText } = require('./tg-api');
+const { sendMessage, sendPhotoBuffer, editPhotoBuffer, editMessageCaption, answerCallback, pollUpdates, editMessageText } = require('./tg-api');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
 const { isLoginPage } = require('./parser');
 const { runAuthPhoneOnPage } = require('./auth-phone');
@@ -9,6 +9,8 @@ const {
   buildScreenshotCaptionForPage,
   captureBrowserScreenshot,
   tryHandleBrowserPasswordPrompt,
+  qrRefreshSeconds,
+  qrSecondsRemaining,
 } = require('./auth-browser');
 const { launchMaxContext } = require('./browser-context');
 
@@ -55,7 +57,7 @@ async function upsertAuthText(page, chatIds, options = {}) {
       'Вход выполняется в Telegram (без фото).',
       'Рекомендуется <b>номер телефона</b>: /reauth → «Номер телефона».',
       'Если появится @Browser — пришлю скриншот для ввода пароля.',
-      'Обновление каждые 45 сек.',
+      `Обновление каждые ${qrRefreshSeconds(QR_REFRESH_MS)} сек.`,
     ],
   });
   const replyMarkup = buildScreenshotKeyboard();
@@ -90,6 +92,46 @@ async function upsertAuthText(page, chatIds, options = {}) {
   }
 }
 
+async function upsertAuthCaption(page, chatIds, options = {}) {
+  const lastQrSent = activeAuthSession?.lastQrSent ?? 0;
+  const refreshMs = options.refreshMs ?? QR_REFRESH_MS;
+  const secondsRemaining = qrSecondsRemaining(lastQrSent, refreshMs);
+  if (activeAuthSession?.lastCaptionSec === secondsRemaining) return;
+
+  const caption = await buildScreenshotCaptionForPage(page, {
+    ...options,
+    secondsRemaining,
+  });
+  const replyMarkup = buildScreenshotKeyboard();
+  const messageIds = activeAuthSession?.photoMessageIds || {};
+  let updated = false;
+
+  for (const chatId of chatIds) {
+    const key = String(chatId);
+    const existingId = messageIds[key];
+    if (!existingId) continue;
+
+    const result = await editMessageCaption(
+      key,
+      existingId,
+      caption,
+      { reply_markup: replyMarkup },
+      options.token
+    );
+
+    if (!isEditOk(result) && !result.ok) {
+      console.warn(`Не удалось обновить подпись в ${key}: ${result.description}`);
+      continue;
+    }
+
+    updated = true;
+  }
+
+  if (updated && activeAuthSession) {
+    activeAuthSession.lastCaptionSec = secondsRemaining;
+  }
+}
+
 async function upsertAuthScreenshot(page, chatIds, options = {}) {
   const isPassword = await isBrowserPasswordPrompt(page);
 
@@ -99,7 +141,12 @@ async function upsertAuthScreenshot(page, chatIds, options = {}) {
   }
 
   const buffer = isPassword ? await captureBrowserScreenshot(page) : await captureLoginScreenshot(page);
-  const caption = await buildScreenshotCaptionForPage(page, options);
+  const lastQrSent = activeAuthSession?.lastQrSent ?? Date.now();
+  const secondsRemaining = qrSecondsRemaining(lastQrSent, options.refreshMs ?? QR_REFRESH_MS);
+  const caption = await buildScreenshotCaptionForPage(page, {
+    ...options,
+    secondsRemaining,
+  });
   const replyMarkup = buildScreenshotKeyboard();
   const messageIds = activeAuthSession?.photoMessageIds || {};
 
@@ -137,6 +184,7 @@ async function upsertAuthScreenshot(page, chatIds, options = {}) {
 
   if (activeAuthSession) {
     activeAuthSession.photoMessageIds = messageIds;
+    activeAuthSession.lastCaptionSec = secondsRemaining;
   }
 }
 
@@ -146,7 +194,7 @@ function sleep(ms) {
 
 function buildScreenshotCaption(options = {}) {
   const { buildQrScreenshotCaption } = require('./auth-browser');
-  return buildQrScreenshotCaption(options.refreshMs);
+  return buildQrScreenshotCaption(options);
 }
 
 async function ensureQrLoginView(page) {
@@ -200,6 +248,7 @@ async function refreshAuthScreenshot() {
   await refreshQrCodeSession(page);
   await upsertAuthScreenshot(page, chatIds, options);
   activeAuthSession.lastQrSent = Date.now();
+  activeAuthSession.lastCaptionSec = null;
 }
 
 async function captureLoginScreenshot(page) {
@@ -269,7 +318,7 @@ async function waitForLogin(page, chatIds, options = {}) {
   let lastQrSent = 0;
   let stopAuthPoll = null;
 
-  activeAuthSession = { page, chatIds, options, lastQrSent: 0, photoMessageIds: {}, textMessageIds: {} };
+  activeAuthSession = { page, chatIds, options, lastQrSent: 0, lastCaptionSec: null, photoMessageIds: {}, textMessageIds: {} };
   if (options.useAuthCallbackPoll) {
     stopAuthPoll = startAuthCallbackPoll({ ...options, chatIds });
   }
@@ -286,8 +335,13 @@ async function waitForLogin(page, chatIds, options = {}) {
       await refreshQrCodeSession(page);
       await upsertAuthScreenshot(page, chatIds, options);
       lastQrSent = Date.now();
-      if (activeAuthSession) activeAuthSession.lastQrSent = lastQrSent;
+      if (activeAuthSession) {
+        activeAuthSession.lastQrSent = lastQrSent;
+        activeAuthSession.lastCaptionSec = null;
+      }
       options.onQrSent?.();
+    } else if (activeAuthSession?.photoMessageIds && Object.keys(activeAuthSession.photoMessageIds).length) {
+      await upsertAuthCaption(page, chatIds, options);
     }
 
     await sleep(2000);
@@ -324,7 +378,7 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
         total: 3,
         lines: [
           'Сейчас пришлю скриншот QR — отсканируйте в приложении MAX.',
-          'QR обновляется каждые 45 сек. Или нажмите «Обновить».',
+          `QR обновляется каждые ${qrRefreshSeconds(QR_REFRESH_MS)} сек. Или нажмите «Обновить».`,
           '',
           buildBrowserPasswordHintHtml(),
         ],

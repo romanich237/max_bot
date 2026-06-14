@@ -172,6 +172,19 @@ async function editMessageText(chatId, messageId, text, extra = {}, tokenOverrid
   );
 }
 
+async function editMessageCaption(chatId, messageId, caption, extra = {}, tokenOverride) {
+  return api(
+    'editMessageCaption',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      caption,
+      ...extra,
+    },
+    tokenOverride
+  );
+}
+
 async function getChat(chatId, tokenOverride) {
   return api('getChat', { chat_id: chatId }, tokenOverride);
 }
@@ -236,6 +249,7 @@ module.exports = {
   editPhotoBuffer,
   answerCallback,
   editMessageText,
+  editMessageCaption,
   getChat,
   pollUpdates,
 };
