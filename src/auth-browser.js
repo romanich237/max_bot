@@ -160,17 +160,18 @@ async function resolveBrowserPassword(chatIds, options = {}) {
   const configured = getBrowserPassword();
   if (configured) return configured;
 
-  return promptTelegramText(
-    chatIds,
-    buildEventMessage({
-      title: 'Пароль @Browser',
-      status: 'wait',
-      lines: [
-        'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
-        'Или задайте заранее: <code>/set browserpassword ваш_пароль</code>',
-      ],
-    }),
-    {
+  const promptMessage = options.skipPromptMessage
+    ? null
+    : buildEventMessage({
+        title: 'Пароль @Browser',
+        status: 'wait',
+        lines: [
+          'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
+          'Или задайте заранее: <code>/set browserpassword ваш_пароль</code>',
+        ],
+      });
+
+  return promptTelegramText(chatIds, promptMessage, {
       token: options.token,
       useAdminPoll: options.useAdminPoll,
       useWebPoll: options.useWebPoll,
@@ -185,10 +186,27 @@ async function resolveBrowserPassword(chatIds, options = {}) {
 
 async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
   const configured = getBrowserPassword();
-  const password = configured || (await resolveBrowserPassword(chatIds, options));
+  const password =
+    configured ||
+    (await resolveBrowserPassword(chatIds, {
+      ...options,
+      skipPromptMessage: Boolean(options.browserScreenshotSent),
+    }));
 
   if (!configured && password) {
     store.setPath(['max', 'browserPassword'], password);
+  }
+
+  if (configured) {
+    await notifyEvent(
+      chatIds,
+      {
+        title: 'Вхожу в MAX',
+        status: 'progress',
+        lines: ['Ввожу пароль @Browser…'],
+      },
+      options
+    );
   }
 
   await fillBrowserPassword(page, password);
@@ -203,22 +221,6 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
 async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
   if (!(await isBrowserPasswordPrompt(page))) return false;
-
-  if (!options.browserHintSent && chatIds?.length) {
-    for (const chatId of chatIds) {
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Вход @Browser',
-          status: 'wait',
-          lines: [buildBrowserPasswordHintHtml()],
-        }),
-        {},
-        options.token
-      );
-    }
-    options.browserHintSent = true;
-  }
 
   if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
     const buffer = await captureBrowserScreenshot(page);

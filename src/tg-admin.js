@@ -216,6 +216,14 @@ async function handleProfileNamesInput(chatId, text) {
   return true;
 }
 
+function buildBrowserAuthProgressMessage() {
+  return buildEventMessage({
+    title: 'Вхожу в MAX',
+    status: 'progress',
+    lines: ['Ввожу пароль @Browser…'],
+  });
+}
+
 async function handleAuthInput(chatId, text) {
   if (!authInputWaiter) return false;
 
@@ -236,14 +244,7 @@ async function handleAuthInput(chatId, text) {
       const waiter = authInputWaiter;
       clearAuthInputWaiter();
       waiter.onValid(setResult.value);
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Пароль @Browser сохранён',
-          status: 'done',
-          lines: ['Продолжаю вход в MAX.'],
-        })
-      );
+      await sendMessage(chatId, buildBrowserAuthProgressMessage());
       return true;
     }
     return false;
@@ -265,28 +266,14 @@ async function handleAuthInput(chatId, text) {
         const waiter = authInputWaiter;
         clearAuthInputWaiter();
         waiter.onValid(typeof validated === 'string' ? validated : text);
-        await sendMessage(
-          chatId,
-          buildEventMessage({
-            title: 'Пароль получен',
-            status: 'done',
-            lines: ['Продолжаю вход в MAX.'],
-          })
-        );
+        await sendMessage(chatId, buildBrowserAuthProgressMessage());
         return true;
   }
 
   const waiter = authInputWaiter;
   clearAuthInputWaiter();
   waiter.onValid(text);
-  await sendMessage(
-    chatId,
-    buildEventMessage({
-      title: 'Пароль получен',
-      status: 'done',
-      lines: ['Продолжаю вход в MAX.'],
-    })
-  );
+  await sendMessage(chatId, buildBrowserAuthProgressMessage());
   return true;
 }
 
@@ -557,14 +544,7 @@ async function handleMessage(message) {
       const waiter = authInputWaiter;
       clearAuthInputWaiter();
       waiter.onValid(result.value);
-      await sendMessage(
-        chatId,
-        buildEventMessage({
-          title: 'Пароль @Browser сохранён',
-          status: 'done',
-          lines: ['Продолжаю вход в MAX.'],
-        })
-      );
+      await sendMessage(chatId, buildBrowserAuthProgressMessage());
       return;
     }
     if (result?.ok) {
