@@ -6,7 +6,6 @@ const {
   getMaxDisplayName,
   getProfileRotate,
   getAlwaysOnline,
-  getAutoUpdate,
   getDefaultChatUrl,
   getMonitorChatUrls,
 } = require('./config');
@@ -147,11 +146,6 @@ function buildStatusText() {
   const profile = getProfileRotate();
   const online = getAlwaysOnline();
   const tg = getTelegram();
-  const autoUpdate = getAutoUpdate();
-  const updateLabel =
-    autoUpdate.intervalMs >= 60000 && autoUpdate.intervalMs % 60000 === 0
-      ? `каждые ${autoUpdate.intervalMs / 60000} мин`
-      : `каждые ${Math.round(autoUpdate.intervalMs / 1000)} сек`;
 
   const maxName = getMaxDisplayName();
 
@@ -168,7 +162,6 @@ function buildStatusText() {
     maxName
       ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
       : 'Имя в MAX: определяется автоматически',
-    `Автообновление: ✅ всегда (${updateLabel})`,
     '',
     '<b>Чаты MAX:</b>',
     monitorUrls.length
