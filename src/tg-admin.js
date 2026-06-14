@@ -209,15 +209,7 @@ async function handleProfileNamesInput(chatId, text) {
   return true;
 }
 
-function buildBrowserAuthProgressMessage() {
-  return buildEventMessage({
-    title: 'Вхожу в MAX',
-    status: 'progress',
-    lines: ['Ввожу пароль @Browser…'],
-  });
-}
-
-async function handleAuthInput(chatId, text) {
+const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require('./auth-browser');
   if (!authInputWaiter) return false;
 
   const chatIdStr = String(chatId);
@@ -237,7 +229,7 @@ async function handleAuthInput(chatId, text) {
       const waiter = authInputWaiter;
       clearAuthInputWaiter();
       waiter.onValid(setResult.value);
-      await sendMessage(chatId, buildBrowserAuthProgressMessage());
+      await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
       return true;
     }
     return false;
@@ -259,14 +251,14 @@ async function handleAuthInput(chatId, text) {
         const waiter = authInputWaiter;
         clearAuthInputWaiter();
         waiter.onValid(typeof validated === 'string' ? validated : text);
-        await sendMessage(chatId, buildBrowserAuthProgressMessage());
+        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
         return true;
   }
 
   const waiter = authInputWaiter;
   clearAuthInputWaiter();
   waiter.onValid(text);
-  await sendMessage(chatId, buildBrowserAuthProgressMessage());
+  await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
   return true;
 }
 
@@ -513,12 +505,21 @@ async function handleMessage(message) {
       await sendMessage(chatId, result.error);
       return;
     }
-    if (result?.ok && result.key === 'browserpassword' && authInputWaiter) {
-      const waiter = authInputWaiter;
-      clearAuthInputWaiter();
-      waiter.onValid(result.value);
-      await sendMessage(chatId, buildBrowserAuthProgressMessage());
-      return;
+    if (result?.ok && result.key === 'browserpassword') {
+      if (authInputWaiter) {
+        const waiter = authInputWaiter;
+        clearAuthInputWaiter();
+        waiter.onValid(result.value);
+        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+        return;
+      }
+
+      const delivered = deliverBrowserPassword(result.value);
+      const { isCaptionSessionActive } = require('./auth-caption');
+      if (delivered || isCaptionSessionActive()) {
+        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+        return;
+      }
     }
     if (result?.ok) {
       await sendMessage(

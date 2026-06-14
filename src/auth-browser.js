@@ -3,7 +3,35 @@ const { sendMessage } = require('./tg-api');
 const { promptTelegramText } = require('./auth-prompt');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
 
-function escapeHtml(text) {
+function buildBrowserPasswordAcceptedMessage() {
+  return buildEventMessage({
+    title: 'Пароль принят',
+    status: 'done',
+    lines: ['Ввожу пароль @Browser в MAX…'],
+  });
+}
+
+async function notifyPasswordAccepted(chatIds, options = {}) {
+  const text = buildBrowserPasswordAcceptedMessage();
+  for (const chatId of chatIds || []) {
+    await sendMessage(chatId, text, {}, options.token);
+  }
+}
+
+let passwordDelivery = null;
+
+function deliverBrowserPassword(password) {
+  if (!passwordDelivery) return false;
+  const { resolve, clearWaiter } = passwordDelivery;
+  passwordDelivery = null;
+  clearWaiter?.();
+  resolve(password);
+  return true;
+}
+
+function clearPasswordDelivery() {
+  passwordDelivery = null;
+}
   return String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -185,17 +213,38 @@ async function resolveBrowserPassword(chatIds, options = {}) {
         ],
       });
 
-  return promptTelegramText(chatIds, promptMessage, {
-      token: options.token,
-      useAdminPoll: options.useAdminPoll,
-      useWebPoll: options.useWebPoll,
-      field: 'password',
-      label: 'Пароль @Browser',
-      hint: 'Пароль из личного кабинета MAX',
-      validate: (text) => (text.trim() ? text.trim() : null),
-      invalidMessage: 'Пароль не может быть пустым. Отправьте пароль или /cancel.',
-    }
-  );
+  let deliveryResolve;
+  const deliveryPromise = new Promise((resolve) => {
+    deliveryResolve = resolve;
+  });
+
+  const { clearAuthInputWaiter } = require('./tg-admin');
+  passwordDelivery = {
+    resolve: deliveryResolve,
+    clearWaiter: clearAuthInputWaiter,
+  };
+
+  try {
+    const password = await Promise.race([
+      promptTelegramText(chatIds, promptMessage, {
+        token: options.token,
+        useAdminPoll: options.useAdminPoll,
+        useWebPoll: options.useWebPoll,
+        field: 'password',
+        label: 'Пароль @Browser',
+        hint: 'Пароль из личного кабинета MAX',
+        validate: (text) => (text.trim() ? text.trim() : null),
+        invalidMessage: 'Пароль не может быть пустым. Отправьте пароль или /cancel.',
+        onAccepted: () => notifyPasswordAccepted(chatIds, options),
+      }),
+      deliveryPromise,
+    ]);
+
+    return password;
+  } finally {
+    clearPasswordDelivery();
+    clearAuthInputWaiter();
+  }
 }
 
 async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
@@ -235,6 +284,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
 async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
   if (!(await isBrowserPasswordPrompt(page))) return false;
+  if (options.browserPasswordResolving) return true;
 
   if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
     const {
@@ -253,6 +303,7 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
     options.browserScreenshotSent = true;
   }
 
+  options.browserPasswordResolving = true;
   try {
     await handleBrowserPasswordPrompt(page, chatIds, options);
   } catch (err) {
@@ -273,6 +324,8 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
       );
     }
     return false;
+  } finally {
+    options.browserPasswordResolving = false;
   }
 
   await notifyEvent(
@@ -292,6 +345,8 @@ module.exports = {
   getBrowserPassword,
   isBrowserPasswordPrompt,
   buildBrowserPasswordHintHtml,
+  buildBrowserPasswordAcceptedMessage,
+  deliverBrowserPassword,
   buildQrScreenshotCaption,
   buildBrowserScreenshotCaption,
   buildScreenshotCaptionForPage,

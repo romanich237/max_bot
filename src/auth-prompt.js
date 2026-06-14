@@ -90,11 +90,18 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
     let stopPoll = null;
     let timer = null;
 
-    const finish = (value) => {
+    const finish = async (value) => {
       if (settled) return;
       settled = true;
       stopPoll?.();
       if (timer) clearTimeout(timer);
+      if (options.onAccepted) {
+        try {
+          await options.onAccepted(value);
+        } catch {
+          /* ignore */
+        }
+      }
       resolve(value);
     };
 
