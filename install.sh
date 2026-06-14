@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+trap 'echo ""; echo "Ошибка install.sh, строка $LINENO (код $?)"; exit 1' ERR
+
 REPO_URL="${REPO_URL:-https://github.com/romanich237/max_bot.git}"
 BRANCH="${BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/max-tg}"
@@ -67,14 +69,20 @@ node_major() {
     echo 0
     return 0
   fi
+  if [ ! -x "$bin" ]; then
+    echo 0
+    return 0
+  fi
   ver="$("$bin" -v 2>/dev/null || true)"
   ver="${ver#v}"
   ver="${ver%%.*}"
-  if [[ "$ver" =~ ^[0-9]+$ ]]; then
+  ver="${ver//[!0-9]/}"
+  if [ -n "$ver" ]; then
     echo "$ver"
   else
     echo 0
   fi
+  return 0
 }
 
 node_version_label() {
@@ -223,8 +231,9 @@ ensure_node() {
   refresh_path
   local major
   major="$(node_major)"
+  major="${major:-0}"
 
-  if [ "$major" -ge 18 ]; then
+  if [ "$major" -ge 18 ] 2>/dev/null; then
     echo "Node.js $(node_version_label)"
     return 0
   fi
@@ -236,41 +245,76 @@ ensure_node() {
   fi
 
   set +e
-  install_node_via_nvm
-  refresh_path
-  major="$(node_major)"
-  if [ "$major" -ge 18 ]; then
-    set -e
-    echo "Node.js $(node_version_label) готов (nvm)"
-    return 0
-  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    install_node_via_nodesource
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nodesource)"
+      return 0
+    fi
 
-  install_node_via_nodesource
-  refresh_path
-  major="$(node_major)"
-  if [ "$major" -ge 18 ]; then
-    set -e
-    echo "Node.js $(node_version_label) готов (nodesource)"
-    return 0
-  fi
+    install_node_via_binary
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (binary)"
+      return 0
+    fi
 
-  install_node_via_binary
-  refresh_path
-  major="$(node_major)"
+    install_node_via_nvm
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nvm)"
+      return 0
+    fi
+  else
+    install_node_via_nvm
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nvm)"
+      return 0
+    fi
+
+    install_node_via_nodesource
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nodesource)"
+      return 0
+    fi
+
+    install_node_via_binary
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (binary)"
+      return 0
+    fi
+  fi
   set -e
-
-  if [ "$major" -ge 18 ]; then
-    echo "Node.js $(node_version_label) готов (binary)"
-    return 0
-  fi
 
   echo ""
   echo "Ошибка: не удалось установить Node.js 18+"
   echo "Если Node уже установлен, продолжите установку бота:"
   echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
   echo "Или вручную:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
-  echo "  source ~/.nvm/nvm.sh && nvm install 20"
+  echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+  echo "  apt-get install -y nodejs"
   echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
   exit 1
 }
@@ -322,7 +366,13 @@ open_portal_port() {
 echo "Проверка git..."
 ensure_git
 echo "Проверка Node.js..."
+set +e
 ensure_node
+ensure_node_status=$?
+set -e
+if [ "$ensure_node_status" -ne 0 ]; then
+  exit "$ensure_node_status"
+fi
 refresh_path
 
 if ! command -v npm >/dev/null 2>&1; then
@@ -347,7 +397,7 @@ refresh_path
 open_portal_port
 echo ""
 echo "Node: $(resolve_node_bin) ($(node_version_label))"
-echo "npm:  $(command -v npm) ($(npm -v))"
+echo "npm:  $(command -v npm 2>/dev/null || echo 'не найден') ($(npm -v 2>/dev/null || echo '?'))"
 echo ""
 
 if [ -z "${TG_TOKEN:-}" ]; then
