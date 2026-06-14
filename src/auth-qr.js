@@ -317,14 +317,13 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     const intro =
       options.introMessage ||
       buildEventMessage({
-        title: 'Авторизация MAX',
+        title: 'Вход в MAX по QR-коду',
         status: 'wait',
         step: 1,
-        total: 5,
+        total: 3,
         lines: [
-          'Настройка полностью в Telegram.',
-          'Рекомендуется вход по <b>номеру телефона</b>.',
-          'Скриншот пришлю только для пароля @Browser.',
+          'Сейчас пришлю скриншот QR — отсканируйте в приложении MAX.',
+          'QR обновляется каждые 45 сек. Или нажмите «Обновить».',
           '',
           buildBrowserPasswordHintHtml(),
         ],
@@ -379,7 +378,7 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
 
   const admins = new Set(chatIds.map(String));
   const keyboard = buildAuthModeKeyboard({
-    allowQr: options.allowQr !== false && options.sendQrPhotos !== false,
+    allowQr: options.allowQr !== false,
   });
 
   for (const chatId of chatIds) {
@@ -390,7 +389,7 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
         status: 'wait',
         step: 1,
         total: 5,
-        lines: ['Выберите способ входа кнопкой ниже.'],
+        lines: ['Выберите: <b>QR-код</b> или <b>номер телефона</b>.'],
       }),
       { reply_markup: keyboard },
       options.token
@@ -471,10 +470,9 @@ async function runAuthTelegram(options = {}) {
   try {
     const page = context.pages()[0] || (await context.newPage());
     return await runAuthOnPage(page, chatIds, {
-      sendQrPhotos: false,
-      sendCaptchaPhotos: false,
-      sendPasswordPhotos: true,
-      allowQr: false,
+      sendQrPhotos: options.sendQrPhotos !== false,
+      sendCaptchaPhotos: options.sendCaptchaPhotos === true,
+      sendPasswordPhotos: options.sendPasswordPhotos !== false,
       ...options,
       mode,
     });

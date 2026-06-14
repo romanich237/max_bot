@@ -129,15 +129,14 @@ async function runTerminalSetup() {
       total: 5,
       lines: [
         'Всё в Telegram — без веб-страницы.',
-        'Выберите вход по <b>номеру телефона</b>.',
-        'Скриншот пришлю только для пароля @Browser.',
+        'Выберите вход: <b>QR-код</b> или <b>номер телефона</b>.',
+        'Для QR пришлю скриншот; для телефона — запросы в чате.',
       ],
     }),
     useAuthCallbackPoll: true,
-    sendQrPhotos: false,
+    sendQrPhotos: true,
     sendCaptchaPhotos: false,
     sendPasswordPhotos: true,
-    allowQr: false,
   });
   await runSetupWizard();
 

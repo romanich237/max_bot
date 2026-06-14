@@ -451,9 +451,9 @@ async function handleMessage(message) {
       buildEventMessage({
         title: 'Способ входа в MAX',
         status: 'wait',
-        lines: ['Выберите вход по номеру телефона.'],
+        lines: ['Выберите: QR-код или номер телефона.'],
       }),
-      { reply_markup: buildAuthModeKeyboard({ allowQr: false }) }
+      { reply_markup: buildAuthModeKeyboard() }
     );
     return;
   }
