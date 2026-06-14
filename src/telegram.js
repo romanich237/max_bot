@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram } = require('./config');
+const { getTelegram, getMaxDisplayName } = require('./config');
 const replyStore = require('./reply-store');
 
 function escapeHtml(text) {
@@ -35,10 +35,12 @@ function buildMessageText(message, isCatchUp = false) {
   const parts = [];
 
   if (showServiceHeader) {
+    const maxName = getMaxDisplayName();
+    const account = maxName ? ` · <code>${escapeHtml(maxName)}</code>` : '';
     parts.push(
       isCatchUp
-        ? '📩 <b>Сообщение из MAX</b> <i></i>'
-        : '📩 <b>Новое сообщение из MAX</b>',
+        ? `📩 <b>Сообщение из MAX</b>${account}`
+        : `📩 <b>Новое сообщение из MAX</b>${account}`,
       ''
     );
   }

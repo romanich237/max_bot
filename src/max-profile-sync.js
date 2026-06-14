@@ -71,6 +71,7 @@ async function notifyOwnNamesUpdate(currentName, allNames, reason) {
 
 async function syncOwnNames(page, options = {}) {
   const names = new Set(options.extraNames || []);
+  let profileName = '';
 
   const rotation = getProfileRotate();
   for (const name of rotation.names || []) {
@@ -84,16 +85,21 @@ async function syncOwnNames(page, options = {}) {
 
   if (options.readProfile && page) {
     try {
-      const profileName = await readProfileFirstName(page, options.chatUrl);
+      profileName = await readProfileFirstName(page, options.chatUrl);
       if (profileName) names.add(profileName);
     } catch (err) {
       console.warn('Не удалось прочитать имя из профиля MAX:', err.message);
     }
   }
 
+  const messageNames = collectNamesFromMessages(options.messages || []);
   const nameList = [...names];
   const { merged, changed } = mergeOwnAuthorNames(nameList);
-  const currentName = nameList[nameList.length - 1] || merged[merged.length - 1] || '';
+  const currentName =
+    profileName ||
+    (messageNames.length ? messageNames[messageNames.length - 1] : '') ||
+    (nameList.length ? nameList[nameList.length - 1] : '') ||
+    (merged.length ? merged[merged.length - 1] : '');
   const prevName = store.getPath(['max', 'currentDisplayName']) || '';
   const nameChanged = Boolean(currentName && currentName !== prevName);
 

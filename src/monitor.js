@@ -1,5 +1,6 @@
 const {
   getMax,
+  getMaxDisplayName,
   getSettings,
   getProfileRotate,
   getAlwaysOnline,
@@ -99,6 +100,8 @@ async function startMonitor() {
   let monitorTimer = null;
   let currentChatUrl = max.chatUrl;
   const reauthPromptIds = {};
+  let lastProfileNameSync = 0;
+  const PROFILE_NAME_RETRY_MS = 5 * 60 * 1000;
 
   function isEditOk(result) {
     if (result?.ok) return true;
@@ -204,6 +207,12 @@ async function startMonitor() {
       }
       lastSnapshot = snapshotFrom(messages);
       clearReauthPromptIds();
+      await syncOwnNames(page, {
+        messages,
+        readProfile: true,
+        chatUrl,
+        notify: false,
+      });
     } finally {
       authBusy = false;
       profileBusy = false;
@@ -386,6 +395,26 @@ async function startMonitor() {
 
       messages = await readMessages(page);
       syncOwnNamesFromMessages(messages);
+
+      if (
+        !getMaxDisplayName() &&
+        Date.now() - lastProfileNameSync > PROFILE_NAME_RETRY_MS
+      ) {
+        lastProfileNameSync = Date.now();
+        profileBusy = true;
+        try {
+          await syncOwnNames(page, {
+            messages,
+            readProfile: true,
+            chatUrl: currentChatUrl,
+            notify: false,
+          });
+        } catch (err) {
+          console.warn('Синхронизация имени MAX:', err.message);
+        } finally {
+          profileBusy = false;
+        }
+      }
 
       const byKeys = findNewMessages(messages, seenKeys);
       const byTail = diffByTail(lastSnapshot, messages);

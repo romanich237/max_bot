@@ -35,6 +35,20 @@ function getMax() {
   };
 }
 
+function getMaxDisplayName() {
+  const max = getMax();
+  const direct = String(max.currentDisplayName || '').trim();
+  if (direct) return direct;
+
+  const names = max.ownAuthorNames || [];
+  for (let i = names.length - 1; i >= 0; i--) {
+    const name = String(names[i] || '').trim();
+    if (name) return name;
+  }
+
+  return '';
+}
+
 function getProfileRotate() {
   const p = getRaw().profileRotate || {};
   return {
@@ -104,6 +118,7 @@ module.exports = {
   getTelegram,
   getAdminChatIds,
   getMax,
+  getMaxDisplayName,
   getProfileRotate,
   getAlwaysOnline,
   getDatabase,

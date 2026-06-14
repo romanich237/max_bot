@@ -3,6 +3,7 @@ const {
   getTelegram,
   getAdminChatIds,
   getMax,
+  getMaxDisplayName,
   getProfileRotate,
   getAlwaysOnline,
   getAutoUpdate,
@@ -117,6 +118,8 @@ function buildStatusText() {
       ? `каждые ${autoUpdate.intervalMs / 60000} мин`
       : `каждые ${Math.round(autoUpdate.intervalMs / 1000)} сек`;
 
+  const maxName = getMaxDisplayName();
+
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
     '',
@@ -124,8 +127,8 @@ function buildStatusText() {
     `Бесконечный онлайн: ${onFlag(online.enabled)} (${online.intervalMs / 1000} с)`,
     `Ротация имени: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
     profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : 'Имена: не заданы',
-    max.currentDisplayName
-      ? `Имя в MAX: <code>${max.currentDisplayName}</code>`
+    maxName
+      ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
       : 'Имя в MAX: определяется автоматически',
     `Время в TG: ${onFlag(tg.showTime)}`,
     `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
