@@ -80,6 +80,17 @@ function getProfileRotate() {
   };
 }
 
+function getProfileBio() {
+  const b = getRaw().profileBio || {};
+  return {
+    enabled: b.enabled ?? false,
+    intervalMs: b.intervalMs ?? 60000,
+    template: b.template || '{час}:{минута} · {день}.{месяц} · {погода}',
+    city: b.city || '',
+    weatherApiKey: process.env.OPENWEATHER_API_KEY || b.weatherApiKey || '',
+  };
+}
+
 function getAlwaysOnline() {
   const o = getRaw().alwaysOnline || {};
   return {
@@ -146,6 +157,7 @@ module.exports = {
   getDefaultChatUrl: maxChats.getDefaultChatUrl,
   getMonitorChatUrls: maxChats.getMonitorChatUrls,
   getProfileRotate,
+  getProfileBio,
   getAlwaysOnline,
   getDatabase,
   getAutoUpdate,

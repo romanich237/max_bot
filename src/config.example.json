@@ -32,6 +32,13 @@
     "mode": "list",
     "names": []
   },
+  "profileBio": {
+    "enabled": false,
+    "intervalMs": 60000,
+    "template": "{час}:{минута} · {день}.{месяц} · {погода}",
+    "city": "",
+    "weatherApiKey": "bd5e378503939ddaee76f12ad7a97608"
+  },
   "alwaysOnline": {
     "enabled": false,
     "intervalMs": 30000

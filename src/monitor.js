@@ -3,6 +3,7 @@ const {
   getMaxDisplayName,
   getSettings,
   getProfileRotate,
+  getProfileBio,
   getAlwaysOnline,
   getAdminChatIds,
   isSetupComplete,
@@ -15,7 +16,7 @@ const {
   chatIdFromUrl,
   chatLabelFromUrl,
 } = require('./max-chats');
-const { rotateDisplayName } = require('./profile');
+const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
@@ -237,6 +238,7 @@ async function startMonitor() {
   let authBusy = false;
   let profileIndex = 0;
   let profileTimer = null;
+  let bioTimer = null;
   let monitorTimer = null;
   const reauthPromptIds = {};
   let lastProfileNameSync = 0;
@@ -272,16 +274,25 @@ async function startMonitor() {
     }
   }
 
+  function clearBioTimer() {
+    if (bioTimer) {
+      clearTimeout(bioTimer);
+      bioTimer = null;
+    }
+  }
+
   function pauseMonitoring() {
     store.setPath(['max', 'monitoringEnabled'], false);
     clearMonitorTimer();
     clearProfileTimer();
+    clearBioTimer();
     console.log('Мониторинг MAX остановлен');
   }
 
   function resumeMonitoring() {
     store.setPath(['max', 'monitoringEnabled'], true);
     scheduleProfileRotate();
+    scheduleProfileBio();
     scheduleMonitor();
     console.log('Мониторинг MAX запущен');
   }
@@ -401,8 +412,10 @@ async function startMonitor() {
 
       const targetChatUrl = targetMessage.maxChatUrl || getDefaultChatUrl();
       if (targetChatUrl) {
-        await page.goto(targetChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-        await page.waitForTimeout(2000);
+        const loaded = await openChatWhenReady(page, targetChatUrl);
+        if (loaded === null) {
+          throw new Error('Сессия MAX истекла. Отправьте /reauth');
+        }
       }
 
       await sendReplyInMax(page, targetMessage, text, MESSAGE_WRAPPER_SELECTOR);
@@ -425,8 +438,10 @@ async function startMonitor() {
     onlineKeeper.reschedule();
     if (isMonitoringEnabled()) {
       scheduleProfileRotate();
+      scheduleProfileBio();
     } else {
       clearProfileTimer();
+      clearBioTimer();
     }
   });
 
@@ -471,7 +486,7 @@ async function startMonitor() {
       messages: defaultState?.lastSnapshot || [],
       readProfile: true,
       chatUrl: defaultChatUrl,
-      notify: true,
+      notify: false,
       reason: 'Имя взято из настроек профиля MAX.',
     });
     await saveState(persistChatStates(chatStates));
@@ -511,7 +526,7 @@ async function startMonitor() {
           extraNames: [name],
           readProfile: true,
           chatUrl,
-          notify: true,
+          notify: false,
           reason: 'Имя обновлено в профиле MAX.',
         });
       } catch (err) {
@@ -524,8 +539,44 @@ async function startMonitor() {
     profileTimer = setTimeout(tick, profileRotate.intervalMs);
   }
 
+  function scheduleProfileBio() {
+    clearBioTimer();
+
+    if (!isMonitoringEnabled()) return;
+
+    const profileBio = getProfileBio();
+    if (!profileBio.enabled) return;
+
+    console.log(`Авто описание: каждые ${profileBio.intervalMs / 1000} с`);
+
+    const tick = async () => {
+      const current = getProfileBio();
+      bioTimer = setTimeout(tick, current.intervalMs);
+
+      if (!current.enabled || profileBusy || authBusy || !isMonitoringEnabled()) return;
+      if (!String(current.city || '').trim()) {
+        console.warn('Авто описание: город не задан');
+        return;
+      }
+
+      profileBusy = true;
+      try {
+        const chatUrl = getDefaultChatUrl();
+        const bioText = await rotateProfileBio(page, chatUrl, current);
+        console.log(`Описание обновлено (${bioText.length} симв.)`);
+      } catch (err) {
+        console.error('Ошибка обновления описания:', err.message);
+      } finally {
+        profileBusy = false;
+      }
+    };
+
+    bioTimer = setTimeout(tick, profileBio.intervalMs);
+  }
+
   if (isMonitoringEnabled()) {
     scheduleProfileRotate();
+    scheduleProfileBio();
   }
 
   async function monitorTick() {

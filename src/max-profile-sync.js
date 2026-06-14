@@ -1,6 +1,6 @@
 const { store, getAdminChatIds, getProfileRotate } = require('./config');
 const { sendMessage } = require('./tg-api');
-const { readProfileNames } = require('./profile');
+const { readProfileFirstNameOnly } = require('./profile');
 
 function escapeHtml(text) {
   return String(text)
@@ -101,8 +101,7 @@ async function syncOwnNames(page, options = {}) {
 
   if (options.readProfile && page) {
     try {
-      const profile = await readProfileNames(page, options.chatUrl);
-      profileFirstName = normalizeName(profile.firstName);
+      profileFirstName = normalizeName(await readProfileFirstNameOnly(page, options.chatUrl));
     } catch (err) {
       console.warn('Не удалось прочитать имя из профиля MAX:', err.message);
     }

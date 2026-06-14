@@ -204,15 +204,36 @@ async function findWrapperIndex(page, message, wrapperSelector) {
   const index = await page.evaluate(
     ({ author, body, time, reply, wrapperSelector: sel }) => {
       const wrappers = document.querySelectorAll(sel);
-      const needle = (body || '').slice(0, 40);
-      const replyNeedle = reply?.body?.slice(0, 30) || '';
+      const norm = (value) =>
+        String(value || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+      const needle = norm(body);
+      const authorNeedle = norm(author);
+      const replyNeedle = norm(reply?.body);
 
       for (let i = wrappers.length - 1; i >= 0; i--) {
-        const text = wrappers[i].innerText || '';
-        if (time && !text.includes(time)) continue;
+        const text = norm(wrappers[i].innerText || '');
+
+        if (needle && authorNeedle && text.includes(needle) && text.includes(authorNeedle)) {
+          return i;
+        }
+
+        if (
+          replyNeedle &&
+          authorNeedle &&
+          text.includes(replyNeedle) &&
+          text.includes(authorNeedle)
+        ) {
+          return i;
+        }
+
         if (needle && text.includes(needle)) return i;
-        if (replyNeedle && text.includes(replyNeedle) && text.includes(author)) return i;
-        if (text.includes(author) && (!needle || text.includes(needle.slice(0, 20)))) return i;
+
+        if (time && text.includes(time) && needle && text.includes(needle.slice(0, 20))) {
+          return i;
+        }
       }
       return -1;
     },
@@ -225,7 +246,7 @@ async function findWrapperIndex(page, message, wrapperSelector) {
     }
   );
 
-  return index >= 0 ? index : message.index;
+  return index;
 }
 
 async function downloadMediaItem(page, message, media, index, wrapperSelector) {

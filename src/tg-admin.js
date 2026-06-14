@@ -5,6 +5,7 @@ const {
   getMax,
   getMaxDisplayName,
   getProfileRotate,
+  getProfileBio,
   getAlwaysOnline,
   getDefaultChatUrl,
   getMonitorChatUrls,
@@ -32,8 +33,14 @@ const {
   buildToggleRows,
   parseNameList,
   saveProfileNames,
+  saveProfileBioCity,
+  saveProfileBioTemplate,
   PROFILE_NAMES_HINT,
+  PROFILE_BIO_CITY_HINT,
+  PROFILE_BIO_TEMPLATE_HINT,
+  MAX_BIO_LENGTH,
 } = require('./tg-settings');
+const { previewBioTemplate } = require('./profile-bio');
 const replyStore = require('./reply-store');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
@@ -53,6 +60,9 @@ const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require(
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
+  biointerval: { path: ['profileBio', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
+  biocity: { path: ['profileBio', 'city'], type: 'string' },
+  biotemplate: { path: ['profileBio', 'template'], type: 'string' },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
   browserpassword: { path: ['max', 'browserPassword'], type: 'string' },
@@ -145,6 +155,7 @@ function onFlag(value) {
 
 function buildStatusText() {
   const profile = getProfileRotate();
+  const profileBio = getProfileBio();
   const online = getAlwaysOnline();
 
   const maxName = getMaxDisplayName();
@@ -160,6 +171,9 @@ function buildStatusText() {
     `Бесконечный онлайн: ${onFlag(online.enabled)} (${online.intervalMs / 1000} с)`,
     `Авто имя: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
     profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : 'Имена: не заданы',
+    `Авто описание: ${onFlag(profileBio.enabled)} (${profileBio.intervalMs / 1000} с)`,
+    profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : 'Город: не задан',
+    `Шаблон: <code>${escapeHtml(profileBio.template)}</code>`,
     maxName
       ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
       : 'Имя в MAX: определяется автоматически',
@@ -210,6 +224,8 @@ function isDiscoverIdRequest(text) {
 function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
   rows.push([{ text: '✏️ Имена авто', callback_data: 'action:profileNames' }]);
+  rows.push([{ text: '🏙 Город', callback_data: 'action:profileBioCity' }]);
+  rows.push([{ text: '📝 Шаблон описания', callback_data: 'action:profileBioTemplate' }]);
   rows.push([{ text: '💬 Чаты MAX', callback_data: 'maxchat:list' }]);
   rows.push([{ text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' }]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
@@ -240,7 +256,11 @@ function parseSetCommand(text) {
   }
 
   const rule = SETTABLE[key];
-  if (!rule) return { error: `Неизвестный ключ. Доступно: chaturl, ${Object.keys(SETTABLE).join(', ')}` };
+  if (!rule) {
+    return {
+      error: `Неизвестный ключ. Доступно: chaturl, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`,
+    };
+  }
 
   if (rule.type === 'names') {
     const names = parseNameList(rawValue);
@@ -261,6 +281,62 @@ function parseSetCommand(text) {
 
   store.setPath(rule.path, value);
   return { ok: true, key, value };
+}
+
+async function handleProfileBioCityInput(chatId, text) {
+  const city = String(text || '').trim();
+  if (!city) {
+    await sendMessage(chatId, 'Город не распознан. ' + PROFILE_BIO_CITY_HINT);
+    return false;
+  }
+
+  saveProfileBioCity(city);
+  waitingInput.delete(String(chatId));
+  await sendMessage(
+    chatId,
+    buildEventMessage({
+      title: 'Город сохранён',
+      status: 'done',
+      lines: [`Город: <code>${escapeHtml(city)}</code>`, '', buildStatusText()],
+    }),
+    { reply_markup: buildMenuKeyboard() }
+  );
+  return true;
+}
+
+async function handleProfileBioTemplateInput(chatId, text) {
+  const template = String(text || '').trim();
+  if (!template) {
+    await sendMessage(chatId, 'Шаблон не распознан. ' + PROFILE_BIO_TEMPLATE_HINT);
+    return false;
+  }
+
+  const preview = previewBioTemplate(template, getProfileBio().city);
+  if (preview.length > MAX_BIO_LENGTH) {
+    await sendMessage(
+      chatId,
+      `Слишком длинный результат (${preview.length} симв.). Сократите шаблон до ${MAX_BIO_LENGTH} символов.`
+    );
+    return false;
+  }
+
+  saveProfileBioTemplate(template);
+  waitingInput.delete(String(chatId));
+  await sendMessage(
+    chatId,
+    buildEventMessage({
+      title: 'Шаблон описания сохранён',
+      status: 'done',
+      lines: [
+        `Шаблон: <code>${escapeHtml(template)}</code>`,
+        `Пример: <code>${escapeHtml(preview.text)}</code> (${preview.length} симв.)`,
+        '',
+        buildStatusText(),
+      ],
+    }),
+    { reply_markup: buildMenuKeyboard() }
+  );
+  return true;
 }
 
 async function handleProfileNamesInput(chatId, text) {
@@ -580,6 +656,16 @@ async function handleMessage(message) {
 
   if (waitKey === 'profileNames' && text && !text.startsWith('/')) {
     await handleProfileNamesInput(chatId, text);
+    return;
+  }
+
+  if (waitKey === 'profileBioCity' && text && !text.startsWith('/')) {
+    await handleProfileBioCityInput(chatId, text);
+    return;
+  }
+
+  if (waitKey === 'profileBioTemplate' && text && !text.startsWith('/')) {
+    await handleProfileBioTemplateInput(chatId, text);
     return;
   }
 
@@ -911,6 +997,20 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data === 'action:profileBioCity') {
+    waitingInput.set(String(chatId), 'profileBioCity');
+    await answerCallback(query.id, 'Жду город');
+    await sendMessage(chatId, PROFILE_BIO_CITY_HINT);
+    return;
+  }
+
+  if (data === 'action:profileBioTemplate') {
+    waitingInput.set(String(chatId), 'profileBioTemplate');
+    await answerCallback(query.id, 'Жду шаблон');
+    await sendMessage(chatId, PROFILE_BIO_TEMPLATE_HINT);
+    return;
+  }
+
   if (data === 'action:notifyChat') {
     await answerCallback(query.id, 'Чат уведомлений');
     await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
@@ -1065,6 +1165,14 @@ async function handleCallback(query) {
       if (!names.length) {
         waitingInput.set(String(chatId), 'profileNames');
         await sendMessage(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT);
+      }
+    }
+
+    if (path.join('.') === 'profileBio.enabled' && next) {
+      const city = store.getPath(['profileBio', 'city']) || '';
+      if (!city) {
+        waitingInput.set(String(chatId), 'profileBioCity');
+        await sendMessage(chatId, 'Авто описание включено. ' + PROFILE_BIO_CITY_HINT);
       }
     }
 

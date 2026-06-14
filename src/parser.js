@@ -1,11 +1,24 @@
-const { getMax } = require('./config');
+const { getMax, getProfileRotate, getMaxDisplayName } = require('./config');
 const { buildMediaKey, bodyWithMedia } = require('./media');
 
 const MESSAGE_WRAPPER_SELECTOR = '.messageWrapper';
 
 function ownNamesLower() {
-  const { ownAuthorNames = [] } = getMax();
-  return ownAuthorNames.map((n) => n.toLowerCase().trim()).filter(Boolean);
+  const max = getMax();
+  const rotate = getProfileRotate();
+  const names = new Set();
+
+  for (const raw of [...(max.ownAuthorNames || []), ...(rotate.names || [])]) {
+    const value = String(raw || '').toLowerCase().trim();
+    if (value) names.add(value);
+  }
+
+  const display = String(getMaxDisplayName() || max.currentDisplayName || '')
+    .toLowerCase()
+    .trim();
+  if (display) names.add(display);
+
+  return [...names];
 }
 
 async function isLoginPage(page) {
@@ -420,4 +433,5 @@ module.exports = {
   diffByTail,
   waitForChat,
   shouldForward,
+  isOwnByAuthor,
 };

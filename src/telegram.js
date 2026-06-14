@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
 const { getTelegram, getNotificationChatIds, getMaxDisplayName, getMonitorChatUrls } = require('./config');
+const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
 
@@ -12,10 +13,16 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
+function formatReplyAuthor(author) {
+  if (!author) return 'сообщение';
+  if (isOwnByAuthor(author)) return 'Вы';
+  return escapeHtml(author);
+}
+
 function formatReply(reply) {
   if (!reply) return '';
 
-  const author = reply.author ? escapeHtml(reply.author) : 'сообщение';
+  const author = formatReplyAuthor(reply.author);
   const body = reply.isVoice
     ? '[голосовое]'
     : reply.body

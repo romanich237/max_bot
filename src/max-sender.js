@@ -1,5 +1,38 @@
 const { findWrapperIndex } = require('./media');
 
+function normalizeMatchText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+async function resolveReplyWrapper(page, message, wrapperSelector) {
+  const { readMessages } = require('./parser');
+  const messages = await readMessages(page);
+  const author = normalizeMatchText(message.author);
+  const body = normalizeMatchText(message.body);
+  const replyBody = normalizeMatchText(message.reply?.body);
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (author && normalizeMatchText(msg.author) !== author) continue;
+    if (body && normalizeMatchText(msg.body) !== body) continue;
+
+    if (replyBody) {
+      const msgReplyBody = normalizeMatchText(msg.reply?.body);
+      if (msgReplyBody && msgReplyBody !== replyBody) continue;
+    }
+
+    const wrapper = page.locator(wrapperSelector).nth(msg.index);
+    if (await wrapper.count()) {
+      return wrapper;
+    }
+  }
+
+  return null;
+}
+
 async function openReplyOnMessage(page, wrapper) {
   await wrapper.scrollIntoViewIfNeeded();
   await wrapper.hover();
@@ -84,10 +117,20 @@ async function sendReplyInMax(page, message, text, wrapperSelector) {
     throw new Error('Пустой ответ');
   }
 
-  const index = await findWrapperIndex(page, message, wrapperSelector);
-  const wrapper = page.locator(wrapperSelector).nth(index);
+  let wrapper = await resolveReplyWrapper(page, message, wrapperSelector);
 
-  if (!(await wrapper.count())) {
+  if (!wrapper) {
+    const index = await findWrapperIndex(page, message, wrapperSelector);
+    const total = await page.locator(wrapperSelector).count();
+    if (index >= 0 && index < total) {
+      wrapper = page.locator(wrapperSelector).nth(index);
+      if (!(await wrapper.count())) {
+        wrapper = null;
+      }
+    }
+  }
+
+  if (!wrapper) {
     throw new Error('Сообщение не найдено в чате MAX');
   }
 
