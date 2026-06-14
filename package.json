@@ -9,7 +9,7 @@
     "init-db": "node scripts/init-db.js",
     "setup": "node scripts/install.js",
     "setup-resume": "bash scripts/resume-setup.sh",
-    "setup-web": "node scripts/install.js",
+    "setup-web": "node scripts/install-web.js",
     "setup-vps": "node scripts/setup-vps.js",
     "auth-qr": "node scripts/auth-qr.js",
     "pack-deploy": "node scripts/pack-deploy.js",

@@ -145,7 +145,9 @@ async function startMonitor() {
       introMessage ||
       '<b>Сессия MAX истекла</b>\nВыберите способ входа в MAX:';
     for (const chatId of getAdminChatIds()) {
-      await sendTgMessage(chatId, text, { reply_markup: buildAuthModeKeyboard() });
+      await sendTgMessage(chatId, text, {
+        reply_markup: buildAuthModeKeyboard({ allowQr: false }),
+      });
     }
   }
 
@@ -155,6 +157,11 @@ async function startMonitor() {
     try {
       const chatUrl = getMax().chatUrl;
       await runAuthOnPage(page, getAdminChatIds(), {
+        sendQrPhotos: false,
+        sendCaptchaPhotos: false,
+        sendPasswordPhotos: true,
+        allowQr: false,
+        useAuthCallbackPoll: true,
         ...options,
         useAdminPoll: true,
         afterLoginChatUrl: chatUrl,

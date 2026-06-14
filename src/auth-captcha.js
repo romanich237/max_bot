@@ -1,4 +1,5 @@
-const { sendPhotoBuffer } = require('./tg-api');
+const { sendPhotoBuffer, sendMessage } = require('./tg-api');
+const { buildEventMessage } = require('./tg-events');
 
 const CAPTCHA_IFRAME_RE = /not_robot_captcha|id\.vk\.ru/i;
 const CAPTCHA_TIMEOUT_MS = 3 * 60 * 1000;
@@ -139,15 +140,22 @@ async function captureCaptchaScreenshot(page) {
 }
 
 async function notifyCaptcha(chatIds, page, options = {}) {
-  const buffer = await captureCaptchaScreenshot(page);
-  const caption = [
-    'Проверка «не робот» на MAX.',
-    'Бот нажимает галочку автоматически.',
-    'Если не проходит за 3 мин — /reauth и выберите QR-код.',
-  ].join('\n');
+  const caption = buildEventMessage({
+    title: 'Проверка «не робот»',
+    status: 'progress',
+    lines: [
+      'Бот нажимает галочку автоматически.',
+      'Если не проходит за 3 мин — /reauth и вход по номеру.',
+    ],
+  });
 
   for (const chatId of chatIds || []) {
-    await sendPhotoBuffer(chatId, buffer, caption, options.token);
+    if (options.sendCaptchaPhotos === false) {
+      await sendMessage(chatId, caption, {}, options.token);
+    } else {
+      const buffer = await captureCaptchaScreenshot(page);
+      await sendPhotoBuffer(chatId, buffer, caption, options.token);
+    }
   }
 }
 

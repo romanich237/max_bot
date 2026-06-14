@@ -1,6 +1,7 @@
 const { getMax } = require('./config');
-const { sendMessage } = require('./tg-api');
+const { sendMessage, sendPhotoBuffer } = require('./tg-api');
 const { promptTelegramText } = require('./auth-prompt');
+const { buildEventMessage, notifyEvent } = require('./tg-events');
 
 function escapeHtml(text) {
   return String(text)
@@ -157,11 +158,14 @@ async function resolveBrowserPassword(chatIds, options = {}) {
 
   return promptTelegramText(
     chatIds,
-    [
-      'В MAX появился вход <b>@Browser</b>.',
-      'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
-      'Или задайте заранее: <code>/set browserpassword ваш_пароль</code>',
-    ].join('\n'),
+    buildEventMessage({
+      title: 'Пароль @Browser',
+      status: 'wait',
+      lines: [
+        'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
+        'Или задайте заранее: <code>/set browserpassword ваш_пароль</code>',
+      ],
+    }),
     {
       token: options.token,
       useAdminPoll: options.useAdminPoll,
@@ -188,12 +192,44 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
   if (!options.browserHintSent && chatIds?.length) {
     for (const chatId of chatIds) {
-      await sendMessage(chatId, buildBrowserPasswordHintHtml(), {}, options.token);
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Вход @Browser',
+          status: 'wait',
+          lines: [buildBrowserPasswordHintHtml()],
+        }),
+        {},
+        options.token
+      );
     }
     options.browserHintSent = true;
   }
 
+  if (options.sendPasswordPhotos !== false && !options.browserScreenshotSent && chatIds?.length) {
+    const buffer = await captureBrowserScreenshot(page);
+    const caption = [
+      '🔄 Вход @Browser · в процессе',
+      buildBrowserScreenshotCaption(),
+    ].join('\n');
+    for (const chatId of chatIds) {
+      await sendPhotoBuffer(chatId, buffer, caption, options.token);
+    }
+    options.browserScreenshotSent = true;
+  }
+
   await handleBrowserPasswordPrompt(page, chatIds, options);
+
+  await notifyEvent(
+    chatIds,
+    {
+      title: 'Пароль @Browser принят',
+      status: 'done',
+      lines: ['Продолжаю вход в MAX.'],
+    },
+    options
+  );
+
   return true;
 }
 

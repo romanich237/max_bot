@@ -1,15 +1,21 @@
 const { sendMessage } = require('./tg-api');
 const { isLoginPage } = require('./parser');
 const { promptTelegramText, sleep } = require('./auth-prompt');
+const { notifyEvent, maskPhone, buildEventMessage } = require('./tg-events');
 const {
   isBrowserPasswordPrompt,
   buildBrowserPasswordHintHtml,
-  handleBrowserPasswordPrompt,
+  tryHandleBrowserPasswordPrompt,
 } = require('./auth-browser');
 const { isCaptchaPage, waitForCaptchaResolved, hasVisibleSmsInputs } = require('./auth-captcha');
 
+const AUTH_STEPS = 5;
 const MAX_LOGIN_URL = 'https://web.max.ru/';
 const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
+
+async function notifyAuthDone(chatIds, options, payload) {
+  await notifyEvent(chatIds, payload, options);
+}
 
 function normalizePhone(input) {
   const digits = String(input || '').replace(/\D/g, '');
@@ -153,25 +159,31 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   await page.waitForTimeout(2500);
 
   if (!(await isLoginPage(page))) {
-    await sendMessage(chatIds[0], 'Сессия MAX уже активна.', {}, options.token);
+    await notifyAuthDone(chatIds, options, {
+      title: 'Сессия MAX уже активна',
+      status: 'done',
+      lines: ['Повторный вход не требуется.'],
+    });
     return true;
   }
 
   if (options.introMessage !== false) {
     const intro =
       options.introMessage ||
-      [
-        '<b>Вход в MAX по номеру телефона</b>',
-        'Отправьте номер: <code>+79XXXXXXXXX</code> или <code>9XXXXXXXXX</code>.',
-      ].join('\n');
+      buildEventMessage({
+        title: 'Вход в MAX по номеру телефона',
+        status: 'wait',
+        step: 1,
+        total: AUTH_STEPS,
+        lines: [
+          'Отправьте номер: <code>+79XXXXXXXXX</code> или <code>9XXXXXXXXX</code>.',
+          '',
+          buildBrowserPasswordHintHtml(),
+        ],
+      });
 
     for (const chatId of chatIds) {
-      await sendMessage(
-        chatId,
-        `${intro}\n\n${buildBrowserPasswordHintHtml()}`,
-        {},
-        options.token
-      );
+      await sendMessage(chatId, intro, {}, options.token);
     }
   }
 
@@ -179,7 +191,13 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
   const phone = await promptTelegramText(
     chatIds,
-    'Отправьте номер телефона для входа в MAX:',
+    buildEventMessage({
+      title: 'Номер телефона',
+      status: 'wait',
+      step: 2,
+      total: AUTH_STEPS,
+      lines: ['Отправьте номер для входа в MAX.'],
+    }),
     {
       token: options.token,
       useAdminPoll: options.useAdminPoll,
@@ -195,6 +213,14 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
   await fillPhoneNumber(page, phone);
   await clickSignIn(page);
+
+  await notifyAuthDone(chatIds, options, {
+    title: 'Номер телефона принят',
+    status: 'done',
+    step: 2,
+    total: AUTH_STEPS,
+    lines: [`Номер: <code>${maskPhone(phone)}</code>`],
+  });
 
   const smsPromptOptions = {
     token: options.token,
@@ -217,6 +243,12 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
   const captchaAndNext = (async () => {
     await ensureCaptchaPassed(page, chatIds, options);
+    await notifyAuthDone(chatIds, options, {
+      title: 'Капча пройдена',
+      status: 'done',
+      step: 3,
+      total: AUTH_STEPS,
+    });
     return waitForSmsOrCaptcha(page, chatIds, options);
   })();
 
@@ -230,17 +262,30 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   }
 
   if (nextStep === 'done') {
-    for (const chatId of chatIds) {
-      await sendMessage(chatId, 'Вход в MAX выполнен.', {}, options.token);
-    }
+    await notifyAuthDone(chatIds, options, {
+      title: 'Вход в MAX завершён',
+      status: 'done',
+      step: AUTH_STEPS,
+      total: AUTH_STEPS,
+    });
     return true;
   }
 
   if (nextStep === 'password') {
-    await handleBrowserPasswordPrompt(page, chatIds, options);
+    await tryHandleBrowserPasswordPrompt(page, chatIds, options);
   } else {
     if (!code) {
-      code = await promptTelegramText(chatIds, 'Введите код из SMS:', smsPromptOptions);
+      code = await promptTelegramText(
+        chatIds,
+        buildEventMessage({
+          title: 'Код из SMS',
+          status: 'wait',
+          step: 4,
+          total: AUTH_STEPS,
+          lines: ['Введите 4–8 цифр из SMS.'],
+        }),
+        smsPromptOptions
+      );
     }
 
     const smsReady = await waitForSmsPage(page, 90000);
@@ -250,10 +295,17 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
     await fillSmsCode(page, code);
     await page.waitForTimeout(3000);
+
+    await notifyAuthDone(chatIds, options, {
+      title: 'SMS-код принят',
+      status: 'done',
+      step: 4,
+      total: AUTH_STEPS,
+    });
   }
 
   while (await isBrowserPasswordPrompt(page)) {
-    await handleBrowserPasswordPrompt(page, chatIds, options);
+    await tryHandleBrowserPasswordPrompt(page, chatIds, options);
   }
 
   if (await isCaptchaPage(page)) {
@@ -273,9 +325,13 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
     await page.waitForTimeout(3000);
   }
 
-  for (const chatId of chatIds) {
-    await sendMessage(chatId, 'Вход в MAX выполнен.', {}, options.token);
-  }
+  await notifyAuthDone(chatIds, options, {
+    title: 'Вход в MAX завершён',
+    status: 'done',
+    step: AUTH_STEPS,
+    total: AUTH_STEPS,
+    footer: 'Можно продолжить настройку в Telegram.',
+  });
 
   return true;
 }

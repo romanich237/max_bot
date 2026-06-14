@@ -1,5 +1,6 @@
 const { getSettings, getAdminChatIds } = require('./config');
-const { sendMessage, sendPhotoBuffer, editPhotoBuffer, answerCallback, pollUpdates } = require('./tg-api');
+const { sendMessage, sendPhotoBuffer, editPhotoBuffer, answerCallback, pollUpdates, editMessageText } = require('./tg-api');
+const { buildEventMessage, notifyEvent } = require('./tg-events');
 const { isLoginPage } = require('./parser');
 const { runAuthPhoneOnPage } = require('./auth-phone');
 const {
@@ -17,13 +18,13 @@ const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
 
 let activeAuthSession = null;
 
-function buildAuthModeKeyboard() {
-  return {
-    inline_keyboard: [
-      [{ text: '📷 QR-код', callback_data: 'auth:mode:qr' }],
-      [{ text: '📱 Номер телефона', callback_data: 'auth:mode:phone' }],
-    ],
-  };
+function buildAuthModeKeyboard(options = {}) {
+  const rows = [];
+  if (options.allowQr !== false) {
+    rows.push([{ text: '📷 QR-код', callback_data: 'auth:mode:qr' }]);
+  }
+  rows.push([{ text: '📱 Номер телефона', callback_data: 'auth:mode:phone' }]);
+  return { inline_keyboard: rows };
 }
 
 function buildScreenshotKeyboard() {
@@ -46,8 +47,58 @@ function isEditOk(result) {
   return /message is not modified/i.test(desc);
 }
 
+async function upsertAuthText(page, chatIds, options = {}) {
+  const text = buildEventMessage({
+    title: 'Ожидание входа в MAX',
+    status: 'progress',
+    lines: [
+      'Вход выполняется в Telegram (без фото).',
+      'Рекомендуется <b>номер телефона</b>: /reauth → «Номер телефона».',
+      'Если появится @Browser — пришлю скриншот для ввода пароля.',
+      'Обновление каждые 45 сек.',
+    ],
+  });
+  const replyMarkup = buildScreenshotKeyboard();
+  const messageIds = activeAuthSession?.textMessageIds || {};
+
+  for (const chatId of chatIds) {
+    const key = String(chatId);
+    const existingId = messageIds[key];
+    let result;
+
+    if (existingId) {
+      result = await editMessageText(key, existingId, text, { reply_markup: replyMarkup }, options.token);
+      if (!isEditOk(result)) {
+        result = await sendMessage(key, text, { reply_markup: replyMarkup }, options.token);
+      }
+    } else {
+      result = await sendMessage(key, text, { reply_markup: replyMarkup }, options.token);
+    }
+
+    if (!result.ok && !isEditOk(result)) {
+      console.error(`Не удалось отправить статус в ${key}:`, result.description);
+      continue;
+    }
+
+    if (result.result?.message_id) {
+      messageIds[key] = result.result.message_id;
+    }
+  }
+
+  if (activeAuthSession) {
+    activeAuthSession.textMessageIds = messageIds;
+  }
+}
+
 async function upsertAuthScreenshot(page, chatIds, options = {}) {
-  const buffer = await captureLoginScreenshot(page);
+  const isPassword = await isBrowserPasswordPrompt(page);
+
+  if (!isPassword && options.sendQrPhotos === false) {
+    await upsertAuthText(page, chatIds, options);
+    return;
+  }
+
+  const buffer = isPassword ? await captureBrowserScreenshot(page) : await captureLoginScreenshot(page);
   const caption = await buildScreenshotCaptionForPage(page);
   const replyMarkup = buildScreenshotKeyboard();
   const messageIds = activeAuthSession?.photoMessageIds || {};
@@ -217,7 +268,7 @@ async function waitForLogin(page, chatIds, options = {}) {
   let lastQrSent = 0;
   let stopAuthPoll = null;
 
-  activeAuthSession = { page, chatIds, options, lastQrSent: 0, photoMessageIds: {} };
+  activeAuthSession = { page, chatIds, options, lastQrSent: 0, photoMessageIds: {}, textMessageIds: {} };
   if (options.useAuthCallbackPoll) {
     stopAuthPoll = startAuthCallbackPoll({ ...options, chatIds });
   }
@@ -265,15 +316,22 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
   if (options.introMessage !== false) {
     const intro =
       options.introMessage ||
-      '<b>Авторизация MAX</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.';
+      buildEventMessage({
+        title: 'Авторизация MAX',
+        status: 'wait',
+        step: 1,
+        total: 5,
+        lines: [
+          'Настройка полностью в Telegram.',
+          'Рекомендуется вход по <b>номеру телефона</b>.',
+          'Скриншот пришлю только для пароля @Browser.',
+          '',
+          buildBrowserPasswordHintHtml(),
+        ],
+      });
 
     for (const chatId of chatIds) {
-      await sendMessage(
-        chatId,
-        `${intro}\n\n${buildBrowserPasswordHintHtml()}`,
-        {},
-        options.token
-      );
+      await sendMessage(chatId, intro, {}, options.token);
     }
   }
 
@@ -292,9 +350,16 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     await page.waitForTimeout(3000);
   }
 
-  for (const chatId of chatIds) {
-    await sendMessage(chatId, 'Вход в MAX выполнен.', {}, options.token);
-  }
+  await notifyEvent(
+    chatIds,
+    {
+      title: 'Вход в MAX завершён',
+      status: 'done',
+      step: 5,
+      total: 5,
+    },
+    options
+  );
 
   return true;
 }
@@ -313,12 +378,20 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
   }
 
   const admins = new Set(chatIds.map(String));
-  const keyboard = buildAuthModeKeyboard();
+  const keyboard = buildAuthModeKeyboard({
+    allowQr: options.allowQr !== false && options.sendQrPhotos !== false,
+  });
 
   for (const chatId of chatIds) {
     await sendMessage(
       chatId,
-      'Выберите способ входа в MAX:',
+      buildEventMessage({
+        title: 'Способ входа в MAX',
+        status: 'wait',
+        step: 1,
+        total: 5,
+        lines: ['Выберите способ входа кнопкой ниже.'],
+      }),
       { reply_markup: keyboard },
       options.token
     );
@@ -397,7 +470,14 @@ async function runAuthTelegram(options = {}) {
 
   try {
     const page = context.pages()[0] || (await context.newPage());
-    return await runAuthOnPage(page, chatIds, { ...options, mode });
+    return await runAuthOnPage(page, chatIds, {
+      sendQrPhotos: false,
+      sendCaptchaPhotos: false,
+      sendPasswordPhotos: true,
+      allowQr: false,
+      ...options,
+      mode,
+    });
   } finally {
     await context.close();
   }

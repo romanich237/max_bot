@@ -93,19 +93,6 @@ async function ensureTelegramCredentials() {
 async function runTerminalSetup() {
   const store = require('../src/settings-store');
 
-  async function collectBrowserPassword(config) {
-    const password =
-      process.env.MAX_BROWSER_PASSWORD ||
-      (await ask('Пароль @Browser в MAX (из личного кабинета, Enter — пропустить): '));
-
-    if (password) {
-      config.max = config.max || {};
-      config.max.browserPassword = password;
-      saveConfig(config);
-      console.log('Пароль @Browser сохранён в config.json');
-    }
-  }
-
   const { checkTelegramConnectivity } = require('../src/tg-api');
   const { deleteWebhook, sendMessage } = require('../src/tg-api');
   const { registerBotCommands } = require('../src/tg-admin');
@@ -113,9 +100,8 @@ async function runTerminalSetup() {
   const { runSetupWizard } = require('../src/setup-wizard');
   const { setupPm2 } = require('../src/pm2');
   const { provisionLocalDatabase, formatDatabaseTelegramMessage } = require('../src/mysql-provision');
+  const { buildEventMessage, buildPipeline } = require('../src/tg-events');
 
-  const config = loadConfig();
-  await collectBrowserPassword(config);
   store.reload();
 
   console.log('\nПроверка связи с Telegram API...');
@@ -135,7 +121,24 @@ async function runTerminalSetup() {
 
   await deleteWebhook();
   await registerBotCommands();
-  await runAuthTelegram({ introMessage: 'Продолжите настройку в Telegram.', useAuthCallbackPoll: true });
+  await runAuthTelegram({
+    introMessage: buildEventMessage({
+      title: 'Настройка MAX → Telegram',
+      status: 'progress',
+      step: 1,
+      total: 5,
+      lines: [
+        'Всё в Telegram — без веб-страницы.',
+        'Выберите вход по <b>номеру телефона</b>.',
+        'Скриншот пришлю только для пароля @Browser.',
+      ],
+    }),
+    useAuthCallbackPoll: true,
+    sendQrPhotos: false,
+    sendCaptchaPhotos: false,
+    sendPasswordPhotos: true,
+    allowQr: false,
+  });
   await runSetupWizard();
 
   if (store.getPath(['database', 'enabled'])) {
@@ -147,6 +150,36 @@ async function runTerminalSetup() {
   }
 
   setupPm2({ skipSessionCheck: true });
+
+  const botUsername = data.result?.username;
+  for (const chatId of adminChatIds) {
+    try {
+      await sendMessage(
+        chatId,
+        [
+          buildPipeline('Установка завершена', [
+            { label: 'Telegram', status: 'done' },
+            { label: 'База данных', status: 'done' },
+            { label: 'Вход в MAX', status: 'done' },
+            { label: 'Чат MAX', status: 'done' },
+            { label: 'Настройки бота', status: 'done' },
+            { label: 'Запуск PM2', status: 'done' },
+          ]),
+          '',
+          buildEventMessage({
+            title: 'Бот запущен',
+            status: 'done',
+            lines: [
+              botUsername ? `Telegram: @${botUsername}` : null,
+              'Отправьте /menu для управления.',
+            ].filter(Boolean),
+          }),
+        ].join('\n')
+      );
+    } catch (err) {
+      console.warn(`Не удалось отправить итог установки (${chatId}): ${err.message}`);
+    }
+  }
 }
 
 async function main() {
@@ -178,24 +211,24 @@ async function main() {
   }
 
   const { openPortalPort } = require('../src/open-firewall-port');
-  openPortalPort();
 
-  if (process.env.SETUP_TERMINAL === '1') {
-    await runTerminalSetup();
+  if (process.env.SETUP_WEB === '1') {
+    openPortalPort();
+    const { runWebSetup } = require('../src/setup-portal');
+    const result = await runWebSetup({
+      port: Number(process.env.SETUP_PORT) || undefined,
+    });
+
     console.log('\nГотово! Бот запущен 24/7.');
-    console.log('В Telegram отправьте боту: /menu');
+    if (result.botUsername) {
+      console.log(`Telegram: @${result.botUsername} → /menu`);
+    }
     return;
   }
 
-  const { runWebSetup } = require('../src/setup-portal');
-  const result = await runWebSetup({
-    port: Number(process.env.SETUP_PORT) || undefined,
-  });
-
+  await runTerminalSetup();
   console.log('\nГотово! Бот запущен 24/7.');
-  if (result.botUsername) {
-    console.log(`Telegram: @${result.botUsername} → /menu`);
-  }
+  console.log('В Telegram отправьте боту: /menu');
 }
 
 main().catch((err) => {

@@ -13,6 +13,9 @@ const {
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
 const { registerBotCommands } = require('./tg-admin');
+const { buildEventMessage, buildPipeline } = require('./tg-events');
+
+const WIZARD_STEPS = 3;
 
 const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
@@ -30,7 +33,13 @@ function isMaxChatUrl(text) {
 async function promptOptions(chatId, token) {
   await sendMessage(
     chatId,
-    'Настройте бота кнопками ниже (всё можно изменить позже в /menu):',
+    buildEventMessage({
+      title: 'Настройки бота',
+      status: 'wait',
+      step: 3,
+      total: WIZARD_STEPS,
+      lines: ['Настройте бота кнопками ниже (всё можно изменить позже в /menu).'],
+    }),
     { reply_markup: buildWizardKeyboard() },
     token
   );
@@ -110,7 +119,16 @@ function runSetupWizard(options = {}) {
             await answerCallback(query.id, 'Запускаю…', options.token);
             await sendMessage(
               chatId,
-              'Настройка завершена. Запускаю бота через PM2…',
+              [
+                buildPipeline('Настройка MAX → Telegram', [
+                  { label: 'Вход в MAX', status: 'done' },
+                  { label: 'Чат MAX', status: 'done' },
+                  { label: 'Настройки бота', status: 'done' },
+                  { label: 'Запуск PM2', status: 'progress' },
+                ]),
+                '',
+                '⏳ Запускаю бота через PM2…',
+              ].join('\n'),
               {},
               options.token
             );
@@ -139,7 +157,13 @@ function runSetupWizard(options = {}) {
           step = 'options';
           await sendMessage(
             chatId,
-            `Имена сохранены: ${names.join(' → ')}`,
+            buildEventMessage({
+              title: 'Имена ротации сохранены',
+              status: 'done',
+              step: 3,
+              total: WIZARD_STEPS,
+              lines: [`Список: ${names.join(' → ')}`],
+            }),
             { reply_markup: buildWizardKeyboard() },
             options.token
           );
@@ -150,7 +174,16 @@ function runSetupWizard(options = {}) {
           if (!isMaxChatUrl(text)) {
             await sendMessage(
               chatId,
-              'Отправьте ссылку на чат MAX, например:\n<code>https://web.max.ru/-68396892343002</code>',
+              buildEventMessage({
+                title: 'Ссылка на чат MAX',
+                status: 'wait',
+                step: 2,
+                total: WIZARD_STEPS,
+                lines: [
+                  'Отправьте ссылку на чат MAX, например:',
+                  '<code>https://web.max.ru/-68396892343002</code>',
+                ],
+              }),
               {},
               options.token
             );
@@ -159,7 +192,18 @@ function runSetupWizard(options = {}) {
 
           store.setPath(['max', 'chatUrl'], text);
           step = 'options';
-          await sendMessage(chatId, `Чат сохранён: <code>${text}</code>`, {}, options.token);
+          await sendMessage(
+            chatId,
+            buildEventMessage({
+              title: 'Чат MAX сохранён',
+              status: 'done',
+              step: 2,
+              total: WIZARD_STEPS,
+              lines: [`Ссылка: <code>${text}</code>`],
+            }),
+            {},
+            options.token
+          );
           await promptOptions(chatId, options.token);
         }
       } catch (err) {
@@ -175,10 +219,22 @@ function runSetupWizard(options = {}) {
         await sendMessage(
           chatId,
           [
-            '<b>Настройка MAX → Telegram</b>',
+            buildPipeline('Настройка MAX → Telegram', [
+              { label: 'Вход в MAX', status: 'done' },
+              { label: 'Чат MAX', status: 'wait' },
+              { label: 'Настройки бота', status: 'pending' },
+            ]),
             '',
-            'Отправьте ссылку на чат MAX, который нужно мониторить.',
-            'Пример: <code>https://web.max.ru/-68396892343002</code>',
+            buildEventMessage({
+              title: 'Ссылка на чат MAX',
+              status: 'wait',
+              step: 2,
+              total: WIZARD_STEPS,
+              lines: [
+                'Отправьте ссылку на чат, который нужно мониторить.',
+                'Пример: <code>https://web.max.ru/-68396892343002</code>',
+              ],
+            }),
           ].join('\n'),
           {},
           options.token

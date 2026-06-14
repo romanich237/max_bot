@@ -36,6 +36,7 @@ const {
   buildNotifyChatText,
   bindNotificationChat,
 } = require('./tg-chats');
+const { buildEventMessage } = require('./tg-events');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -205,7 +206,11 @@ async function handleProfileNamesInput(chatId, text) {
   waitingInput.delete(String(chatId));
   await sendMessage(
     chatId,
-    `Имена сохранены: ${names.join(' → ')}\n\n${buildStatusText()}`,
+    buildEventMessage({
+      title: 'Имена ротации сохранены',
+      status: 'done',
+      lines: [`Список: ${names.join(' → ')}`, '', buildStatusText()],
+    }),
     { reply_markup: buildMenuKeyboard() }
   );
   return true;
@@ -338,10 +343,21 @@ async function handleMessage(message) {
       await replyHandler(target, text);
       await sendMessage(
         chatId,
-        `Ответ отправлен в MAX для <b>${escapeHtml(target.author || 'пользователя')}</b>.`
+        buildEventMessage({
+          title: 'Ответ отправлен в MAX',
+          status: 'done',
+          lines: [`Получатель: <b>${escapeHtml(target.author || 'пользователь')}</b>`],
+        })
       );
     } catch (err) {
-      await sendMessage(chatId, `Не удалось отправить ответ: ${escapeHtml(err.message)}`);
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Не удалось отправить ответ',
+          status: 'fail',
+          lines: [escapeHtml(err.message)],
+        })
+      );
     }
     return;
   }
@@ -391,9 +407,15 @@ async function handleMessage(message) {
       return;
     }
     stopHandler();
-    await sendMessage(chatId, '⏹ Мониторинг MAX остановлен.', {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Мониторинг MAX остановлен',
+        status: 'done',
+        lines: ['Сообщения из MAX больше не пересылаются.'],
+      }),
+      { reply_markup: buildMenuKeyboard() }
+    );
     return;
   }
 
@@ -403,9 +425,15 @@ async function handleMessage(message) {
       return;
     }
     startHandler();
-    await sendMessage(chatId, '▶️ Мониторинг MAX запущен.', {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Мониторинг MAX запущен',
+        status: 'done',
+        lines: ['Сообщения из MAX снова пересылаются в Telegram.'],
+      }),
+      { reply_markup: buildMenuKeyboard() }
+    );
     return;
   }
 
@@ -418,9 +446,15 @@ async function handleMessage(message) {
       return;
     }
 
-    await sendMessage(chatId, 'Выберите способ входа в MAX:', {
-      reply_markup: buildAuthModeKeyboard(),
-    });
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Способ входа в MAX',
+        status: 'wait',
+        lines: ['Выберите вход по номеру телефона.'],
+      }),
+      { reply_markup: buildAuthModeKeyboard({ allowQr: false }) }
+    );
     return;
   }
 
@@ -482,7 +516,15 @@ async function handleMessage(message) {
     }
     await sendMessage(
       chatId,
-      `Сохранено: <code>${result.key}</code> = <code>${result.value}</code>\n\n${buildStatusText()}`,
+      buildEventMessage({
+        title: 'Сохранено',
+        status: 'done',
+        lines: [
+          `<code>${result.key}</code> = <code>${result.value}</code>`,
+          '',
+          buildStatusText(),
+        ],
+      }),
       { reply_markup: buildMenuKeyboard() }
     );
   }
@@ -512,9 +554,23 @@ async function handleCallback(query) {
 
     try {
       await reauthHandler({ mode });
-      await sendMessage(chatId, 'Сессия MAX обновлена. Мониторинг продолжается.');
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Сессия MAX обновлена',
+          status: 'done',
+          lines: ['Мониторинг продолжается.'],
+        })
+      );
     } catch (err) {
-      await sendMessage(chatId, `Ошибка входа: ${err.message}`);
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          title: 'Ошибка входа в MAX',
+          status: 'fail',
+          lines: [err.message],
+        })
+      );
     }
     return;
   }
@@ -562,9 +618,15 @@ async function handleCallback(query) {
       return;
     }
     stopHandler();
-    await sendMessage(chatId, '⏹ Мониторинг MAX остановлен. Сообщения не пересылаются.', {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Мониторинг MAX остановлен',
+        status: 'done',
+        lines: ['Сообщения не пересылаются.'],
+      }),
+      { reply_markup: buildMenuKeyboard() }
+    );
     return;
   }
 
@@ -575,9 +637,15 @@ async function handleCallback(query) {
       return;
     }
     startHandler();
-    await sendMessage(chatId, '▶️ Мониторинг MAX запущен.', {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        title: 'Мониторинг MAX запущен',
+        status: 'done',
+        lines: ['Пересылка сообщений включена.'],
+      }),
+      { reply_markup: buildMenuKeyboard() }
+    );
     return;
   }
 
@@ -635,16 +703,15 @@ async function handleCallback(query) {
     await answerCallback(query.id, 'Привязано');
     await sendMessage(
       chatId,
-      [
-        '✅ <b>Чат привязан для уведомлений из MAX</b>',
-        '',
-        known?.title ? `Название: <b>${escapeHtml(known.title)}</b>` : null,
-        `ID: <code>${targetChatId}</code>`,
-        '',
-        'Сообщения из MAX будут приходить в этот чат.',
-      ]
-        .filter(Boolean)
-        .join('\n'),
+      buildEventMessage({
+        title: 'Чат привязан для уведомлений',
+        status: 'done',
+        lines: [
+          known?.title ? `Название: <b>${escapeHtml(known.title)}</b>` : null,
+          `ID: <code>${targetChatId}</code>`,
+          'Сообщения из MAX будут приходить в этот чат.',
+        ].filter(Boolean),
+      }),
       { reply_markup: buildMenuKeyboard() }
     );
     return;
