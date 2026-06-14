@@ -167,7 +167,7 @@ function buildNotifyChatText() {
     }
   }
 
-  lines.push('', 'Нажмите «Узнать ID», чтобы выбрать чат из списка.');
+  lines.push('', 'Нажмите «🔍 Узнать ID» внизу экрана, чтобы выбрать чат из списка.');
   return lines.join('\n');
 }
 

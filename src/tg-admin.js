@@ -139,13 +139,25 @@ function buildStatusText() {
   return lines.filter(Boolean).join('\n');
 }
 
+const DISCOVER_ID_BUTTON = '🔍 Узнать ID';
+
+function buildDiscoverReplyKeyboard() {
+  return {
+    keyboard: [[{ text: DISCOVER_ID_BUTTON }]],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+function isDiscoverIdRequest(text) {
+  const normalized = String(text || '').trim();
+  return normalized === DISCOVER_ID_BUTTON || /^узнать\s*id$/i.test(normalized);
+}
+
 function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
   rows.push([{ text: '✏️ Имена ротации', callback_data: 'action:profileNames' }]);
-  rows.push([
-    { text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' },
-    { text: '🔍 Узнать ID', callback_data: 'discover:page:0' },
-  ]);
+  rows.push([{ text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' }]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
   if (isMonitoringEnabled()) {
     rows.push([{ text: '⏹ Остановить MAX', callback_data: 'action:stopMax' }]);
@@ -385,6 +397,11 @@ async function handleMessage(message) {
     return;
   }
 
+  if (isDiscoverIdRequest(text)) {
+    await showDiscoverChats(chatId, null, 0);
+    return;
+  }
+
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
     await sendMessage(
@@ -394,9 +411,13 @@ async function handleMessage(message) {
         '',
         'Бот пересылает сообщения из MAX в Telegram.',
         'Управление — кнопками ниже.',
+        `ID чата — кнопкой «${DISCOVER_ID_BUTTON}» внизу экрана.`,
       ].join('\n'),
-      { reply_markup: buildMenuKeyboard() }
+      { reply_markup: buildDiscoverReplyKeyboard() }
     );
+    await sendMessage(chatId, 'Панель управления ботом:', {
+      reply_markup: buildMenuKeyboard(),
+    });
     return;
   }
 
@@ -671,10 +692,7 @@ async function handleCallback(query) {
     await answerCallback(query.id, 'Чат уведомлений');
     await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
       reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔍 Узнать ID', callback_data: 'discover:page:0' }],
-          [{ text: '« В меню', callback_data: 'discover:menu' }],
-        ],
+        inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]],
       },
     });
     return;
