@@ -551,11 +551,22 @@ async function startMonitor() {
 
     const tick = async () => {
       const current = getProfileBio();
-      bioTimer = setTimeout(tick, current.intervalMs);
+      if (!current.enabled || !isMonitoringEnabled()) return;
 
-      if (!current.enabled || profileBusy || authBusy || !isMonitoringEnabled()) return;
+      if (authBusy || profileBusy) {
+        bioTimer = setTimeout(tick, 30000);
+        return;
+      }
+
       if (!String(current.city || '').trim()) {
         console.warn('Авто описание: город не задан');
+        bioTimer = setTimeout(tick, current.intervalMs);
+        return;
+      }
+
+      if (!current.weatherApiKey) {
+        console.warn('Авто описание: не задан OpenWeatherMap API key');
+        bioTimer = setTimeout(tick, current.intervalMs);
         return;
       }
 
@@ -569,9 +580,11 @@ async function startMonitor() {
       } finally {
         profileBusy = false;
       }
+
+      bioTimer = setTimeout(tick, getProfileBio().intervalMs);
     };
 
-    bioTimer = setTimeout(tick, profileBio.intervalMs);
+    bioTimer = setTimeout(tick, 5000);
   }
 
   if (isMonitoringEnabled()) {

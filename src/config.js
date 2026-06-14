@@ -73,7 +73,7 @@ function getProfileRotate() {
   const p = getRaw().profileRotate || {};
   return {
     enabled: p.enabled ?? false,
-    intervalMs: p.intervalMs ?? 60000,
+    intervalMs: p.intervalMs ?? 600000,
     mode: p.mode ?? 'letter',
     baseName: p.baseName ?? '',
     names: p.names ?? [],

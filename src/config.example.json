@@ -28,7 +28,7 @@
   },
   "profileRotate": {
     "enabled": false,
-    "intervalMs": 60000,
+    "intervalMs": 600000,
     "mode": "list",
     "names": []
   },

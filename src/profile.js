@@ -195,26 +195,47 @@ async function resolveEditableTarget(input) {
   return input;
 }
 
+async function dispatchFieldInput(target, text) {
+  await target.evaluate((el, value) => {
+    const node =
+      el.matches('textarea, input, [contenteditable="true"]') ?
+        el
+      : el.querySelector('textarea, input, [contenteditable="true"]') || el;
+
+    node.focus();
+
+    if ('value' in node) {
+      node.value = value;
+    } else {
+      node.textContent = value;
+    }
+
+    node.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+  }, text);
+}
+
 async function fillProfileField(page, input, text) {
   const target = await resolveEditableTarget(input);
   await target.waitFor({ state: 'visible', timeout: 10000 });
   await target.click();
   await page.waitForTimeout(200);
 
-  try {
-    await target.fill(text);
-  } catch {
-    await target.evaluate((el, value) => {
-      if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
-        el.textContent = value;
-      } else if ('value' in el) {
-        el.value = value;
-      } else {
-        el.textContent = value;
-      }
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }, text);
+  const tag = await target.evaluate((el) => el.tagName.toLowerCase());
+  const isContentEditable = await target.evaluate((el) => el.isContentEditable);
+
+  if (tag === 'textarea' || isContentEditable) {
+    await dispatchFieldInput(target, text);
+  } else {
+    try {
+      await target.fill(text);
+      await target.evaluate((el) => {
+        el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    } catch {
+      await dispatchFieldInput(target, text);
+    }
   }
 
   await target.blur();
@@ -222,8 +243,12 @@ async function fillProfileField(page, input, text) {
 }
 
 async function clickProfileSave(page) {
-  const saveBtn = page.getByRole('button', { name: /^(save|сохранить)$/i });
-  await saveBtn.waitFor({ state: 'visible', timeout: 5000 });
+  const saveBtn = page
+    .getByRole('button', { name: /^(save|сохранить)$/i })
+    .or(page.locator('button[aria-label="Save"], button[aria-label="Сохранить"]'))
+    .first();
+
+  await saveBtn.waitFor({ state: 'visible', timeout: 10000 });
   await saveBtn.click();
 
   await page
