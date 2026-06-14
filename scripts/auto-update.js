@@ -83,7 +83,7 @@ async function checkAndUpdate() {
     const toSha = remote.slice(0, 7);
     console.log(`auto-update: обновление ${fromSha} → ${toSha}`);
 
-    await notifyAdmins('🔄 Вышла новая версия бота, обновляю сервер…');
+    await notifyAdmins('🔄Вышла новая версия бота, обновляю сервер..');
 
     run(`git pull --ff-only origin ${cfg.branch}`);
     run('npm install --omit=dev --ignore-scripts');
