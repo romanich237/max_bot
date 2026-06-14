@@ -40,7 +40,7 @@ function buildAuthStatusText(secondsRemaining, refreshMs = DEFAULT_QR_REFRESH_MS
     lines: [
       'Вход выполняется в Telegram (без фото).',
       'Рекомендуется <b>номер телефона</b>: /reauth → «Номер телефона».',
-      'Если появится @Browser — пришлю скриншот для ввода пароля.',
+      'Если понадобится пароль для входа — пришлю скриншот.',
       `Обновление каждые ${sec} сек.`,
     ],
   });

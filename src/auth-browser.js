@@ -7,7 +7,7 @@ function buildBrowserPasswordAcceptedMessage() {
   return buildEventMessage({
     title: 'Пароль принят',
     status: 'done',
-    lines: ['Ввожу пароль @Browser в MAX…'],
+    lines: ['Ввожу пароль в MAX…'],
   });
 }
 
@@ -74,7 +74,7 @@ async function isBrowserPasswordPrompt(page) {
 function buildBrowserPasswordHintHtml() {
   const password = getBrowserPassword();
   const lines = [
-    'Если в MAX появится <code>@Browser</code> — введите пароль от аккаунта (из личного кабинета MAX → Безопасность).',
+    'Если MAX попросит пароль для входа с нового устройства — введите пароль от аккаунта (личный кабинет MAX → Безопасность).',
   ];
 
   if (password) {
@@ -207,7 +207,7 @@ async function resolveBrowserPassword(chatIds, options = {}) {
   const promptMessage = options.skipPromptMessage
     ? null
     : buildEventMessage({
-        title: 'Пароль @Browser',
+        title: 'Пароль для входа',
         status: 'wait',
         lines: [
           'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
@@ -233,7 +233,7 @@ async function resolveBrowserPassword(chatIds, options = {}) {
         useAdminPoll: options.useAdminPoll,
         useWebPoll: options.useWebPoll,
         field: 'password',
-        label: 'Пароль @Browser',
+        label: 'Пароль для входа',
         hint: 'Пароль из личного кабинета MAX',
         validate: (text) => (text.trim() ? text.trim() : null),
         invalidMessage: 'Пароль не может быть пустым. Отправьте пароль или /cancel.',
@@ -268,7 +268,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
       {
         title: 'Вхожу в MAX',
         status: 'progress',
-        lines: ['Ввожу пароль @Browser…'],
+        lines: ['Ввожу пароль…'],
       },
       options
     );
@@ -278,7 +278,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
   await page.waitForTimeout(2500);
 
   if (await isBrowserPasswordPrompt(page)) {
-    throw new Error('Пароль @Browser не принят. Проверьте пароль и отправьте /reauth');
+    throw new Error('Пароль не принят. Проверьте пароль и отправьте /reauth');
   }
 
   return true;
@@ -313,7 +313,7 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
       await sendMessage(
         chatId,
         buildEventMessage({
-          title: 'Пароль @Browser не принят',
+          title: 'Пароль не принят',
           status: 'fail',
           lines: [
             err.message,
@@ -333,7 +333,7 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
   await notifyEvent(
     chatIds,
     {
-      title: 'Пароль @Browser принят',
+      title: 'Пароль принят',
       status: 'done',
       lines: ['Продолжаю вход в MAX.'],
     },

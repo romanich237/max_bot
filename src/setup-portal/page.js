@@ -57,7 +57,7 @@ function renderSetupPage(token) {
       <h2>2. MAX</h2>
       <label>Ссылка на чат MAX</label>
       <input id="chatUrl" placeholder="https://web.max.ru/-68396892343002" />
-      <label>Пароль @Browser (если есть)</label>
+      <label>Пароль для входа (если есть)</label>
       <input id="browserPassword" type="password" placeholder="из личного кабинета MAX" autocomplete="off" />
       <div class="checks">
         <label><input type="checkbox" id="profileRotate" /> Ротация имени</label>
