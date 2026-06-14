@@ -189,10 +189,15 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   }
 
   const byKeys = findNewMessages(scoped, chatState.seenKeys);
-  const byTail = diffByTail(chatState.lastSnapshot, scoped);
-  const toSend = byKeys.length >= byTail.length ? byKeys : byTail;
+  let toSend = byKeys;
 
-  markSeen(toSend, chatState.seenKeys);
+  if (toSend.length === 0 && chatState.lastSnapshot.length > 0) {
+    const byTail = diffByTail(chatState.lastSnapshot, scoped).filter(
+      (message) => !chatState.seenKeys.has(message.key)
+    );
+    markSeen(byTail, chatState.seenKeys);
+    toSend = byTail;
+  }
 
   for (const message of toSend) {
     if (!shouldForward(message)) {

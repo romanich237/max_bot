@@ -158,10 +158,16 @@ function shouldForward(message) {
   return !message.isOwn;
 }
 
+function keyAuthor(author) {
+  if (!author || author === 'Неизвестно') return author || '';
+  if (isOwnByAuthor(author)) return '__own__';
+  return author;
+}
+
 function buildMessageKey(msg) {
   const reply = msg.reply || {};
-  const replyPart = `${reply.author || ''}::${reply.body || ''}::${reply.isVoice ? 1 : 0}`;
-  return `${msg.author}::${msg.body}::${msg.time}::${replyPart}::${buildMediaKey(msg.media)}`;
+  const replyPart = `${keyAuthor(reply.author)}::${reply.body || ''}::${reply.isVoice ? 1 : 0}`;
+  return `${keyAuthor(msg.author)}::${msg.body}::${msg.time}::${replyPart}::${buildMediaKey(msg.media)}`;
 }
 
 async function parseMessages(page) {
@@ -309,8 +315,15 @@ async function parseMessages(page) {
       }
 
       const wrappers = document.querySelectorAll(wrapperSelector);
+      let lastAuthor = '';
       return Array.from(wrappers).map((wrapper, index) => {
-        const author = extractAuthor(wrapper);
+        let author = extractAuthor(wrapper);
+        if (author === 'Неизвестно' && lastAuthor) {
+          author = lastAuthor;
+        } else if (author && author !== 'Неизвестно') {
+          lastAuthor = author;
+        }
+
         const reply = extractReply(wrapper);
         let body = extractBody(wrapper);
         const time = extractTime(wrapper);
@@ -383,22 +396,25 @@ function findNewMessages(messages, seenKeys) {
   return fresh;
 }
 
+function messagesMatch(a, b) {
+  return a.body === b.body && a.time === b.time && a.author === b.author;
+}
+
 function diffByTail(prev, current) {
-  if (!prev.length || !current.length) return current;
+  if (!prev.length || !current.length) return [];
 
   const maxOverlap = Math.min(prev.length, current.length, 20);
   for (let overlap = maxOverlap; overlap >= 1; overlap--) {
-    const prevTail = prev.slice(-overlap).map((m) => m.key).join('|');
-    const currHead = current
-      .slice(0, overlap)
-      .map((m) => m.key)
-      .join('|');
-    if (prevTail === currHead) {
+    const prevTail = prev.slice(-overlap);
+    const currHead = current.slice(0, overlap);
+    const keysMatch = prevTail.every((p, i) => p.key === currHead[i].key);
+    const contentMatch = prevTail.every((p, i) => messagesMatch(p, currHead[i]));
+    if (keysMatch || contentMatch) {
       return current.slice(overlap);
     }
   }
 
-  return current.filter((m) => !prev.some((p) => p.key === m.key));
+  return current.filter((m) => !prev.some((p) => messagesMatch(p, m)));
 }
 
 async function waitForChat(page) {
