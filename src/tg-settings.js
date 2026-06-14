@@ -3,8 +3,6 @@ const { store } = require('./config');
 const TOGGLES = [
   { label: 'Бесконечный онлайн', path: ['alwaysOnline', 'enabled'] },
   { label: 'Авто имя', path: ['profileRotate', 'enabled'] },
-  { label: 'Время в Telegram', path: ['telegram', 'showTime'] },
-  { label: 'Заголовок в Telegram', path: ['telegram', 'showServiceHeader'] },
 ];
 
 function buildToggleRows(prefix) {

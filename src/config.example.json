@@ -9,6 +9,7 @@
   },
   "max": {
     "chatUrl": "",
+    "monitorChatUrls": [],
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",

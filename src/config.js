@@ -110,6 +110,8 @@ function isSetupComplete() {
   return getRaw().setupComplete === true;
 }
 
+const maxChats = require('./max-chats');
+
 module.exports = {
   ROOT,
   store,
@@ -119,6 +121,8 @@ module.exports = {
   getAdminChatIds,
   getMax,
   getMaxDisplayName,
+  getDefaultChatUrl: maxChats.getDefaultChatUrl,
+  getMonitorChatUrls: maxChats.getMonitorChatUrls,
   getProfileRotate,
   getAlwaysOnline,
   getDatabase,

@@ -6,13 +6,20 @@ const {
   getAlwaysOnline,
   getAdminChatIds,
   isSetupComplete,
+  getDefaultChatUrl,
+  getMonitorChatUrls,
   store,
 } = require('./config');
+const {
+  scopedMessageKey,
+  chatIdFromUrl,
+  chatLabelFromUrl,
+} = require('./max-chats');
 const { rotateDisplayName } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
-const { runAuthOnPage, buildAuthModeKeyboard } = require('./auth-qr');
+const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
+const { runAuthOnPage, probeMaxSession } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { sendReplyInMax } = require('./max-sender');
@@ -27,7 +34,6 @@ const {
   readMessages,
   findNewMessages,
   diffByTail,
-  waitForChat,
   shouldForward,
 } = require('./parser');
 
@@ -56,15 +62,152 @@ async function persistMessage(message, options = {}) {
   }
 }
 
-async function forwardMessage(page, message, isCatchUp) {
+async function forwardMessage(page, message, isCatchUp, maxChatUrl) {
   const mediaFiles = await downloadMessageMedia(
     page,
     message,
     MESSAGE_WRAPPER_SELECTOR
   );
 
-  await sendToTelegram(message, { isCatchUp, mediaFiles });
+  await sendToTelegram(message, { isCatchUp, mediaFiles, maxChatUrl });
   await persistMessage(message, { forwarded: true, mediaFiles });
+}
+
+function scopeMessages(chatUrl, messages) {
+  return messages.map((message) => ({
+    ...message,
+    key: scopedMessageKey(chatUrl, message.key),
+  }));
+}
+
+function createChatStates(state) {
+  const defaultUrl = getDefaultChatUrl();
+  const urls = getMonitorChatUrls();
+  const chatSnapshots = state.chatSnapshots || {};
+  const rawSeen = state.seenKeys || [];
+
+  const globalSeen = new Set(
+    rawSeen.map((key) =>
+      String(key).includes('::') ? key : scopedMessageKey(defaultUrl, key)
+    )
+  );
+
+  const chatStates = new Map();
+  for (const url of urls) {
+    const prefix = chatIdFromUrl(url);
+    const seenKeys = new Set([...globalSeen].filter((key) => key.startsWith(`${prefix}::`)));
+    chatStates.set(url, {
+      url,
+      seenKeys,
+      lastSnapshot:
+        chatSnapshots[url] || (url === defaultUrl ? state.lastSnapshot || [] : []),
+      baselineDone: true,
+    });
+  }
+
+  return chatStates;
+}
+
+function persistChatStates(chatStates) {
+  const defaultUrl = getDefaultChatUrl();
+  const seenKeys = new Set();
+  const chatSnapshots = {};
+  let lastSnapshot = [];
+
+  for (const [url, chatState] of chatStates) {
+    chatSnapshots[url] = chatState.lastSnapshot;
+    for (const key of chatState.seenKeys) {
+      seenKeys.add(key);
+    }
+    if (url === defaultUrl) {
+      lastSnapshot = chatState.lastSnapshot;
+    }
+  }
+
+  return {
+    seenKeys: [...seenKeys],
+    lastSnapshot,
+    chatSnapshots,
+  };
+}
+
+async function processChatMessages(page, chatUrl, chatState, options = {}) {
+  const { onLoginRequired, forwardOnStart = 0, isStartup = false } = options;
+
+  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForTimeout(2500);
+
+  if (await isLoginPage(page)) {
+    const defaultUrl = getDefaultChatUrl();
+    if (defaultUrl && (await probeMaxSession(page, defaultUrl))) {
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2500);
+    }
+
+    if (await isLoginPage(page)) {
+      if (onLoginRequired) {
+        await onLoginRequired();
+      }
+      return null;
+    }
+  }
+
+  let messages = await readMessages(page);
+  const needsBaseline = isStartup || chatState.baselineDone === false;
+  if (needsBaseline && !isStartup) {
+    console.log(`[${chatLabelFromUrl(chatUrl)}] Первичная синхронизация (без пересылки истории).`);
+  } else if (isStartup) {
+    console.log(
+      `[${chatLabelFromUrl(chatUrl)}] В DOM найдено ${messages.length} сообщений.`
+    );
+  }
+
+  syncOwnNamesFromMessages(messages);
+
+  const scoped = scopeMessages(chatUrl, messages);
+
+  if (isStartup && forwardOnStart > 0) {
+    const recent = scoped.filter(shouldForward).slice(-forwardOnStart);
+    for (const message of recent) {
+      logMessage(message, `Старт → TG (${chatLabelFromUrl(chatUrl)})`);
+      await forwardMessage(page, message, true, chatUrl);
+    }
+  }
+
+  markSeen(scoped, chatState.seenKeys);
+
+  if (needsBaseline) {
+    for (const message of scoped) {
+      if (!shouldForward(message)) {
+        await persistMessage(message, { forwarded: false });
+      }
+    }
+    chatState.lastSnapshot = snapshotFrom(scoped);
+    chatState.baselineDone = true;
+    return scoped;
+  }
+
+  const byKeys = findNewMessages(scoped, chatState.seenKeys);
+  const byTail = diffByTail(chatState.lastSnapshot, scoped);
+  const toSend = byKeys.length >= byTail.length ? byKeys : byTail;
+
+  markSeen(toSend, chatState.seenKeys);
+
+  for (const message of toSend) {
+    if (!shouldForward(message)) {
+      logMessage(message, `Пропуск (моё) · ${chatLabelFromUrl(chatUrl)}`);
+      await persistMessage(message, { forwarded: false });
+      continue;
+    }
+    logMessage(message, `Новое · ${chatLabelFromUrl(chatUrl)}`);
+    await forwardMessage(page, message, false, chatUrl);
+  }
+
+  if (toSend.length > 0) {
+    chatState.lastSnapshot = snapshotFrom(scoped);
+  }
+
+  return scoped;
 }
 
 function snapshotFrom(messages) {
@@ -88,20 +231,17 @@ async function startMonitor() {
   }
 
   const settings = getSettings();
-  const max = getMax();
   const state = await loadState();
-  const seenKeys = new Set(state.seenKeys);
-  let lastSnapshot = state.lastSnapshot || [];
-  let messages = [];
+  const chatStates = createChatStates(state);
   let profileBusy = false;
   let authBusy = false;
   let profileIndex = 0;
   let profileTimer = null;
   let monitorTimer = null;
-  let currentChatUrl = max.chatUrl;
   const reauthPromptIds = {};
   let lastProfileNameSync = 0;
   const PROFILE_NAME_RETRY_MS = 5 * 60 * 1000;
+  const defaultChatUrl = getDefaultChatUrl();
 
   function isEditOk(result) {
     if (result?.ok) return true;
@@ -190,7 +330,12 @@ async function startMonitor() {
     authBusy = true;
     profileBusy = true;
     try {
-      const chatUrl = getMax().chatUrl;
+      const chatUrl = getDefaultChatUrl();
+      if (await probeMaxSession(page, chatUrl)) {
+        clearReauthPromptIds();
+        return { alreadyActive: true };
+      }
+
       await runAuthOnPage(page, getAdminChatIds(), {
         sendQrPhotos: true,
         sendCaptchaPhotos: false,
@@ -200,19 +345,24 @@ async function startMonitor() {
         useAdminPoll: true,
         afterLoginChatUrl: chatUrl,
       });
-      currentChatUrl = chatUrl;
-      messages = (await openChatWhenReady(page, chatUrl)) || [];
-      if (!messages.length && (await isLoginPage(page))) {
+      const loaded = (await openChatWhenReady(page, chatUrl)) || [];
+      if (!loaded.length && (await isLoginPage(page))) {
         throw new Error('Вход выполнен, но чат MAX недоступен. Проверьте chatUrl.');
       }
-      lastSnapshot = snapshotFrom(messages);
+      const defaultState = chatStates.get(chatUrl);
+      if (defaultState) {
+        const scoped = scopeMessages(chatUrl, loaded);
+        defaultState.lastSnapshot = snapshotFrom(scoped);
+        markSeen(scoped, defaultState.seenKeys);
+      }
       clearReauthPromptIds();
       await syncOwnNames(page, {
-        messages,
+        messages: loaded,
         readProfile: true,
         chatUrl,
         notify: false,
       });
+      return { alreadyActive: false };
     } finally {
       authBusy = false;
       profileBusy = false;
@@ -220,7 +370,12 @@ async function startMonitor() {
   }
 
   setReauthHandler(async (authOptions = {}) => {
-    await performReauth({ introMessage: false, ...authOptions });
+    return performReauth({ introMessage: false, ...authOptions });
+  });
+
+  setSessionCheckHandler(async () => {
+    if (authBusy) return false;
+    return probeMaxSession(page, getDefaultChatUrl());
   });
 
   setAuthBusyCheck(() => authBusy);
@@ -242,6 +397,12 @@ async function startMonitor() {
     try {
       if (await isLoginPage(page)) {
         throw new Error('Сессия MAX истекла. Отправьте /reauth');
+      }
+
+      const targetChatUrl = targetMessage.maxChatUrl || getDefaultChatUrl();
+      if (targetChatUrl) {
+        await page.goto(targetChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await page.waitForTimeout(2000);
       }
 
       await sendReplyInMax(page, targetMessage, text, MESSAGE_WRAPPER_SELECTOR);
@@ -269,51 +430,51 @@ async function startMonitor() {
     }
   });
 
-  console.log(`Подключение к чату MAX: ${currentChatUrl}`);
+  const monitorUrls = getMonitorChatUrls();
+  console.log(`Чаты MAX для мониторинга (${monitorUrls.length}):`);
+  for (const url of monitorUrls) {
+    const mark = url === defaultChatUrl ? '⭐' : '•';
+    console.log(`  ${mark} ${url}`);
+  }
   console.log(`Медиа сохраняются в: ${settings.dataDir}`);
   if (db.isEnabled()) {
     console.log('Состояние и сообщения сохраняются в MySQL');
   }
 
-  const loaded = await openChatWhenReady(page, currentChatUrl);
-  if (loaded === null) {
-    console.log('Сессия истекла. Ожидание входа через Telegram…');
-    await notifyReauthNeeded();
-  } else {
-    messages = loaded;
-  }
-  console.log(`В DOM найдено ${messages.length} сообщений (после прокрутки вниз).`);
-
-  await syncOwnNames(page, {
-    messages,
-    readProfile: true,
-    chatUrl: currentChatUrl,
-    notify: true,
-    reason: 'Имя взято из настроек профиля MAX.',
-  });
-
+  let sessionExpired = false;
   const forwardOnStart = getSettings().forwardOnStart;
-  if (forwardOnStart > 0) {
-    const recent = messages.filter(shouldForward).slice(-forwardOnStart);
-    for (const message of recent) {
-      logMessage(message, 'Старт → TG');
-      await forwardMessage(page, message, true);
+
+  for (const chatUrl of monitorUrls) {
+    const chatState = chatStates.get(chatUrl);
+    if (!chatState) continue;
+
+    const result = await processChatMessages(page, chatUrl, chatState, {
+      forwardOnStart,
+      isStartup: true,
+      onLoginRequired: async () => {
+        if (!sessionExpired) {
+          sessionExpired = true;
+          console.log('Сессия истекла. Ожидание входа через Telegram…');
+          await notifyReauthNeeded();
+        }
+      },
+    });
+
+    if (result === null && sessionExpired) {
+      break;
     }
   }
 
-  markSeen(messages, seenKeys);
-
-  for (const message of messages) {
-    if (!shouldForward(message)) {
-      await persistMessage(message, { forwarded: false });
-    }
-  }
-
-  lastSnapshot = snapshotFrom(messages);
-  await saveState({ seenKeys: [...seenKeys], lastSnapshot });
-
-  if (messages.length > 0) {
-    logMessage(messages[messages.length - 1], 'Последнее в чате');
+  if (!sessionExpired) {
+    const defaultState = chatStates.get(defaultChatUrl);
+    await syncOwnNames(page, {
+      messages: defaultState?.lastSnapshot || [],
+      readProfile: true,
+      chatUrl: defaultChatUrl,
+      notify: true,
+      reason: 'Имя взято из настроек профиля MAX.',
+    });
+    await saveState(persistChatStates(chatStates));
   }
 
   console.log('Мониторинг запущен. Жду новые сообщения...');
@@ -339,7 +500,7 @@ async function startMonitor() {
 
       profileBusy = true;
       try {
-        const chatUrl = getMax().chatUrl;
+        const chatUrl = getDefaultChatUrl();
         const name = await rotateDisplayName(page, chatUrl, {
           ...current,
           _index: profileIndex,
@@ -371,33 +532,52 @@ async function startMonitor() {
     if (!isMonitoringEnabled() || profileBusy || authBusy) return;
 
     try {
-      const maxCfg = getMax();
-      if (maxCfg.chatUrl && maxCfg.chatUrl !== currentChatUrl) {
-        currentChatUrl = maxCfg.chatUrl;
-        console.log(`Новый чат MAX: ${currentChatUrl}`);
-        await page.goto(currentChatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-        await page.waitForTimeout(3000);
-        messages = await waitForChat(page);
-        lastSnapshot = snapshotFrom(messages);
-      }
+      const monitorUrls = getMonitorChatUrls();
+      let urlsChanged = false;
 
-      if (await isLoginPage(page)) {
-        const chatUrl = maxCfg.chatUrl || currentChatUrl;
-        const reopened = chatUrl ? await openChatWhenReady(page, chatUrl, 2) : null;
-        if (reopened !== null) {
-          messages = reopened;
-          lastSnapshot = snapshotFrom(messages);
-          clearReauthPromptIds();
-          return;
+      for (const url of monitorUrls) {
+        if (!chatStates.has(url)) {
+          chatStates.set(url, {
+            url,
+            seenKeys: new Set(),
+            lastSnapshot: [],
+            baselineDone: false,
+          });
+          urlsChanged = true;
         }
-
-        console.log('Сессия истекла. Ожидание входа через Telegram…');
-        await notifyReauthNeeded();
-        return;
       }
 
-      messages = await readMessages(page);
-      syncOwnNamesFromMessages(messages);
+      for (const url of [...chatStates.keys()]) {
+        if (!monitorUrls.includes(url)) {
+          chatStates.delete(url);
+          urlsChanged = true;
+        }
+      }
+
+      if (urlsChanged) {
+        console.log(`Список чатов MAX обновлён (${monitorUrls.length})`);
+      }
+
+      let sessionExpired = false;
+
+      for (const chatUrl of monitorUrls) {
+        const chatState = chatStates.get(chatUrl);
+        if (!chatState) continue;
+
+        await processChatMessages(page, chatUrl, chatState, {
+          onLoginRequired: async () => {
+            if (!sessionExpired) {
+              sessionExpired = true;
+              console.log('Сессия истекла. Ожидание входа через Telegram…');
+              await notifyReauthNeeded();
+            }
+          },
+        });
+
+        if (sessionExpired) break;
+      }
+
+      if (sessionExpired) return;
 
       if (Date.now() - lastProfileNameSync > PROFILE_NAME_RETRY_MS) {
         lastProfileNameSync = Date.now();
@@ -405,7 +585,7 @@ async function startMonitor() {
         try {
           await syncOwnNames(page, {
             readProfile: true,
-            chatUrl: currentChatUrl,
+            chatUrl: getDefaultChatUrl(),
             notify: false,
           });
         } catch (err) {
@@ -415,26 +595,7 @@ async function startMonitor() {
         }
       }
 
-      const byKeys = findNewMessages(messages, seenKeys);
-      const byTail = diffByTail(lastSnapshot, messages);
-      const toSend = byKeys.length >= byTail.length ? byKeys : byTail;
-
-      markSeen(toSend, seenKeys);
-
-      for (const message of toSend) {
-        if (!shouldForward(message)) {
-          logMessage(message, 'Пропуск (моё)');
-          await persistMessage(message, { forwarded: false });
-          continue;
-        }
-        logMessage(message, 'Новое');
-        await forwardMessage(page, message, false);
-      }
-
-      if (toSend.length > 0) {
-        lastSnapshot = snapshotFrom(messages);
-        await saveState({ seenKeys: [...seenKeys], lastSnapshot });
-      }
+      await saveState(persistChatStates(chatStates));
     } catch (err) {
       console.error('Ошибка парсинга:', err.message);
     }

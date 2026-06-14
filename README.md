@@ -12,6 +12,15 @@
 
 Рекомендуемый провайдер: [play2go.cloud](https://play2go.cloud/?ref_id=k5jH0xQ4-_g)
 
+DE-PROMO
+119₽ / мес.
+
+Процессор: 1 vCPU AMD Ryzen 9 5950X
+Оперативная память: 2 GB DDR4
+Хранилище: 25 GB NVMe SSD
+Скорость сети: До 100 Mbit/s
+Защита от DDoS:Мощная защита от атак L3-L4
+
 ## Установка (VPS)
 
 Скрипт **сразу спросит в консоли** Telegram bot token и chat ID:

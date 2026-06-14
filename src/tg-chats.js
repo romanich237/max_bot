@@ -64,7 +64,7 @@ function recordChatFromUpdate(update) {
       id: shared.chat_id,
       title: shared.title,
       username: shared.username || null,
-      type: shared.request_id === 2 ? 'channel' : 'supergroup',
+      type: 'unknown',
     });
   }
 
@@ -153,9 +153,7 @@ function buildDiscoverEmptyText() {
     '<b>Узнать ID чата</b>',
     '',
     'Нажмите «🔍 Узнать ID» внизу экрана — откроется список чатов Telegram.',
-    'Выберите группу или супергруппу — бот пришлёт ID и название.',
-    '',
-    'Для канала используйте кнопку «🔍 ID канала».',
+    'Выберите чат — бот пришлёт ID и название.',
     'Бот должен быть добавлен в выбранный чат.',
   ].join('\n');
 }
@@ -176,8 +174,7 @@ function buildNotifyChatText() {
 
   lines.push(
     '',
-    'Нажмите «🔍 Узнать ID» внизу — выберите чат из списка Telegram.',
-    'Или откройте список известных чатов кнопкой ниже.'
+    'Нажмите «🔍 Узнать ID» внизу — выберите чат из списка Telegram.'
   );
   return lines.join('\n');
 }

@@ -7,7 +7,18 @@ const {
   getProfileRotate,
   getAlwaysOnline,
   getAutoUpdate,
+  getDefaultChatUrl,
+  getMonitorChatUrls,
 } = require('./config');
+const {
+  setDefaultChatUrl,
+  addMonitorChatUrl,
+  removeMonitorChatUrl,
+  buildMaxChatsText,
+  buildMaxChatsKeyboard,
+  buildMaxChatViewKeyboard,
+  chatLabelFromUrl,
+} = require('./max-chats');
 const {
   deleteWebhook,
   setBotCommands,
@@ -24,7 +35,7 @@ const {
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
 const replyStore = require('./reply-store');
-const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard } = require('./auth-qr');
+const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
   recordChatFromUpdate,
   recordChat,
@@ -43,7 +54,6 @@ const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require(
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
-  chaturl: { path: ['max', 'chatUrl'], type: 'string' },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
   browserpassword: { path: ['max', 'browserPassword'], type: 'string' },
 };
@@ -55,6 +65,7 @@ const BOT_COMMANDS = [
 ];
 
 let reauthHandler = null;
+let sessionCheckHandler = null;
 let replyHandler = null;
 let stopHandler = null;
 let startHandler = null;
@@ -73,6 +84,26 @@ function clearAuthInputWaiter() {
 
 function setReauthHandler(fn) {
   reauthHandler = fn;
+}
+
+function setSessionCheckHandler(fn) {
+  sessionCheckHandler = typeof fn === 'function' ? fn : null;
+}
+
+async function ensureCanStartReauth(chatId) {
+  if (!sessionCheckHandler) return true;
+
+  try {
+    const active = await sessionCheckHandler();
+    if (active) {
+      await sendMessage(chatId, buildActiveSessionMessage());
+      return false;
+    }
+  } catch (err) {
+    console.warn('Проверка сессии MAX:', err.message);
+  }
+
+  return true;
 }
 
 function setAuthBusyCheck(fn) {
@@ -113,7 +144,6 @@ function onFlag(value) {
 }
 
 function buildStatusText() {
-  const max = getMax();
   const profile = getProfileRotate();
   const online = getAlwaysOnline();
   const tg = getTelegram();
@@ -125,6 +155,9 @@ function buildStatusText() {
 
   const maxName = getMaxDisplayName();
 
+  const defaultUrl = getDefaultChatUrl();
+  const monitorUrls = getMonitorChatUrls();
+
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
     '',
@@ -135,10 +168,17 @@ function buildStatusText() {
     maxName
       ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
       : 'Имя в MAX: определяется автоматически',
-    `Время в TG: ${onFlag(tg.showTime)}`,
-    `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
     `Автообновление: ✅ всегда (${updateLabel})`,
-    max.chatUrl ? `Чат MAX: <code>${max.chatUrl}</code>` : 'Чат MAX: не задан',
+    '',
+    '<b>Чаты MAX:</b>',
+    monitorUrls.length
+      ? monitorUrls
+          .map((url) => {
+            const star = url === defaultUrl ? '⭐ ' : '• ';
+            return `${star}<code>${escapeHtml(url)}</code>`;
+          })
+          .join('\n')
+      : 'не заданы',
     tg.chatIds?.length
       ? `Уведомления в TG: ${tg.chatIds.map((id) => `<code>${id}</code>`).join(', ')}`
       : 'Уведомления в TG: не задан',
@@ -149,7 +189,6 @@ function buildStatusText() {
 
 const DISCOVER_ID_BUTTON = '🔍 Узнать ID';
 const DISCOVER_CHAT_REQUEST_ID = 1;
-const DISCOVER_CHANNEL_REQUEST_ID = 2;
 
 function buildDiscoverReplyKeyboard() {
   return {
@@ -160,15 +199,6 @@ function buildDiscoverReplyKeyboard() {
           request_chat: {
             request_id: DISCOVER_CHAT_REQUEST_ID,
             chat_is_channel: false,
-          },
-        },
-      ],
-      [
-        {
-          text: '🔍 ID канала',
-          request_chat: {
-            request_id: DISCOVER_CHANNEL_REQUEST_ID,
-            chat_is_channel: true,
           },
         },
       ],
@@ -186,6 +216,7 @@ function isDiscoverIdRequest(text) {
 function buildMenuKeyboard() {
   const rows = buildToggleRows('toggle:');
   rows.push([{ text: '✏️ Имена авто', callback_data: 'action:profileNames' }]);
+  rows.push([{ text: '💬 Чаты MAX', callback_data: 'maxchat:list' }]);
   rows.push([{ text: '📬 Чат уведомлений', callback_data: 'action:notifyChat' }]);
   rows.push([{ text: '📊 Обновить статус', callback_data: 'status' }]);
   if (isMonitoringEnabled()) {
@@ -206,8 +237,16 @@ function parseSetCommand(text) {
 
   const key = match[1].toLowerCase();
   const rawValue = (match[2] || '').trim();
+
+  if (key === 'chaturl') {
+    if (!rawValue) return { error: 'Укажите ссылку на чат MAX' };
+    const result = setDefaultChatUrl(rawValue);
+    if (result.error) return { error: result.error };
+    return { ok: true, key, value: result.url };
+  }
+
   const rule = SETTABLE[key];
-  if (!rule) return { error: `Неизвестный ключ. Доступно: ${Object.keys(SETTABLE).join(', ')}` };
+  if (!rule) return { error: `Неизвестный ключ. Доступно: chaturl, ${Object.keys(SETTABLE).join(', ')}` };
 
   if (rule.type === 'names') {
     const names = parseNameList(rawValue);
@@ -369,10 +408,64 @@ async function replyChatInfo(adminChatId, targetChatId, hintTitle, chatType) {
   });
 }
 
+async function showMaxChats(chatId, messageId) {
+  await editMessageText(chatId, messageId, buildMaxChatsText(), {
+    reply_markup: buildMaxChatsKeyboard(),
+  });
+}
+
+async function showMaxChatView(chatId, messageId, index) {
+  const urls = getMonitorChatUrls();
+  const url = urls[index];
+  if (!url) {
+    await showMaxChats(chatId, messageId);
+    return;
+  }
+
+  const defaultUrl = getDefaultChatUrl();
+  const lines = [
+    `<b>${escapeHtml(chatLabelFromUrl(url))}</b>`,
+    '',
+    `<code>${escapeHtml(url)}</code>`,
+    url === defaultUrl ? '⭐ Основной чат' : 'Дополнительный чат',
+  ];
+
+  await editMessageText(chatId, messageId, lines.join('\n'), {
+    reply_markup: buildMaxChatViewKeyboard(index),
+  });
+}
+
+async function handleMaxChatUrlInput(chatId, text) {
+  const result = addMonitorChatUrl(text);
+  waitingInput.delete(String(chatId));
+
+  if (result.error) {
+    await sendMessage(chatId, result.error);
+    return false;
+  }
+
+  const lines = [
+    result.duplicate
+      ? 'Этот чат уже в списке.'
+      : `Чат добавлен: <code>${escapeHtml(result.url)}</code>`,
+    '',
+    buildMaxChatsText(),
+  ];
+
+  await sendMessage(
+    chatId,
+    buildEventMessage({
+      title: result.duplicate ? 'Чат уже в списке' : 'Чат MAX добавлен',
+      status: 'done',
+      lines,
+    }),
+    { reply_markup: buildMaxChatsKeyboard() }
+  );
+  return true;
+}
+
 async function handleChatShared(adminChatId, shared) {
-  const targetChatId = String(shared.chat_id);
-  const chatType = shared.request_id === DISCOVER_CHANNEL_REQUEST_ID ? 'channel' : 'supergroup';
-  await replyChatInfo(adminChatId, targetChatId, shared.title, chatType);
+  await replyChatInfo(adminChatId, String(shared.chat_id), shared.title);
 }
 
 async function showDiscoverChats(chatId, messageId, page = 0) {
@@ -496,6 +589,11 @@ async function handleMessage(message) {
     return;
   }
 
+  if (waitKey === 'maxchat:add' && text && !text.startsWith('/')) {
+    await handleMaxChatUrlInput(chatId, text);
+    return;
+  }
+
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
     await sendMessage(chatId, 'Отменено.');
@@ -585,6 +683,10 @@ async function handleMessage(message) {
         chatId,
         'Перезапустите установку:\n<code>bash &lt;(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)</code>'
       );
+      return;
+    }
+
+    if (!(await ensureCanStartReauth(chatId))) {
       return;
     }
 
@@ -698,8 +800,20 @@ async function handleCallback(query) {
     const mode = data === 'auth:mode:phone' ? 'phone' : 'qr';
     await answerCallback(query.id, mode === 'phone' ? 'Вход по номеру' : 'Вход по QR');
 
+    if (!(await ensureCanStartReauth(chatId))) {
+      return;
+    }
+
+    if (mode === 'phone') {
+      await sendMessage(chatId, buildPhoneAuthWarningMessage());
+    }
+
     void reauthHandler({ mode })
-      .then(async () => {
+      .then(async (result) => {
+        if (result?.alreadyActive) {
+          await sendMessage(chatId, buildActiveSessionMessage());
+          return;
+        }
         await sendMessage(
           chatId,
           buildEventMessage({
@@ -807,12 +921,81 @@ async function handleCallback(query) {
     await answerCallback(query.id, 'Чат уведомлений');
     await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
       reply_markup: {
-        inline_keyboard: [
-          [{ text: '📋 Выбрать из списка', callback_data: 'discover:page:0' }],
-          [{ text: '« В меню', callback_data: 'discover:menu' }],
-        ],
+        inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]],
       },
     });
+    return;
+  }
+
+  if (data === 'maxchat:list') {
+    await answerCallback(query.id, 'Чаты MAX');
+    await showMaxChats(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data === 'maxchat:add') {
+    waitingInput.set(String(chatId), 'maxchat:add');
+    await answerCallback(query.id, 'Жду ссылку');
+    await sendMessage(
+      chatId,
+      [
+        '<b>Добавить чат MAX</b>',
+        '',
+        'Отправьте ссылку на чат, например:',
+        '<code>https://web.max.ru/-68396892343002</code>',
+        '',
+        'Или /cancel для отмены.',
+      ].join('\n')
+    );
+    return;
+  }
+
+  if (data.startsWith('maxchat:view:')) {
+    const index = Number.parseInt(data.slice('maxchat:view:'.length), 10) || 0;
+    await answerCallback(query.id, 'Чат MAX');
+    await showMaxChatView(chatId, query.message.message_id, index);
+    return;
+  }
+
+  if (data.startsWith('maxchat:default:')) {
+    const index = Number.parseInt(data.slice('maxchat:default:'.length), 10) || 0;
+    const urls = getMonitorChatUrls();
+    const url = urls[index];
+    if (!url) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+
+    const result = setDefaultChatUrl(url);
+    if (result.error) {
+      await answerCallback(query.id, 'Ошибка');
+      await sendMessage(chatId, result.error);
+      return;
+    }
+
+    await answerCallback(query.id, 'Основной чат');
+    await showMaxChatView(chatId, query.message.message_id, index);
+    return;
+  }
+
+  if (data.startsWith('maxchat:remove:')) {
+    const index = Number.parseInt(data.slice('maxchat:remove:'.length), 10) || 0;
+    const urls = getMonitorChatUrls();
+    const url = urls[index];
+    if (!url) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+
+    const result = removeMonitorChatUrl(url);
+    if (result.error) {
+      await answerCallback(query.id, 'Ошибка');
+      await sendMessage(chatId, result.error);
+      return;
+    }
+
+    await answerCallback(query.id, 'Удалено');
+    await showMaxChats(chatId, query.message.message_id);
     return;
   }
 
@@ -933,6 +1116,7 @@ module.exports = {
   registerAuthInputWaiter,
   clearAuthInputWaiter,
   setReauthHandler,
+  setSessionCheckHandler,
   setAuthBusyCheck,
   setReplyHandler,
   setStopHandler,

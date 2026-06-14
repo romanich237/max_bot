@@ -11,15 +11,17 @@ function loadStateFromFile() {
   } catch {
     /* ignore corrupt state */
   }
-  return { seenKeys: [], lastSnapshot: [] };
+  return { seenKeys: [], lastSnapshot: [], chatSnapshots: {} };
 }
 
 function saveStateToFile(state) {
   const keys = [...state.seenKeys].slice(-500);
-  fs.writeFileSync(
-    getSettings().stateFile,
-    JSON.stringify({ seenKeys: keys, lastSnapshot: state.lastSnapshot }, null, 2)
-  );
+  const payload = {
+    seenKeys: keys,
+    lastSnapshot: state.lastSnapshot,
+    chatSnapshots: state.chatSnapshots || {},
+  };
+  fs.writeFileSync(getSettings().stateFile, JSON.stringify(payload, null, 2));
 }
 
 async function loadState() {
@@ -36,7 +38,7 @@ async function loadState() {
       db.loadSnapshot(),
     ]);
 
-    return { seenKeys, lastSnapshot };
+    return { seenKeys, lastSnapshot, chatSnapshots: {} };
   } catch (err) {
     console.error('MySQL недоступен, fallback на state.json:', err.message);
     return loadStateFromFile();
@@ -45,7 +47,11 @@ async function loadState() {
 
 async function saveState(state) {
   const keys = [...state.seenKeys].slice(-500);
-  const payload = { seenKeys: keys, lastSnapshot: state.lastSnapshot };
+  const payload = {
+    seenKeys: keys,
+    lastSnapshot: state.lastSnapshot,
+    chatSnapshots: state.chatSnapshots || {},
+  };
 
   if (db.isEnabled()) {
     try {

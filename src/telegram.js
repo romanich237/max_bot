@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram, getMaxDisplayName } = require('./config');
+const { getTelegram, getMaxDisplayName, getMonitorChatUrls } = require('./config');
+const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
 
 function escapeHtml(text) {
@@ -28,11 +29,15 @@ function formatReply(reply) {
   return `↩ <b>${author}</b>:\n${body}`;
 }
 
-function buildMessageText(message, isCatchUp = false) {
+function buildMessageText(message, isCatchUp = false, meta = {}) {
   const telegram = getTelegram();
   const showTime = telegram.showTime ?? false;
   const showServiceHeader = telegram.showServiceHeader ?? false;
   const parts = [];
+
+  if (getMonitorChatUrls().length > 1 && meta.maxChatUrl) {
+    parts.push(`📁 <b>${escapeHtml(chatLabelFromUrl(meta.maxChatUrl))}</b>`, '');
+  }
 
   if (showServiceHeader) {
     const maxName = getMaxDisplayName();
@@ -67,8 +72,8 @@ function replyMarkupForChat(chatId, replyMarkup) {
   return replyMarkup && isPrivateChat(chatId) ? replyMarkup : null;
 }
 
-function buildReplyMarkup(message) {
-  const id = replyStore.put(message);
+function buildReplyMarkup(message, maxChatUrl) {
+  const id = replyStore.put(message, maxChatUrl);
   return {
     inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${id}` }]],
   };
@@ -138,9 +143,9 @@ function endpointForMedia(type) {
   return map[type] || map.file;
 }
 
-async function sendPhotoGroup(message, photoFiles, isCatchUp, replyMarkup) {
+async function sendPhotoGroup(message, photoFiles, isCatchUp, replyMarkup, meta = {}) {
   const { token, chatIds } = getTelegram();
-  const caption = buildMessageText(message, isCatchUp);
+  const caption = buildMessageText(message, isCatchUp, meta);
 
   await Promise.all(
     chatIds.map(async (chatId) => {
@@ -199,9 +204,9 @@ async function sendReplyPrompt(chatId, message, replyMarkup, token) {
   }
 }
 
-async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp) {
+async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp, meta = {}) {
   if (withContext) {
-    const contextText = buildMessageText(message, isCatchUp);
+    const contextText = buildMessageText(message, isCatchUp, meta);
     if (contextText.trim()) {
       await callTelegram('sendMessage', { text: contextText, parse_mode: 'HTML' });
     }
@@ -217,12 +222,12 @@ async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp) 
   }
 }
 
-async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMarkup) {
+async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMarkup, meta = {}) {
   const { method, field } = endpointForMedia(media.type);
   const extra = {};
 
   if (withCaption && method !== 'sendVoice') {
-    extra.caption = buildMessageText(message, isCatchUp);
+    extra.caption = buildMessageText(message, isCatchUp, meta);
     extra.parse_mode = 'HTML';
   }
 
@@ -240,11 +245,12 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, replyMark
 }
 
 async function sendToTelegram(message, options = {}) {
-  const { isCatchUp = false, mediaFiles = [] } = options;
-  const replyMarkup = isCatchUp ? null : buildReplyMarkup(message);
+  const { isCatchUp = false, mediaFiles = [], maxChatUrl = null } = options;
+  const meta = { maxChatUrl };
+  const replyMarkup = isCatchUp ? null : buildReplyMarkup(message, maxChatUrl);
 
   if (!mediaFiles.length) {
-    const text = buildMessageText(message, isCatchUp);
+    const text = buildMessageText(message, isCatchUp, meta);
     await callTelegram('sendMessage', { text, parse_mode: 'HTML' }, {}, replyMarkup);
     return;
   }
@@ -254,10 +260,10 @@ async function sendToTelegram(message, options = {}) {
   let captionUsed = false;
 
   if (photos.length > 1) {
-    await sendPhotoGroup(message, photos, isCatchUp, replyMarkup);
+    await sendPhotoGroup(message, photos, isCatchUp, replyMarkup, meta);
     captionUsed = true;
   } else if (photos.length === 1) {
-    await sendSingleMedia(message, photos[0], isCatchUp, true, replyMarkup);
+    await sendSingleMedia(message, photos[0], isCatchUp, true, replyMarkup, meta);
     captionUsed = true;
   }
 
@@ -265,7 +271,7 @@ async function sendToTelegram(message, options = {}) {
     const media = others[i];
 
     if (media.type === 'voice') {
-      await sendVoiceWithContext(message, media, !captionUsed, isCatchUp);
+      await sendVoiceWithContext(message, media, !captionUsed, isCatchUp, meta);
       if (!captionUsed && replyMarkup) {
         const { token, chatIds } = getTelegram();
         await Promise.all(
@@ -280,7 +286,7 @@ async function sendToTelegram(message, options = {}) {
 
     const withCaption = !captionUsed && i === 0;
     const markup = !captionUsed && i === 0 ? replyMarkup : null;
-    await sendSingleMedia(message, media, isCatchUp, withCaption, markup);
+    await sendSingleMedia(message, media, isCatchUp, withCaption, markup, meta);
     if (withCaption) captionUsed = true;
   }
 }

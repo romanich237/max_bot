@@ -36,6 +36,51 @@ function buildAuthModeKeyboard(options = {}) {
   return { inline_keyboard: rows };
 }
 
+function buildPhoneAuthWarningMessage() {
+  return buildEventMessage({
+    title: 'Вход по номеру телефона',
+    status: 'wait',
+    lines: [
+      'Предупреждаем: для входа по номеру MAX требует установить пароль в личном кабинете.',
+      'Если вы уже это сделали — пропустите это сообщение.',
+    ],
+  });
+}
+
+const PHONE_AUTH_WARNING_SHORT =
+  'Предупреждаем: для входа по номеру MAX требует установить пароль в личном кабинете. Если вы уже это сделали — пропустите.';
+
+function buildActiveSessionMessage() {
+  return buildEventMessage({
+    title: 'Сессия MAX активна',
+    status: 'done',
+    lines: [
+      'Повторный вход не нужен — сессия уже авторизована.',
+      'Чтобы войти заново, удалите это устройство в MAX: настройки → Безопасность → Устройства.',
+      'После удаления отправьте /reauth.',
+    ],
+  });
+}
+
+async function probeMaxSession(page, chatUrl) {
+  if (!page || page.isClosed()) return false;
+
+  if (!(await isLoginPage(page))) {
+    return true;
+  }
+
+  const target = chatUrl || MAX_LOGIN_URL;
+  await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForTimeout(2500);
+
+  if (!(await isLoginPage(page))) {
+    return true;
+  }
+
+  await page.waitForTimeout(2000);
+  return !(await isLoginPage(page));
+}
+
 function isAuthSessionActive() {
   return isCaptionSessionActive();
 }
@@ -223,12 +268,14 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
   await page.waitForTimeout(3000);
 
   if (!(await isLoginPage(page))) {
-    await sendMessage(
-      chatIds[0],
-      'Сессия MAX уже активна.',
-      {},
-      options.token
-    );
+    await notifyEvent(chatIds, {
+      title: 'Сессия MAX активна',
+      status: 'done',
+      lines: [
+        'Повторный вход не нужен — сессия уже авторизована.',
+        'Чтобы войти заново, удалите это устройство в MAX: настройки → Безопасность → Устройства.',
+      ],
+    }, options);
     return true;
   }
 
@@ -356,6 +403,9 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
         mode === 'phone' ? 'Вход по номеру' : 'Вход по QR',
         options.token
       );
+      if (mode === 'phone') {
+        await sendMessage(chatId, buildPhoneAuthWarningMessage(), {}, options.token);
+      }
       finish(mode);
     }, {
       token: options.token,
@@ -428,6 +478,10 @@ module.exports = {
   runAuthOnPage,
   chooseAuthModeTelegram,
   buildAuthModeKeyboard,
+  buildPhoneAuthWarningMessage,
+  PHONE_AUTH_WARNING_SHORT,
+  buildActiveSessionMessage,
+  probeMaxSession,
   runAuthQrTelegram,
   runAuthQrOnPage,
   captureLoginScreenshot,

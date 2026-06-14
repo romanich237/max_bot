@@ -7,8 +7,8 @@ function makeId(messageKey) {
   return crypto.createHash('md5').update(messageKey).digest('hex').slice(0, 12);
 }
 
-function put(message) {
-  const id = makeId(message.key);
+function put(message, maxChatUrl) {
+  const id = makeId(`${maxChatUrl || ''}::${message.key}`);
   store.set(id, {
     author: message.author,
     key: message.key,
@@ -16,6 +16,7 @@ function put(message) {
     time: message.time,
     index: message.index,
     reply: message.reply || null,
+    maxChatUrl: maxChatUrl || null,
   });
 
   if (store.size > MAX_ENTRIES) {

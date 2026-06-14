@@ -331,9 +331,12 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
   if (!(await isLoginPage(page))) {
     await notifyAuthDone(chatIds, options, {
-      title: 'Сессия MAX уже активна',
+      title: 'Сессия MAX активна',
       status: 'done',
-      lines: ['Повторный вход не требуется.'],
+      lines: [
+        'Повторный вход не нужен — сессия уже авторизована.',
+        'Чтобы войти заново, удалите это устройство в MAX: настройки → Безопасность → Устройства.',
+      ],
     });
     return true;
   }

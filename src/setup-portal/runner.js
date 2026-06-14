@@ -6,7 +6,7 @@ const { deleteWebhook } = require('../tg-api');
 const { registerBotCommands } = require('../tg-admin');
 const { isMaxChatUrl } = require('../setup-wizard');
 const { parseNameList, saveProfileNames } = require('../tg-settings');
-const { runAuthOnPage } = require('../auth-qr');
+const { runAuthOnPage, PHONE_AUTH_WARNING_SHORT } = require('../auth-qr');
 const { launchMaxContext } = require('../browser-context');
 const { captureLoginScreenshot } = require('../auth-qr');
 const { provisionLocalDatabase } = require('../mysql-provision');
@@ -67,7 +67,11 @@ async function runMaxAuth(state, mode) {
       }
     }, 3000);
 
-    setStep(state, 'auth', mode === 'phone' ? 'Вход по номеру телефона' : 'Вход по QR-коду');
+    setStep(
+      state,
+      'auth',
+      mode === 'phone' ? `Вход по номеру телефона. ${PHONE_AUTH_WARNING_SHORT}` : 'Вход по QR-коду'
+    );
 
     await runAuthOnPage(page, chatIds, {
       mode,
