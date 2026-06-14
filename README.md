@@ -10,18 +10,6 @@
 
 Рекомендуемый провайдер: [play2go.cloud](https://play2go.cloud/?ref_id=k5jH0xQ4-_g)
 
-Откройте порт **3847** для веб-настройки и `/site`. При установке скрипт пробует **ufw → firewalld → iptables**. Если локального файрвола нет — откройте порт в **панели VPS**:
-
-```bash
-# если есть iptables (вы root — без sudo):
-iptables -I INPUT -p tcp --dport 3847 -j ACCEPT
-
-# или установить ufw:
-apt-get update && apt-get install -y ufw
-ufw allow 3847/tcp
-ufw enable
-```
-
 ## Установка (VPS)
 
 Скрипт **сразу спросит в консоли** Telegram bot token и chat ID:
@@ -37,7 +25,7 @@ npm -v
 
 git clone --depth 1 https://github.com/romanich237/max_bot.git ~/max-tg
 cd ~/max-tg
-TG_TOKEN="8989410277:AAGAHv8DyaKRn10x05W0UUHTWFaMMdUDGi0" TG_CHAT_ID="7547263007" npm run setup
+TG_TOKEN="токен бота из @BotFather" TG_CHAT_ID="ваш айди" npm run setup
 ```
 
 Или переустановите с нуля после обновления скрипта:
