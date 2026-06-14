@@ -45,35 +45,108 @@ function ensureConfigFile() {
   }
 }
 
+function ensureDirs() {
+  for (const dir of ['logs', 'data', 'max_user_data']) {
+    fs.mkdirSync(path.join(root, dir), { recursive: true });
+  }
+}
+
 function loadConfig() {
   return JSON.parse(fs.readFileSync(configPath, 'utf8'));
 }
 
 function saveConfig(config) {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  require('../src/settings-store').reload();
 }
 
-async function collectTelegramCredentials(config) {
-  const token = process.env.TG_TOKEN || (await ask('Telegram bot token: '));
-  const chatId = process.env.TG_CHAT_ID || (await ask('Ваш Telegram chat ID: '));
-
-  if (!token || !chatId) {
-    throw new Error('Token и chat ID обязательны (или задайте TG_TOKEN и TG_CHAT_ID)');
-  }
-
+async function applyTelegramCredentials(config, token, chatId) {
   config.telegram = config.telegram || {};
-  config.telegram.token = token;
-  config.telegram.chatIds = [String(chatId)];
+  config.telegram.token = String(token).trim();
+  config.telegram.chatIds = [String(chatId).trim()];
   config.setupComplete = false;
   saveConfig(config);
-
   console.log('Telegram настройки сохранены в config.json');
 }
 
-function ensureDirs() {
-  for (const dir of ['logs', 'data', 'max_user_data']) {
-    fs.mkdirSync(path.join(root, dir), { recursive: true });
+async function ensureTelegramCredentials() {
+  const config = loadConfig();
+
+  if (process.env.TG_TOKEN && process.env.TG_CHAT_ID) {
+    console.log('\n--- Telegram ---');
+    console.log('Используются TG_TOKEN и TG_CHAT_ID из окружения\n');
+    await applyTelegramCredentials(config, process.env.TG_TOKEN, process.env.TG_CHAT_ID);
+    return;
   }
+
+  console.log('\n--- Telegram ---\n');
+  const token = process.env.TG_TOKEN || (await ask('Telegram bot token: '));
+  const chatId = process.env.TG_CHAT_ID || (await ask('Ваш Telegram chat ID: '));
+
+  if (!token?.trim() || !chatId?.trim()) {
+    throw new Error('Token и chat ID обязательны (или задайте TG_TOKEN и TG_CHAT_ID)');
+  }
+
+  await applyTelegramCredentials(config, token, chatId);
+}
+
+async function runTerminalSetup() {
+  const store = require('../src/settings-store');
+
+  async function collectBrowserPassword(config) {
+    const password =
+      process.env.MAX_BROWSER_PASSWORD ||
+      (await ask('Пароль @Browser в MAX (из личного кабинета, Enter — пропустить): '));
+
+    if (password) {
+      config.max = config.max || {};
+      config.max.browserPassword = password;
+      saveConfig(config);
+      console.log('Пароль @Browser сохранён в config.json');
+    }
+  }
+
+  const { checkTelegramConnectivity } = require('../src/tg-api');
+  const { deleteWebhook, sendMessage } = require('../src/tg-api');
+  const { registerBotCommands } = require('../src/tg-admin');
+  const { runAuthTelegram } = require('../src/auth-qr');
+  const { runSetupWizard } = require('../src/setup-wizard');
+  const { setupPm2 } = require('../src/pm2');
+  const { provisionLocalDatabase, formatDatabaseTelegramMessage } = require('../src/mysql-provision');
+
+  const config = loadConfig();
+  await collectBrowserPassword(config);
+  store.reload();
+
+  console.log('\nПроверка связи с Telegram API...');
+  const data = await checkTelegramConnectivity();
+  console.log(data.result?.username ? `Telegram API доступен (@${data.result.username})\n` : 'Telegram API доступен\n');
+
+  console.log('\n--- Установка базы данных ---\n');
+  const dbCredentials = await provisionLocalDatabase(store);
+  const adminChatIds = store.getPath(['telegram', 'chatIds']) || [];
+  for (const chatId of adminChatIds) {
+    try {
+      await sendMessage(chatId, formatDatabaseTelegramMessage(dbCredentials));
+    } catch (err) {
+      console.warn(`Не удалось отправить данные БД в Telegram (${chatId}): ${err.message}`);
+    }
+  }
+
+  await deleteWebhook();
+  await registerBotCommands();
+  await runAuthTelegram({ introMessage: 'Продолжите настройку в Telegram.', useAuthCallbackPoll: true });
+  await runSetupWizard();
+
+  if (store.getPath(['database', 'enabled'])) {
+    try {
+      run('node scripts/init-db.js');
+    } catch {
+      console.log('init-db пропущен');
+    }
+  }
+
+  setupPm2({ skipSessionCheck: true });
 }
 
 async function main() {
@@ -81,8 +154,18 @@ async function main() {
 
   checkNode();
   ensureConfigFile();
-  const config = loadConfig();
-  await collectTelegramCredentials(config);
+  ensureDirs();
+
+  await ensureTelegramCredentials();
+
+  const { checkTelegramConnectivity } = require('../src/tg-api');
+  console.log('Проверка связи с Telegram API...');
+  const tgCheck = await checkTelegramConnectivity();
+  console.log(
+    tgCheck.result?.username
+      ? `Telegram API доступен (@${tgCheck.result.username})\n`
+      : 'Telegram API доступен\n'
+  );
 
   run('npm install --omit=dev --ignore-scripts');
   run('npx playwright install chromium');
@@ -93,56 +176,34 @@ async function main() {
     console.log('playwright install-deps пропущен (не критично)');
   }
 
-  ensureDirs();
+  const { openPortalPort } = require('../src/open-firewall-port');
+  openPortalPort();
 
-  const { deleteWebhook, sendMessage } = require('../src/tg-api');
-  const { registerBotCommands } = require('../src/tg-admin');
-  const { runAuthQrTelegram } = require('../src/auth-qr');
-  const { runSetupWizard } = require('../src/setup-wizard');
-  const { setupPm2 } = require('../src/pm2');
-  const {
-    provisionLocalDatabase,
-    formatDatabaseTelegramMessage,
-  } = require('../src/mysql-provision');
-  const store = require('../src/settings-store');
-
-  store.reload();
-
-  console.log('\n--- Установка базы данных ---\n');
-  const dbCredentials = await provisionLocalDatabase(store);
-  const adminChatIds = store.getPath(['telegram', 'chatIds']) || [];
-  for (const chatId of adminChatIds) {
-    await sendMessage(chatId, formatDatabaseTelegramMessage(dbCredentials));
+  if (process.env.SETUP_TERMINAL === '1') {
+    await runTerminalSetup();
+    console.log('\nГотово! Бот запущен 24/7.');
+    console.log('В Telegram отправьте боту: /menu');
+    return;
   }
 
-  console.log('\nПродолжите настройку в Telegram\n');
-  await deleteWebhook();
-  await registerBotCommands();
-  await runAuthQrTelegram({
-    introMessage: 'Продолжите настройку в Telegram.',
-    useAuthCallbackPoll: true,
+  const { runWebSetup } = require('../src/setup-portal');
+  const result = await runWebSetup({
+    port: Number(process.env.SETUP_PORT) || undefined,
   });
 
-  console.log('\n--- Настройка бота в Telegram ---\n');
-  await runSetupWizard();
-
-  const fresh = loadConfig();
-  if (fresh.database?.enabled) {
-    try {
-      run('node scripts/init-db.js');
-    } catch {
-      console.log('init-db пропущен (проверьте database в config.json)');
-    }
-  }
-
-  console.log('\n--- Запуск PM2 ---\n');
-  setupPm2({ skipSessionCheck: true });
-
   console.log('\nГотово! Бот запущен 24/7.');
-  console.log('В Telegram отправьте боту: /menu');
+  if (result.botUsername) {
+    console.log(`Telegram: @${result.botUsername} → /menu`);
+  }
 }
 
 main().catch((err) => {
   console.error('\nОшибка установки:', err.message);
+  if (/api\.telegram\.org|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(err.message)) {
+    console.error(
+      '\nСеть: curl -I https://api.telegram.org\n' +
+        'Прокси: export HTTPS_PROXY=http://host:port && npm run setup'
+    );
+  }
   process.exit(1);
 });

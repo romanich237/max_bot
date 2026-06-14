@@ -11,7 +11,16 @@
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",
-    "monitoringEnabled": true
+    "monitoringEnabled": true,
+    "browserPassword": ""
+  },
+  "setupPortal": {
+    "port": 3847
+  },
+  "sitePortal": {
+    "enabled": true,
+    "port": 3847,
+    "token": ""
   },
   "profileRotate": {
     "enabled": false,

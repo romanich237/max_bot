@@ -22,13 +22,14 @@ const {
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
 const replyStore = require('./reply-store');
-const { refreshAuthScreenshot, isAuthSessionActive } = require('./auth-qr');
+const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard } = require('./auth-qr');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
   chaturl: { path: ['max', 'chatUrl'], type: 'string' },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
+  browserpassword: { path: ['max', 'browserPassword'], type: 'string' },
 };
 
 const BOT_COMMANDS = [
@@ -37,7 +38,8 @@ const BOT_COMMANDS = [
   { command: 'status', description: 'Текущие настройки' },
   { command: 'stop', description: 'Остановить мониторинг MAX' },
   { command: 'resume', description: 'Запустить мониторинг MAX' },
-  { command: 'reauth', description: 'Скриншот входа MAX' },
+  { command: 'reauth', description: 'Вход в MAX (QR или телефон)' },
+  { command: 'site', description: 'MAX в браузере (без QR)' },
   { command: 'cancel', description: 'Отменить ввод ответа' },
   { command: 'set', description: 'Изменить параметр' },
   { command: 'help', description: 'Список команд' },
@@ -48,6 +50,16 @@ let replyHandler = null;
 let stopHandler = null;
 let startHandler = null;
 const waitingInput = new Map();
+
+let authInputWaiter = null;
+
+function registerAuthInputWaiter(waiter) {
+  authInputWaiter = waiter;
+}
+
+function clearAuthInputWaiter() {
+  authInputWaiter = null;
+}
 
 function setReauthHandler(fn) {
   reauthHandler = fn;
@@ -175,6 +187,41 @@ async function handleProfileNamesInput(chatId, text) {
   return true;
 }
 
+async function handleAuthInput(chatId, text) {
+  if (!authInputWaiter) return false;
+
+  const chatIdStr = String(chatId);
+  const allowed = new Set((authInputWaiter.chatIds || []).map(String));
+  if (!allowed.has(chatIdStr)) return false;
+
+  if (/^\/cancel$/i.test(text)) {
+    const waiter = authInputWaiter;
+    clearAuthInputWaiter();
+    waiter.onCancel?.();
+    return true;
+  }
+
+  if (authInputWaiter.validate) {
+    const validated = authInputWaiter.validate(text);
+    if (validated === false || validated == null) {
+      await sendMessage(
+        chatId,
+        authInputWaiter.invalidMessage || 'Неверный формат. Попробуйте ещё раз или /cancel.'
+      );
+      return true;
+    }
+    const waiter = authInputWaiter;
+    clearAuthInputWaiter();
+    waiter.onValid(typeof validated === 'string' ? validated : text);
+    return true;
+  }
+
+  const waiter = authInputWaiter;
+  clearAuthInputWaiter();
+  waiter.onValid(text);
+  return true;
+}
+
 async function handleMessage(message) {
   const chatId = message.chat.id;
   if (!isAdmin(chatId)) {
@@ -183,6 +230,9 @@ async function handleMessage(message) {
   }
 
   const text = (message.text || '').trim();
+
+  if (await handleAuthInput(chatId, text)) return;
+
   const waitKey = waitingInput.get(String(chatId));
 
   if (waitKey?.startsWith('reply:') && text && !text.startsWith('/')) {
@@ -283,13 +333,29 @@ async function handleMessage(message) {
       return;
     }
 
-    await sendMessage(chatId, 'Отправляю скриншот страницы входа MAX…');
-    try {
-      await reauthHandler(chatId);
-      await sendMessage(chatId, 'Сессия MAX обновлена. Мониторинг продолжается.');
-    } catch (err) {
-      await sendMessage(chatId, `Ошибка входа: ${err.message}`);
-    }
+    await sendMessage(chatId, 'Выберите способ входа в MAX:', {
+      reply_markup: buildAuthModeKeyboard(),
+    });
+    return;
+  }
+
+  if (/^\/site$/i.test(text)) {
+    const { getSiteUrls } = require('./site-portal');
+    const urls = getSiteUrls();
+    const primary = urls.find((u) => !u.includes('127.0.0.1')) || urls[0];
+    await sendMessage(
+      chatId,
+      [
+        '<b>MAX в браузере</b> (без QR-кода)',
+        '',
+        'Откройте ссылку, войдите по <b>номеру телефона</b>, пройдите капчу вручную.',
+        'После входа нажмите <b>«Сохранить сессию в бот»</b> на странице.',
+        '',
+        `<a href="${primary}">${primary}</a>`,
+        `<code>${primary}</code>`,
+      ].join('\n'),
+      { disable_web_page_preview: false }
+    );
     return;
   }
 
@@ -303,14 +369,15 @@ async function handleMessage(message) {
         '/status — текущие настройки',
         '/stop — остановить мониторинг MAX',
         '/resume — запустить мониторинг MAX',
-        '/reauth — скриншот входа MAX',
+        '/reauth — вход в MAX (QR или телефон)',
+        '/site — MAX в браузере без QR',
         '/cancel — отменить ввод ответа',
         '/set ключ значение — изменить параметр',
         '',
         'На сообщениях из MAX — кнопка <b>↩️ Ответить</b>',
         '',
         '<b>Ключи для /set</b>',
-        'chatUrl, profileInterval, onlineInterval, profileNames',
+        'chatUrl, profileInterval, onlineInterval, profileNames, browserPassword',
       ].join('\n')
     );
     return;
@@ -338,6 +405,28 @@ async function handleCallback(query) {
   }
 
   const data = query.data || '';
+
+  if (data === 'auth:mode:qr' || data === 'auth:mode:phone') {
+    if (!reauthHandler) {
+      await answerCallback(query.id, 'Недоступно');
+      await sendMessage(
+        chatId,
+        'Перезапустите установку:\n<code>bash &lt;(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)</code>'
+      );
+      return;
+    }
+
+    const mode = data === 'auth:mode:phone' ? 'phone' : 'qr';
+    await answerCallback(query.id, mode === 'phone' ? 'Вход по номеру' : 'Вход по QR');
+
+    try {
+      await reauthHandler({ mode });
+      await sendMessage(chatId, 'Сессия MAX обновлена. Мониторинг продолжается.');
+    } catch (err) {
+      await sendMessage(chatId, `Ошибка входа: ${err.message}`);
+    }
+    return;
+  }
 
   if (data === 'auth:refresh') {
     await answerCallback(query.id, 'Обновляю…');
@@ -468,6 +557,8 @@ function startTelegramAdmin() {
 module.exports = {
   startTelegramAdmin,
   registerBotCommands,
+  registerAuthInputWaiter,
+  clearAuthInputWaiter,
   setReauthHandler,
   setReplyHandler,
   setStopHandler,

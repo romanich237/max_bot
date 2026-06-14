@@ -240,6 +240,36 @@ ensure_node() {
   exit 1
 }
 
+open_portal_port() {
+  local port="${SETUP_PORT:-3847}"
+
+  if ! can_sudo; then
+    echo "Порт ${port}/tcp: нет sudo — откройте вручную при необходимости"
+    return 0
+  fi
+
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -qi 'Status: active'; then
+      echo "Открываю порт ${port}/tcp (ufw)..."
+      run_root ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+      echo "Порт ${port}/tcp открыт"
+      return 0
+    fi
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if run_root firewall-cmd --state >/dev/null 2>&1; then
+      echo "Открываю порт ${port}/tcp (firewalld)..."
+      run_root firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
+      run_root firewall-cmd --reload >/dev/null 2>&1 || true
+      echo "Порт ${port}/tcp открыт"
+      return 0
+    fi
+  fi
+
+  echo "Порт ${port}/tcp: файрвол не найден (ufw/firewalld) — проверьте панель VPS"
+}
+
 ensure_git
 ensure_node
 refresh_path
@@ -263,8 +293,26 @@ fi
 
 cd "$INSTALL_DIR"
 refresh_path
+open_portal_port
 echo ""
 echo "Node: $(command -v node || command -v nodejs) ($($(node_cmd) -v))"
 echo "npm:  $(command -v npm) ($(npm -v))"
 echo ""
-exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" npm run setup
+
+if [ -z "${TG_TOKEN:-}" ]; then
+  read -rp "Telegram bot token: " TG_TOKEN
+  export TG_TOKEN
+fi
+
+if [ -z "${TG_CHAT_ID:-}" ]; then
+  read -rp "Ваш Telegram chat ID: " TG_CHAT_ID
+  export TG_CHAT_ID
+fi
+
+if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
+  echo "Ошибка: нужны Telegram bot token и chat ID"
+  exit 1
+fi
+
+echo ""
+exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" npm run setup

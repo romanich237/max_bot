@@ -1,4 +1,3 @@
-const { chromium } = require('playwright');
 const {
   getMax,
   getSettings,
@@ -12,7 +11,9 @@ const { rotateDisplayName } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
-const { runAuthQrOnPage } = require('./auth-qr');
+const { runAuthOnPage, buildAuthModeKeyboard } = require('./auth-qr');
+const { launchMaxContext } = require('./browser-context');
+const { sendMessage: sendTgMessage } = require('./tg-api');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
@@ -130,11 +131,8 @@ async function startMonitor() {
     console.log('Мониторинг MAX запущен');
   }
 
-  const context = await chromium.launchPersistentContext(settings.userDataDir, {
+  const context = await launchMaxContext(settings.userDataDir, {
     headless: settings.headless,
-    viewport: { width: 1280, height: 900 },
-    locale: 'ru-RU',
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   const page = context.pages()[0] || (await context.newPage());
@@ -142,13 +140,23 @@ async function startMonitor() {
 
   const onlineKeeper = startAlwaysOnline(page, getAlwaysOnline);
 
+  async function notifyReauthNeeded(introMessage) {
+    const text =
+      introMessage ||
+      '<b>Сессия MAX истекла</b>\nВыберите способ входа в MAX:';
+    for (const chatId of getAdminChatIds()) {
+      await sendTgMessage(chatId, text, { reply_markup: buildAuthModeKeyboard() });
+    }
+  }
+
   async function performReauth(options = {}) {
     authBusy = true;
     profileBusy = true;
     try {
       const chatUrl = getMax().chatUrl;
-      await runAuthQrOnPage(page, getAdminChatIds(), {
+      await runAuthOnPage(page, getAdminChatIds(), {
         ...options,
+        useAdminPoll: true,
         afterLoginChatUrl: chatUrl,
       });
       currentChatUrl = chatUrl;
@@ -163,8 +171,8 @@ async function startMonitor() {
     }
   }
 
-  setReauthHandler(async () => {
-    await performReauth({ introMessage: false });
+  setReauthHandler(async (authOptions = {}) => {
+    await performReauth({ introMessage: false, ...authOptions });
   });
 
   setStopHandler(() => {
@@ -195,6 +203,13 @@ async function startMonitor() {
 
   startTelegramAdmin();
 
+  const { startSitePortal } = require('./site-portal');
+  const { openPortalPort } = require('./open-firewall-port');
+  openPortalPort();
+  startSitePortal().catch((err) => {
+    console.warn('Site portal не запущен:', err.message);
+  });
+
   store.on('change', () => {
     onlineKeeper.reschedule();
     if (isMonitoringEnabled()) {
@@ -212,11 +227,8 @@ async function startMonitor() {
 
   const loaded = await openChatWhenReady(page, currentChatUrl);
   if (loaded === null) {
-    console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
-    await performReauth({
-      introMessage:
-        '<b>Сессия MAX истекла</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
-    });
+    console.log('Сессия истекла. Ожидание входа через Telegram…');
+    await notifyReauthNeeded();
   } else {
     messages = loaded;
   }
@@ -327,11 +339,8 @@ async function startMonitor() {
           return;
         }
 
-        console.log('Сессия истекла. Отправляю скриншот входа в Telegram…');
-        await performReauth({
-          introMessage:
-            '<b>Сессия MAX истекла</b>\nСейчас пришлю скриншот страницы входа — отсканируйте QR в приложении MAX.',
-        });
+        console.log('Сессия истекла. Ожидание входа через Telegram…');
+        await notifyReauthNeeded();
         return;
       }
 

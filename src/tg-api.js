@@ -1,5 +1,12 @@
 const { File } = require('node:buffer');
+const { ProxyAgent } = require('undici');
 const { getTelegram } = require('./config');
+
+const TELEGRAM_API = 'https://api.telegram.org';
+const FETCH_TIMEOUT_MS = 30_000;
+const FETCH_RETRIES = 4;
+
+let proxyDispatcher = null;
 
 function resolveToken(tokenOverride) {
   const token = tokenOverride || getTelegram().token;
@@ -7,10 +14,69 @@ function resolveToken(tokenOverride) {
   return token;
 }
 
+function getFetchInit(baseInit = {}) {
+  const init = { ...baseInit };
+  const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+  if (proxy && !init.dispatcher) {
+    if (!proxyDispatcher) {
+      proxyDispatcher = new ProxyAgent(proxy);
+    }
+    init.dispatcher = proxyDispatcher;
+  }
+  return init;
+}
+
+function wrapFetchError(err, context) {
+  const cause = err.cause?.message || err.message || String(err);
+  return new Error(
+    `${context}: нет связи с api.telegram.org (${cause}). ` +
+      'Проверьте интернет, выполните curl -I https://api.telegram.org. ' +
+      'При блокировке задайте HTTPS_PROXY или HTTP_PROXY.'
+  );
+}
+
+async function fetchTelegram(url, init = {}) {
+  let lastErr;
+  const options = getFetchInit(init);
+
+  for (let attempt = 1; attempt <= FETCH_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        return response;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt < FETCH_RETRIES) {
+        const delay = 1500 * attempt;
+        console.warn(`Telegram API: повтор ${attempt}/${FETCH_RETRIES - 1} через ${delay}мс...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw wrapFetchError(lastErr, 'Telegram API');
+}
+
+async function checkTelegramConnectivity(tokenOverride) {
+  const token = resolveToken(tokenOverride);
+  const url = `${TELEGRAM_API}/bot${token}/getMe`;
+  const response = await fetchTelegram(url, { method: 'POST' });
+  const data = await response.json();
+  if (!data.ok) {
+    throw new Error(`Telegram API: ${data.description || 'getMe failed'}`);
+  }
+  return data;
+}
+
 async function api(method, body = {}, tokenOverride) {
   const token = resolveToken(tokenOverride);
-  const url = `https://api.telegram.org/bot${token}/${method}`;
-  const response = await fetch(url, {
+  const url = `${TELEGRAM_API}/bot${token}/${method}`;
+  const response = await fetchTelegram(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -41,7 +107,7 @@ async function sendMessage(chatId, text, extra = {}, tokenOverride) {
 
 async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extra = {}) {
   const token = resolveToken(tokenOverride);
-  const url = `https://api.telegram.org/bot${token}/sendPhoto`;
+  const url = `${TELEGRAM_API}/bot${token}/sendPhoto`;
   const form = new FormData();
   form.append('chat_id', String(chatId));
   if (caption) form.append('caption', caption);
@@ -50,13 +116,13 @@ async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extr
   }
   form.append('photo', new File([buffer], 'max-login.png', { type: 'image/png' }));
 
-  const response = await fetch(url, { method: 'POST', body: form });
+  const response = await fetchTelegram(url, { method: 'POST', body: form });
   return response.json();
 }
 
 async function editPhotoBuffer(chatId, messageId, buffer, caption = '', tokenOverride, extra = {}) {
   const token = resolveToken(tokenOverride);
-  const url = `https://api.telegram.org/bot${token}/editMessageMedia`;
+  const url = `${TELEGRAM_API}/bot${token}/editMessageMedia`;
   const form = new FormData();
   form.append('chat_id', String(chatId));
   form.append('message_id', String(messageId));
@@ -73,7 +139,7 @@ async function editPhotoBuffer(chatId, messageId, buffer, caption = '', tokenOve
   }
   form.append('photo', new File([buffer], 'max-login.png', { type: 'image/png' }));
 
-  const response = await fetch(url, { method: 'POST', body: form });
+  const response = await fetchTelegram(url, { method: 'POST', body: form });
   return response.json();
 }
 
@@ -155,6 +221,7 @@ function pollUpdates(handler, options = {}) {
 
 module.exports = {
   api,
+  checkTelegramConnectivity,
   deleteWebhook,
   setBotCommands,
   sendMessage,

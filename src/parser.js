@@ -19,6 +19,13 @@ async function isLoginPage(page) {
     if (inChat) return false;
   }
 
+  const captchaIframe = await page
+    .locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]')
+    .first()
+    .isVisible({ timeout: 400 })
+    .catch(() => false);
+  if (captchaIframe) return true;
+
   const qrVisible = await page
     .locator('canvas')
     .first()
@@ -28,6 +35,31 @@ async function isLoginPage(page) {
   if (qrVisible) return true;
 
   const bodyText = await page.locator('body').innerText();
+  if (/войдите в max|sign in to max/i.test(bodyText)) return true;
+  if (/qr-код|qr code|scan the qr/i.test(bodyText)) return true;
+  if (/войти по номеру телефона|phone number do you want/i.test(bodyText)) return true;
+  if (/код из sms|sms.*code|enter.*code|введите.*код/i.test(bodyText)) return true;
+  if (/@browser/i.test(bodyText)) return true;
+  if (/не робот|not a robot|captcha/i.test(bodyText)) return true;
+
+  const hasPassword = await page
+    .locator('input[type="password"]')
+    .first()
+    .isVisible({ timeout: 400 })
+    .catch(() => false);
+  if (hasPassword) {
+    const lower = bodyText.toLowerCase();
+    if (
+      /browser/.test(lower) ||
+      /пароль/.test(lower) ||
+      /password/.test(lower) ||
+      /облачн/.test(lower) ||
+      /устройств/.test(lower)
+    ) {
+      return true;
+    }
+  }
+
   return /войдите в max/i.test(bodyText) && /qr-код/i.test(bodyText);
 }
 
