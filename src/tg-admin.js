@@ -37,6 +37,7 @@ const {
   bindNotificationChat,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
+const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require('./auth-browser');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -209,7 +210,7 @@ async function handleProfileNamesInput(chatId, text) {
   return true;
 }
 
-const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require('./auth-browser');
+async function handleAuthInput(chatId, text) {
   if (!authInputWaiter) return false;
 
   const chatIdStr = String(chatId);
