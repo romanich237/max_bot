@@ -134,7 +134,11 @@ function buildChatInfoText(chat, freshTitle) {
     lines.push(`Username: @${escapeHtml(chat.username)}`);
   }
 
-  lines.push('', 'Скопируйте ID или нажмите «Привязать», чтобы сюда приходили уведомления из MAX.');
+  lines.push(
+    '',
+    'Скопируйте ID или нажмите «Привязать», чтобы сюда приходили уведомления из MAX.',
+    'Добавьте бота в этот чат, чтобы сообщения стабильно приходили куда надо.'
+  );
   return lines.join('\n');
 }
 
