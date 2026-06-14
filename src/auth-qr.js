@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const { getSettings, getAdminChatIds } = require('./config');
-const { sendMessage, sendPhotoBuffer, answerCallback, pollUpdates } = require('./tg-api');
+const { sendMessage, sendPhotoBuffer, editPhotoBuffer, answerCallback, pollUpdates } = require('./tg-api');
 const { isLoginPage } = require('./parser');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
@@ -23,6 +23,55 @@ function clearAuthSession() {
   activeAuthSession = null;
 }
 
+function isEditOk(result) {
+  if (result.ok) return true;
+  const desc = result.description || '';
+  return /message is not modified/i.test(desc);
+}
+
+async function upsertAuthScreenshot(page, chatIds, options = {}) {
+  const buffer = await captureLoginScreenshot(page);
+  const caption = buildScreenshotCaption();
+  const replyMarkup = buildScreenshotKeyboard();
+  const messageIds = activeAuthSession?.photoMessageIds || {};
+
+  for (const chatId of chatIds) {
+    const key = String(chatId);
+    const existingId = messageIds[key];
+    let result;
+
+    if (existingId) {
+      result = await editPhotoBuffer(key, existingId, buffer, caption, options.token, {
+        reply_markup: replyMarkup,
+      });
+
+      if (!isEditOk(result)) {
+        console.warn(`Не удалось обновить скриншот в ${key}: ${result.description}`);
+        result = await sendPhotoBuffer(key, buffer, caption, options.token, {
+          reply_markup: replyMarkup,
+        });
+      }
+    } else {
+      result = await sendPhotoBuffer(key, buffer, caption, options.token, {
+        reply_markup: replyMarkup,
+      });
+    }
+
+    if (!result.ok) {
+      console.error(`Не удалось отправить скриншот в ${key}:`, result.description);
+      continue;
+    }
+
+    if (result.result?.message_id) {
+      messageIds[key] = result.result.message_id;
+    }
+  }
+
+  if (activeAuthSession) {
+    activeAuthSession.photoMessageIds = messageIds;
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -35,28 +84,13 @@ function buildScreenshotCaption() {
   ].join('\n');
 }
 
-async function sendAuthScreenshot(page, chatIds, options = {}) {
-  const buffer = await captureLoginScreenshot(page);
-  const caption = buildScreenshotCaption();
-  const replyMarkup = buildScreenshotKeyboard();
-
-  for (const chatId of chatIds) {
-    const result = await sendPhotoBuffer(chatId, buffer, caption, options.token, {
-      reply_markup: replyMarkup,
-    });
-    if (!result.ok) {
-      console.error(`Не удалось отправить скриншот в ${chatId}:`, result.description);
-    }
-  }
-}
-
 async function refreshAuthScreenshot() {
   if (!activeAuthSession) {
     throw new Error('Сейчас авторизация не идёт. Отправьте /reauth');
   }
 
   const { page, chatIds, options } = activeAuthSession;
-  await sendAuthScreenshot(page, chatIds, options);
+  await upsertAuthScreenshot(page, chatIds, options);
   activeAuthSession.lastQrSent = Date.now();
 }
 
@@ -122,7 +156,7 @@ async function waitForLogin(page, chatIds, options = {}) {
   let lastQrSent = 0;
   let stopAuthPoll = null;
 
-  activeAuthSession = { page, chatIds, options, lastQrSent: 0 };
+  activeAuthSession = { page, chatIds, options, lastQrSent: 0, photoMessageIds: {} };
   if (options.useAuthCallbackPoll) {
     stopAuthPoll = startAuthCallbackPoll({ ...options, chatIds });
   }
@@ -134,7 +168,7 @@ async function waitForLogin(page, chatIds, options = {}) {
     }
 
     if (Date.now() - lastQrSent >= refreshMs) {
-      await sendAuthScreenshot(page, chatIds, options);
+      await upsertAuthScreenshot(page, chatIds, options);
       lastQrSent = Date.now();
       if (activeAuthSession) activeAuthSession.lastQrSent = lastQrSent;
       options.onQrSent?.();

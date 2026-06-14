@@ -50,6 +50,29 @@ async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extr
   return response.json();
 }
 
+async function editPhotoBuffer(chatId, messageId, buffer, caption = '', tokenOverride, extra = {}) {
+  const token = resolveToken(tokenOverride);
+  const url = `https://api.telegram.org/bot${token}/editMessageMedia`;
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('message_id', String(messageId));
+  form.append(
+    'media',
+    JSON.stringify({
+      type: 'photo',
+      media: 'attach://photo',
+      caption: caption || undefined,
+    })
+  );
+  if (extra.reply_markup) {
+    form.append('reply_markup', JSON.stringify(extra.reply_markup));
+  }
+  form.append('photo', new File([buffer], 'max-login.png', { type: 'image/png' }));
+
+  const response = await fetch(url, { method: 'POST', body: form });
+  return response.json();
+}
+
 async function answerCallback(callbackQueryId, text, tokenOverride) {
   return api(
     'answerCallbackQuery',
@@ -131,6 +154,7 @@ module.exports = {
   deleteWebhook,
   sendMessage,
   sendPhotoBuffer,
+  editPhotoBuffer,
   answerCallback,
   editMessageText,
   pollUpdates,
