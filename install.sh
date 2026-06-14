@@ -267,7 +267,21 @@ open_portal_port() {
     fi
   fi
 
-  echo "Порт ${port}/tcp: файрвол не найден (ufw/firewalld) — проверьте панель VPS"
+  if command -v iptables >/dev/null 2>&1; then
+    echo "Открываю порт ${port}/tcp (iptables)..."
+    if run_root iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1; then
+      echo "Порт ${port}/tcp уже открыт"
+      return 0
+    fi
+    if run_root iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1; then
+      echo "Порт ${port}/tcp открыт (iptables)"
+      echo "Чтобы сохранить после перезагрузки: apt-get install -y iptables-persistent"
+      return 0
+    fi
+  fi
+
+  echo "Порт ${port}/tcp: локальный файрвол не найден (ufw/firewalld/iptables)"
+  echo "Откройте порт ${port}/tcp в панели хостинга (Security Groups / Firewall)"
 }
 
 ensure_git

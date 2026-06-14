@@ -10,10 +10,16 @@
 
 Рекомендуемые провайдеры: Hetzner, DigitalOcean (AMS/FRA), Vultr, Timeweb Cloud (EU).
 
-Откройте порт **3847** для веб-настройки и страницы `/site` (при установке открывается **автоматически**, если есть ufw/firewalld):
+Откройте порт **3847** для веб-настройки и `/site`. При установке скрипт пробует **ufw → firewalld → iptables**. Если локального файрвола нет — откройте порт в **панели VPS**:
 
 ```bash
-sudo ufw allow 3847/tcp
+# если есть iptables (вы root — без sudo):
+iptables -I INPUT -p tcp --dport 3847 -j ACCEPT
+
+# или установить ufw:
+apt-get update && apt-get install -y ufw
+ufw allow 3847/tcp
+ufw enable
 ```
 
 ## Установка (VPS)
