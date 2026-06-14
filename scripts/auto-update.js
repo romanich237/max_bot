@@ -113,7 +113,13 @@ function scheduleAutoUpdate() {
     return;
   }
 
-  console.log(`auto-update: проверка репозитория каждые ${Math.round(intervalMs / 60000)} мин`);
+  const intervalLabel =
+    intervalMs < 60000
+      ? `каждые ${Math.round(intervalMs / 1000)} сек`
+      : intervalMs % 60000 === 0 && intervalMs / 60000 === 1
+        ? 'каждую минуту'
+        : `каждые ${Math.round(intervalMs / 60000)} мин`;
+  console.log(`auto-update: проверка репозитория ${intervalLabel}`);
 
   const tick = async () => {
     try {

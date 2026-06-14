@@ -74,7 +74,7 @@ function setupPm2(options = {}) {
   console.log('\nБот работает 24/7.');
   console.log(`  Логи:      pm2 logs ${APP_NAME}`);
   console.log(`  Рестарт:   pm2 restart ${APP_NAME}`);
-  console.log('  Обновления: pm2 logs max-tg-update (проверка git каждые 30 мин)');
+  console.log('  Обновления: pm2 logs max-tg-update (проверка git каждую минуту)');
 }
 
 module.exports = { setupPm2 };

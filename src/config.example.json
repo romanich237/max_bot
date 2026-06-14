@@ -34,7 +34,7 @@
   },
   "autoUpdate": {
     "enabled": true,
-    "intervalMs": 1800000,
+    "intervalMs": 60000,
     "branch": "main"
   },
   "database": {

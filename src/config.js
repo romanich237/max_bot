@@ -70,7 +70,7 @@ function getAutoUpdate() {
   const u = getRaw().autoUpdate || {};
   return {
     enabled: u.enabled ?? true,
-    intervalMs: u.intervalMs ?? 30 * 60 * 1000,
+    intervalMs: u.intervalMs ?? 60 * 1000,
     branch: u.branch || process.env.AUTO_UPDATE_BRANCH || 'main',
   };
 }
