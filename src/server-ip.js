@@ -61,10 +61,12 @@ async function resolveServerPublicIp() {
   return getLocalIpv4();
 }
 
-function buildPortalUrl(ip, port, path, token) {
-  const base = `http://${ip}:${port}`;
-  if (!path) return base;
-  const segment = token ? `${path}/${token}` : path;
+function buildPortalUrl(ip, port, pathSegment, token, options = {}) {
+  const ssl = options.ssl ?? false;
+  const scheme = ssl ? 'https' : 'http';
+  const base = `${scheme}://${ip}:${port}`;
+  if (!pathSegment) return base;
+  const segment = token ? `${pathSegment}/${token}` : pathSegment;
   return `${base}/${segment}`;
 }
 

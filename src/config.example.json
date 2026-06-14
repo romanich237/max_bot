@@ -15,11 +15,13 @@
     "browserPassword": ""
   },
   "setupPortal": {
-    "port": 3847
+    "port": 3847,
+    "ssl": true
   },
   "sitePortal": {
     "enabled": true,
     "port": 3847,
+    "ssl": true,
     "token": ""
   },
   "profileRotate": {
@@ -33,7 +35,6 @@
     "intervalMs": 30000
   },
   "autoUpdate": {
-    "enabled": true,
     "intervalMs": 60000,
     "branch": "main"
   },

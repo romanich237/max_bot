@@ -104,6 +104,10 @@ function buildStatusText() {
   const online = getAlwaysOnline();
   const tg = getTelegram();
   const autoUpdate = getAutoUpdate();
+  const updateLabel =
+    autoUpdate.intervalMs >= 60000 && autoUpdate.intervalMs % 60000 === 0
+      ? `каждые ${autoUpdate.intervalMs / 60000} мин`
+      : `каждые ${Math.round(autoUpdate.intervalMs / 1000)} сек`;
 
   const lines = [
     '<b>Настройки MAX → Telegram</b>',
@@ -117,7 +121,7 @@ function buildStatusText() {
       : 'Имя в MAX: определяется автоматически',
     `Время в TG: ${onFlag(tg.showTime)}`,
     `Заголовок в TG: ${onFlag(tg.showServiceHeader)}`,
-    `Автообновление: ${onFlag(autoUpdate.enabled)} (${autoUpdate.intervalMs / 60000} мин)`,
+    `Автообновление: ✅ всегда (${updateLabel})`,
     max.chatUrl ? `Чат MAX: <code>${max.chatUrl}</code>` : 'Чат MAX: не задан',
   ];
 
@@ -348,6 +352,9 @@ async function handleMessage(message) {
       [
         '<b>MAX в браузере</b> (без QR-кода)',
         '',
+        primary.startsWith('https://')
+          ? 'Временный HTTPS: браузер может предупредить о сертификате — продолжите вручную.'
+          : null,
         'Откройте ссылку, войдите по <b>номеру телефона</b>, пройдите капчу вручную.',
         'После входа нажмите <b>«Сохранить сессию в бот»</b> на странице.',
         '',
@@ -507,6 +514,10 @@ async function handleCallback(query) {
 
   if (data.startsWith('toggle:')) {
     const path = data.slice('toggle:'.length).split('.');
+    if (path[0] === 'autoUpdate') {
+      await answerCallback(query.id, 'Автообновление всегда включено');
+      return;
+    }
     const next = store.togglePath(path);
     await answerCallback(query.id, next ? 'Включено' : 'Выключено');
 

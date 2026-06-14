@@ -5,7 +5,6 @@ const TOGGLES = [
   { label: 'Ротация имени', path: ['profileRotate', 'enabled'] },
   { label: 'Время в Telegram', path: ['telegram', 'showTime'] },
   { label: 'Заголовок в Telegram', path: ['telegram', 'showServiceHeader'] },
-  { label: 'Автообновление с GitHub', path: ['autoUpdate', 'enabled'] },
 ];
 
 function buildToggleRows(prefix) {

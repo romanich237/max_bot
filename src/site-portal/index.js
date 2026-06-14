@@ -1,4 +1,3 @@
-const http = require('http');
 const { URL } = require('url');
 const { renderSitePage } = require('./page');
 const {
@@ -9,18 +8,20 @@ const {
   syncCookiesToPlaywright,
 } = require('./proxy');
 const { resolveServerPublicIp, buildPortalUrl, getLocalIpv4Addresses } = require('../server-ip');
+const { createPortalServer, ensurePortalSsl } = require('../portal-ssl');
+const { isPortalSslEnabled } = require('../config');
 
-function getPublicUrls(port, token, publicIp) {
+function getPublicUrls(port, token, publicIp, ssl = isPortalSslEnabled()) {
   const urls = [];
 
   if (publicIp) {
-    urls.push(buildPortalUrl(publicIp, port, 'site', token));
+    urls.push(buildPortalUrl(publicIp, port, 'site', token, { ssl }));
   }
 
-  urls.push(buildPortalUrl('127.0.0.1', port, 'site', token));
+  urls.push(buildPortalUrl('127.0.0.1', port, 'site', token, { ssl }));
 
   for (const address of getLocalIpv4Addresses()) {
-    urls.push(buildPortalUrl(address, port, 'site', token));
+    urls.push(buildPortalUrl(address, port, 'site', token, { ssl }));
   }
 
   return [...new Set(urls)];
@@ -31,8 +32,8 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function createSiteServer(token) {
-  return http.createServer(async (req, res) => {
+function createSiteHandler(token) {
+  return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
@@ -68,7 +69,7 @@ function createSiteServer(token) {
     } catch (err) {
       sendJson(res, 500, { ok: false, error: err.message });
     }
-  });
+  };
 }
 
 let portalInstance = null;
@@ -84,9 +85,19 @@ function startSitePortal(options = {}) {
 
   const token = ensureSiteToken();
   const port = options.port || getSitePort();
-  const server = createSiteServer(token);
 
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    let tlsOptions = null;
+    if (isPortalSslEnabled()) {
+      const publicIp = options.publicIp || (await resolveServerPublicIp());
+      const ssl = await ensurePortalSsl(publicIp);
+      if (ssl) {
+        tlsOptions = { cert: ssl.cert, key: ssl.key };
+      }
+    }
+
+    const server = createPortalServer(createSiteHandler(token), tlsOptions);
+
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         console.warn(`Site portal: порт ${port} занят`);
@@ -98,8 +109,9 @@ function startSitePortal(options = {}) {
 
     server.listen(port, options.host || '0.0.0.0', async () => {
       const publicIp = await resolveServerPublicIp();
-      const urls = getPublicUrls(port, token, publicIp);
-      portalInstance = { server, port, token, publicIp, urls };
+      const ssl = Boolean(tlsOptions);
+      const urls = getPublicUrls(port, token, publicIp, ssl);
+      portalInstance = { server, port, token, publicIp, ssl, urls };
       console.log('MAX Site portal:');
       console.log(`  ${urls[0]}`);
       for (const u of urls.slice(1)) console.log(`  ${u}`);
@@ -115,7 +127,7 @@ function getSiteUrls() {
   const token = ensureSiteToken();
   const port = getSitePort();
   const { getLocalIpv4 } = require('../server-ip');
-  return getPublicUrls(port, token, getLocalIpv4());
+  return getPublicUrls(port, token, getLocalIpv4(), isPortalSslEnabled());
 }
 
 module.exports = {

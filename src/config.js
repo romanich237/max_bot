@@ -69,10 +69,16 @@ function getDatabase() {
 function getAutoUpdate() {
   const u = getRaw().autoUpdate || {};
   return {
-    enabled: u.enabled ?? true,
+    enabled: true,
     intervalMs: u.intervalMs ?? 60 * 1000,
     branch: u.branch || process.env.AUTO_UPDATE_BRANCH || 'main',
   };
+}
+
+function isPortalSslEnabled() {
+  const setup = getRaw().setupPortal || {};
+  const site = getRaw().sitePortal || {};
+  return setup.ssl !== false && site.ssl !== false;
 }
 
 function getSettings() {
@@ -102,6 +108,7 @@ module.exports = {
   getAlwaysOnline,
   getDatabase,
   getAutoUpdate,
+  isPortalSslEnabled,
   getSettings,
   isSetupComplete,
 };

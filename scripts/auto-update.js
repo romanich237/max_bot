@@ -50,11 +50,6 @@ async function checkAndUpdate() {
   store.reload();
   const cfg = getAutoUpdate();
 
-  if (!cfg.enabled) {
-    console.log('auto-update: выключено в config.json');
-    return false;
-  }
-
   if (!isGitRepo()) {
     console.log('auto-update: не git-репозиторий, пропуск');
     return false;
@@ -106,12 +101,8 @@ async function checkAndUpdate() {
 
 function scheduleAutoUpdate() {
   store.reload();
-  const { enabled, intervalMs } = getAutoUpdate();
-
-  if (!enabled) {
-    console.log('auto-update: выключено (autoUpdate.enabled = false)');
-    return;
-  }
+  const { intervalMs } = getAutoUpdate();
+  store.setPath(['autoUpdate', 'enabled'], true);
 
   const intervalLabel =
     intervalMs < 60000
@@ -130,9 +121,7 @@ function scheduleAutoUpdate() {
 
     store.reload();
     const next = getAutoUpdate();
-    if (next.enabled) {
-      setTimeout(tick, next.intervalMs);
-    }
+    setTimeout(tick, next.intervalMs);
   };
 
   tick();

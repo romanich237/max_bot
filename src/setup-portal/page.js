@@ -62,7 +62,6 @@ function renderSetupPage(token) {
       <div class="checks">
         <label><input type="checkbox" id="profileRotate" /> Ротация имени</label>
         <label><input type="checkbox" id="alwaysOnline" /> Бесконечный онлайн</label>
-        <label><input type="checkbox" id="autoUpdate" checked /> Автообновление с GitHub</label>
       </div>
       <label>Имена для ротации (через запятую)</label>
       <input id="profileNames" placeholder="в, ва, вас, вася" />
@@ -142,7 +141,6 @@ function renderSetupPage(token) {
         browserPassword: document.getElementById('browserPassword').value,
         profileRotate: document.getElementById('profileRotate').checked,
         alwaysOnline: document.getElementById('alwaysOnline').checked,
-        autoUpdate: document.getElementById('autoUpdate').checked,
         profileNames: document.getElementById('profileNames').value.trim(),
       });
       if (!res.ok) return alertMsg(res.error, 'err');

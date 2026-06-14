@@ -148,7 +148,7 @@ async function runWebSetup(options = {}) {
         }
         store.setPath(['profileRotate', 'enabled'], Boolean(body.profileRotate));
         store.setPath(['alwaysOnline', 'enabled'], Boolean(body.alwaysOnline));
-        store.setPath(['autoUpdate', 'enabled'], body.autoUpdate !== false);
+        store.setPath(['autoUpdate', 'enabled'], true);
 
         if (body.profileNames) {
           const names = parseNameList(String(body.profileNames));
@@ -197,14 +197,16 @@ async function runWebSetup(options = {}) {
     },
   };
 
+  const publicIp = await resolveServerPublicIp();
   const portal = await startSetupServer(state, handlers, {
     port: options.port || Number(process.env.SETUP_PORT) || DEFAULT_PORT,
     host: options.host || '0.0.0.0',
+    publicIp,
   });
 
-  const publicIp = await resolveServerPublicIp();
-  const primaryUrl = buildPortalUrl(publicIp, portal.port, 'setup', state.token);
-  const urls = getSetupUrls(portal.port, state.token, publicIp);
+  const useSsl = portal.ssl;
+  const primaryUrl = buildPortalUrl(publicIp, portal.port, 'setup', state.token, { ssl: useSsl });
+  const urls = getSetupUrls(portal.port, state.token, publicIp, useSsl);
 
   console.log('\n=== Веб-настройка MAX → Telegram ===\n');
   console.log('  ' + primaryUrl);
@@ -221,7 +223,9 @@ async function runWebSetup(options = {}) {
         [
           '<b>Настройка MAX → Telegram</b>',
           '',
-          'Откройте ссылку и заполните настройки MAX (чат, вход):',
+          useSsl
+            ? 'Откройте ссылку (временный HTTPS, браузер может предупредить о сертификате):'
+            : 'Откройте ссылку и заполните настройки MAX (чат, вход):',
           '',
           `<a href="${primaryUrl}">${primaryUrl}</a>`,
           `<code>${primaryUrl}</code>`,

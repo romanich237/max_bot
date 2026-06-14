@@ -1,6 +1,7 @@
-const http = require('http');
 const { URL } = require('url');
 const { renderSetupPage } = require('./page');
+const { createPortalServer, ensurePortalSsl } = require('../portal-ssl');
+const { isPortalSslEnabled } = require('../config');
 const {
   getPublicStatus,
   submitWebInput,
@@ -34,8 +35,8 @@ function sendHtml(res, html) {
   res.end(html);
 }
 
-function createSetupServer(state, handlers) {
-  const server = http.createServer(async (req, res) => {
+function createSetupHandler(state, handlers) {
+  return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
@@ -99,22 +100,32 @@ function createSetupServer(state, handlers) {
     } catch (err) {
       sendJson(res, 500, { ok: false, error: err.message });
     }
-  });
-
-  return server;
+  };
 }
 
 function startSetupServer(state, handlers, options = {}) {
   const port = options.port || DEFAULT_PORT;
   const host = options.host || '0.0.0.0';
-  const server = createSetupServer(state, handlers);
+  const handler = createSetupHandler(state, handlers);
 
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    let tlsOptions = null;
+    if (isPortalSslEnabled()) {
+      const { resolveServerPublicIp } = require('../server-ip');
+      const publicIp = options.publicIp || (await resolveServerPublicIp());
+      const ssl = await ensurePortalSsl(publicIp);
+      if (ssl) {
+        tlsOptions = { cert: ssl.cert, key: ssl.key };
+      }
+    }
+
+    const server = createPortalServer(handler, tlsOptions);
     server.on('error', reject);
     server.listen(port, host, () => {
       resolve({
         server,
         port,
+        ssl: Boolean(tlsOptions),
         close: () =>
           new Promise((closeResolve) => {
             server.close(() => closeResolve());
@@ -124,18 +135,18 @@ function startSetupServer(state, handlers, options = {}) {
   });
 }
 
-function getSetupUrls(port, token, publicIp) {
+function getSetupUrls(port, token, publicIp, ssl = isPortalSslEnabled()) {
   const { getLocalIpv4Addresses, buildPortalUrl } = require('../server-ip');
   const urls = [];
 
   if (publicIp) {
-    urls.push(buildPortalUrl(publicIp, port, 'setup', token));
+    urls.push(buildPortalUrl(publicIp, port, 'setup', token, { ssl }));
   }
 
-  urls.push(buildPortalUrl('127.0.0.1', port, 'setup', token));
+  urls.push(buildPortalUrl('127.0.0.1', port, 'setup', token, { ssl }));
 
   for (const address of getLocalIpv4Addresses()) {
-    urls.push(buildPortalUrl(address, port, 'setup', token));
+    urls.push(buildPortalUrl(address, port, 'setup', token, { ssl }));
   }
 
   return [...new Set(urls)];
