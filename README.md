@@ -10,9 +10,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/insta
 
 Нужны: **Telegram bot token** и **chat ID** (или `TG_TOKEN` + `TG_CHAT_ID`).
 
-Скрипт сам: ставит **git**, **Node.js 20**, MariaDB, зависимости, шлёт скриншот входа MAX в Telegram, настраивает бота кнопками, запускает PM2. Обновления с GitHub подтягиваются автоматически (каждые 30 мин).
+Скрипт сам: ставит **git**, **Node.js 20** (NVM → NodeSource → бинарник), MariaDB, зависимости, шлёт скриншот входа MAX в Telegram, настраивает бота кнопками, запускает PM2. Обновления с GitHub подтягиваются автоматически (каждые 30 мин).
 
-Требования: Linux VPS (Debian/Ubuntu) с `sudo` или root.
+Требования: Linux VPS с `curl` и `sudo` (или root). Debian/Ubuntu предпочтительны.
 
 ## Команды в Telegram
 
