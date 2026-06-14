@@ -1,6 +1,6 @@
 const { store, getAdminChatIds, getProfileRotate } = require('./config');
 const { sendMessage } = require('./tg-api');
-const { readProfileFirstName } = require('./profile');
+const { readProfileNames } = require('./profile');
 
 function escapeHtml(text) {
   return String(text)
@@ -85,20 +85,20 @@ async function syncOwnNames(page, options = {}) {
 
   if (options.readProfile && page) {
     try {
-      profileName = await readProfileFirstName(page, options.chatUrl);
+      const profile = await readProfileNames(page, options.chatUrl);
+      profileName = profile.displayName || profile.firstName || '';
       if (profileName) names.add(profileName);
+      if (profile.firstName) names.add(profile.firstName);
     } catch (err) {
       console.warn('Не удалось прочитать имя из профиля MAX:', err.message);
     }
   }
 
-  const messageNames = collectNamesFromMessages(options.messages || []);
   const nameList = [...names];
   const { merged, changed } = mergeOwnAuthorNames(nameList);
   const currentName =
     profileName ||
-    (messageNames.length ? messageNames[messageNames.length - 1] : '') ||
-    (nameList.length ? nameList[nameList.length - 1] : '') ||
+    store.getPath(['max', 'currentDisplayName']) ||
     (merged.length ? merged[merged.length - 1] : '');
   const prevName = store.getPath(['max', 'currentDisplayName']) || '';
   const nameChanged = Boolean(currentName && currentName !== prevName);
@@ -111,7 +111,7 @@ async function syncOwnNames(page, options = {}) {
     await notifyOwnNamesUpdate(
       currentName,
       merged,
-      options.reason || 'Обновлён список имён — ваши сообщения не пересылаются в Telegram.'
+      options.reason || 'Имя взято из настроек профиля MAX (имя и фамилия).'
     );
   }
 
@@ -129,23 +129,17 @@ function syncOwnNamesFromMessages(messages, options = {}) {
   }
 
   const { merged, changed } = mergeOwnAuthorNames(names);
-  const currentName = names[names.length - 1];
-  const prevName = store.getPath(['max', 'currentDisplayName']) || '';
-  const nameChanged = currentName && currentName !== prevName;
+  const currentName = store.getPath(['max', 'currentDisplayName']) || '';
 
-  if (nameChanged) {
-    store.setPath(['max', 'currentDisplayName'], currentName);
-  }
-
-  if (options.notify && (changed || nameChanged)) {
+  if (options.notify && changed) {
     notifyOwnNamesUpdate(
       currentName,
       merged,
-      'Новое имя из чата MAX — добавлено в список «своих».'
+      'Добавлено имя из чата в список «своих» (для фильтрации).'
     ).catch((err) => console.error('notifyOwnNamesUpdate:', err.message));
   }
 
-  return { currentName, ownAuthorNames: merged, changed: changed || nameChanged };
+  return { currentName, ownAuthorNames: merged, changed };
 }
 
 module.exports = {

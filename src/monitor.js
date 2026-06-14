@@ -289,7 +289,7 @@ async function startMonitor() {
     readProfile: true,
     chatUrl: currentChatUrl,
     notify: true,
-    reason: 'Бот определил ваше имя в MAX.',
+    reason: 'Имя взято из настроек профиля MAX.',
   });
 
   const forwardOnStart = getSettings().forwardOnStart;
@@ -348,9 +348,10 @@ async function startMonitor() {
         console.log(`Имя обновлено: «${name}»`);
         await syncOwnNames(page, {
           extraNames: [name],
+          readProfile: true,
           chatUrl,
           notify: true,
-          reason: 'Имя сменилось при ротации — добавлено в список «своих».',
+          reason: 'Имя обновлено в профиле MAX.',
         });
       } catch (err) {
         console.error('Ошибка смены имени:', err.message);
@@ -398,15 +399,11 @@ async function startMonitor() {
       messages = await readMessages(page);
       syncOwnNamesFromMessages(messages);
 
-      if (
-        !getMaxDisplayName() &&
-        Date.now() - lastProfileNameSync > PROFILE_NAME_RETRY_MS
-      ) {
+      if (Date.now() - lastProfileNameSync > PROFILE_NAME_RETRY_MS) {
         lastProfileNameSync = Date.now();
         profileBusy = true;
         try {
           await syncOwnNames(page, {
-            messages,
             readProfile: true,
             chatUrl: currentChatUrl,
             notify: false,
