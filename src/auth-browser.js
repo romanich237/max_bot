@@ -32,6 +32,8 @@ function deliverBrowserPassword(password) {
 function clearPasswordDelivery() {
   passwordDelivery = null;
 }
+
+function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
