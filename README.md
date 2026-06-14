@@ -27,37 +27,17 @@ ufw enable
 Скрипт **сразу спросит в консоли** Telegram bot token и chat ID:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
-```
+apt-get update
+apt-get install -y git curl
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
 
-Или передайте заранее:
+node -v
+npm -v
 
-```bash
-TG_TOKEN="ваш_токен" TG_CHAT_ID="ваш_id" bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
-```
-
-После этого бот пришлёт в Telegram ссылку на настройку MAX:
-
-```
-https://ВАШ_IP:3847/setup/ТОКЕН
-```
-
-(IP подставляется автоматически. Используется **временный HTTPS** на 90 дней — браузер может показать предупреждение о сертификате, это нормально.)
-
-На странице: ссылка на чат MAX, пароль @Browser, вход по телефону или QR.
-
-Скрипт сам: ставит **git**, **Node.js 20**, MariaDB, зависимости, запускает PM2. **Автообновление с GitHub всегда включено** — проверка каждую минуту.
-
-Требования: **Linux VPS в Европе**, `curl`, `sudo` (или root).
-
-### Если установка упала на Node.js
-
-Node уже может быть установлен (nvm). Проверьте и продолжите:
-
-```bash
-source ~/.nvm/nvm.sh && node -v
-cd ~/max-tg && git pull --ff-only
-TG_TOKEN="ваш_токен" TG_CHAT_ID="ваш_id" bash scripts/resume-setup.sh
+git clone --depth 1 https://github.com/romanich237/max_bot.git ~/max-tg
+cd ~/max-tg
+TG_TOKEN="8989410277:AAGAHv8DyaKRn10x05W0UUHTWFaMMdUDGi0" TG_CHAT_ID="7547263007" npm run setup
 ```
 
 Или переустановите с нуля после обновления скрипта:
