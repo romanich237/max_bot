@@ -68,7 +68,7 @@ function buildQrScreenshotCaption() {
     lines.push(`Пароль: ${password}`);
   }
 
-  lines.push('Обновляется каждые 45 сек. Или нажмите «Обновить».');
+  lines.push('QR обновляется каждые 45 сек (новая сессия). Или нажмите «Обновить».');
   return lines.join('\n');
 }
 
