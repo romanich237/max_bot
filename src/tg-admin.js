@@ -313,6 +313,36 @@ async function handleAuthInput(chatId, text) {
   return true;
 }
 
+async function replyCurrentChatId(chatId, chat) {
+  recordChat(chat);
+  let known = getKnownChat(chatId);
+  let freshTitle = known?.title;
+
+  try {
+    const data = await getChat(chatId);
+    if (data.ok && data.result) {
+      recordChat(data.result);
+      known = getKnownChat(chatId) || known;
+      freshTitle = data.result.title || data.result.first_name || freshTitle;
+    }
+  } catch {
+    /* use cached */
+  }
+
+  if (!known) {
+    known = {
+      id: String(chatId),
+      title: freshTitle || 'Без названия',
+      type: chat.type || 'unknown',
+      username: chat.username || null,
+    };
+  }
+
+  await sendMessage(chatId, buildChatInfoText(known, freshTitle), {
+    reply_markup: buildChatInfoKeyboard(known.id),
+  });
+}
+
 async function showDiscoverChats(chatId, messageId, page = 0) {
   const chats = listKnownChats();
   const keyboard = buildDiscoverKeyboard(page);
@@ -436,7 +466,7 @@ async function handleMessage(message) {
   }
 
   if (isDiscoverIdRequest(text)) {
-    await showDiscoverChats(chatId, null, 0);
+    await replyCurrentChatId(chatId, message.chat);
     return;
   }
 
@@ -449,7 +479,7 @@ async function handleMessage(message) {
         '',
         'Бот пересылает сообщения из MAX в Telegram.',
         'Управление — кнопками ниже.',
-        `ID чата — кнопкой «${DISCOVER_ID_BUTTON}» внизу экрана.`,
+        `ID чата — нажмите «${DISCOVER_ID_BUTTON}» внизу (в нужном чате с ботом).`,
       ].join('\n'),
       { reply_markup: buildDiscoverReplyKeyboard() }
     );
@@ -736,7 +766,10 @@ async function handleCallback(query) {
     await answerCallback(query.id, 'Чат уведомлений');
     await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
       reply_markup: {
-        inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]],
+        inline_keyboard: [
+          [{ text: '📋 Выбрать из списка', callback_data: 'discover:page:0' }],
+          [{ text: '« В меню', callback_data: 'discover:menu' }],
+        ],
       },
     });
     return;
