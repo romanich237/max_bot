@@ -22,6 +22,10 @@ async function deleteWebhook(tokenOverride) {
   return api('deleteWebhook', { drop_pending_updates: true }, tokenOverride);
 }
 
+async function setBotCommands(commands, tokenOverride) {
+  return api('setMyCommands', { commands }, tokenOverride);
+}
+
 async function sendMessage(chatId, text, extra = {}, tokenOverride) {
   return api(
     'sendMessage',
@@ -152,6 +156,7 @@ function pollUpdates(handler, options = {}) {
 module.exports = {
   api,
   deleteWebhook,
+  setBotCommands,
   sendMessage,
   sendPhotoBuffer,
   editPhotoBuffer,

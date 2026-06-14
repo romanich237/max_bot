@@ -9,6 +9,7 @@ const {
 } = require('./config');
 const {
   deleteWebhook,
+  setBotCommands,
   sendMessage,
   answerCallback,
   editMessageText,
@@ -29,6 +30,18 @@ const SETTABLE = {
   chaturl: { path: ['max', 'chatUrl'], type: 'string' },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
 };
+
+const BOT_COMMANDS = [
+  { command: 'start', description: 'Старт бота' },
+  { command: 'menu', description: 'Кнопки вкл/выкл' },
+  { command: 'status', description: 'Текущие настройки' },
+  { command: 'stop', description: 'Остановить мониторинг MAX' },
+  { command: 'resume', description: 'Запустить мониторинг MAX' },
+  { command: 'reauth', description: 'Скриншот входа MAX' },
+  { command: 'cancel', description: 'Отменить ввод ответа' },
+  { command: 'set', description: 'Изменить параметр' },
+  { command: 'help', description: 'Список команд' },
+];
 
 let reauthHandler = null;
 let replyHandler = null;
@@ -209,7 +222,22 @@ async function handleMessage(message) {
     return;
   }
 
-  if (/^\/(start|menu)$/i.test(text)) {
+  if (/^\/start$/i.test(text)) {
+    waitingInput.delete(String(chatId));
+    await sendMessage(
+      chatId,
+      [
+        '<b>MAX → Telegram</b>',
+        '',
+        'Бот пересылает сообщения из MAX в Telegram.',
+        'Команды доступны в меню / — начните с кнопок ниже.',
+      ].join('\n'),
+      { reply_markup: buildMenuKeyboard() }
+    );
+    return;
+  }
+
+  if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
     await sendMessage(chatId, 'Панель управления ботом:', {
       reply_markup: buildMenuKeyboard(),
@@ -234,7 +262,7 @@ async function handleMessage(message) {
     return;
   }
 
-  if (/^\/(start|resume)$/i.test(text)) {
+  if (/^\/(resume|run)$/i.test(text)) {
     if (!startHandler) {
       await sendMessage(chatId, 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>');
       return;
@@ -270,10 +298,11 @@ async function handleMessage(message) {
       chatId,
       [
         '<b>Команды</b>',
+        '/start — старт бота и меню',
         '/menu — кнопки вкл/выкл',
         '/status — текущие настройки',
         '/stop — остановить мониторинг MAX',
-        '/start — запустить мониторинг MAX',
+        '/resume — запустить мониторинг MAX',
         '/reauth — скриншот входа MAX',
         '/cancel — отменить ввод ответа',
         '/set ключ значение — изменить параметр',
@@ -406,6 +435,14 @@ async function handleCallback(query) {
   }
 }
 
+async function registerBotCommands(tokenOverride) {
+  const data = await setBotCommands(BOT_COMMANDS, tokenOverride);
+  if (!data.ok) {
+    console.warn('setMyCommands:', data.description);
+  }
+  return data;
+}
+
 function startTelegramAdmin() {
   const { token } = getTelegram();
   if (!token) {
@@ -413,10 +450,12 @@ function startTelegramAdmin() {
     return () => {};
   }
 
-  console.log('Панель управления в Telegram запущена (/menu)');
-  deleteWebhook().catch((err) => {
-    console.warn('deleteWebhook:', err.message);
-  });
+  console.log('Панель управления в Telegram запущена (/start, /menu)');
+  deleteWebhook()
+    .then(() => registerBotCommands())
+    .catch((err) => {
+      console.warn('Инициализация Telegram:', err.message);
+    });
 
   return pollUpdates(async (update) => {
     if (update.message) await handleMessage(update.message);
@@ -428,10 +467,12 @@ function startTelegramAdmin() {
 
 module.exports = {
   startTelegramAdmin,
+  registerBotCommands,
   setReauthHandler,
   setReplyHandler,
   setStopHandler,
   setStartHandler,
   buildStatusText,
   buildMenuKeyboard,
+  BOT_COMMANDS,
 };

@@ -12,6 +12,7 @@ const {
   saveProfileNames,
   PROFILE_NAMES_HINT,
 } = require('./tg-settings');
+const { registerBotCommands } = require('./tg-admin');
 
 const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
@@ -168,6 +169,7 @@ function runSetupWizard(options = {}) {
 
     (async () => {
       await deleteWebhook(options.token);
+      await registerBotCommands(options.token);
 
       for (const chatId of chatIds) {
         await sendMessage(

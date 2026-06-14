@@ -96,6 +96,7 @@ async function main() {
   ensureDirs();
 
   const { deleteWebhook, sendMessage } = require('../src/tg-api');
+  const { registerBotCommands } = require('../src/tg-admin');
   const { runAuthQrTelegram } = require('../src/auth-qr');
   const { runSetupWizard } = require('../src/setup-wizard');
   const { setupPm2 } = require('../src/pm2');
@@ -116,6 +117,7 @@ async function main() {
 
   console.log('\nПродолжите настройку в Telegram\n');
   await deleteWebhook();
+  await registerBotCommands();
   await runAuthQrTelegram({
     introMessage: 'Продолжите настройку в Telegram.',
     useAuthCallbackPoll: true,
