@@ -76,6 +76,24 @@ async function clickSignIn(page) {
   await page.waitForTimeout(2000);
 }
 
+async function isAuthComplete(page) {
+  if (await isLoginPage(page)) return false;
+  if (await hasVisibleSmsInputs(page)) return false;
+  if (await isBrowserPasswordPrompt(page)) return false;
+  if (await isCaptchaPage(page)) return false;
+
+  const url = page.url();
+  if (/web\.max\.ru\/-\d+/.test(url)) {
+    return page
+      .locator('.messageWrapper, .openedChat')
+      .first()
+      .isVisible({ timeout: 2000 })
+      .catch(() => false);
+  }
+
+  return false;
+}
+
 async function isSmsCodePage(page) {
   if (await hasVisibleSmsInputs(page)) return true;
 
@@ -90,7 +108,7 @@ async function waitForSmsPage(page, timeoutMs = 60000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (await isSmsCodePage(page)) return true;
-    if (!(await isLoginPage(page))) return false;
+    if (await isAuthComplete(page)) return false;
     await sleep(800);
   }
   return false;
@@ -122,7 +140,7 @@ async function waitForSmsOrCaptcha(page, chatIds, options, timeoutMs = 120000) {
   while (Date.now() - started < timeoutMs) {
     if (await isSmsCodePage(page)) return 'sms';
     if (await isBrowserPasswordPrompt(page)) return 'password';
-    if (!(await isLoginPage(page))) return 'done';
+    if (await isAuthComplete(page)) return 'done';
     await sleep(1500);
   }
 
@@ -238,20 +256,27 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
     token: options.token,
     useAdminPoll: options.useAdminPoll,
     useWebPoll: options.useWebPoll,
-    field: 'tel',
+    field: 'sms',
     label: 'Код из SMS',
-    hint: '4–8 цифр из SMS. Можно вводить сразу после капчи.',
+    hint: '4–8 цифр из SMS. Можно отправить сразу, не дожидаясь капчи.',
     validate: (text) => normalizeSmsCode(text) || false,
     invalidMessage: 'Код должен содержать 4–8 цифр. Или /cancel.',
   };
 
-  const codePromise = options.useWebPoll
-    ? promptTelegramText(
-        chatIds,
-        'Пройдите капчу «не робот» на скриншоте, затем введите код из SMS:',
-        smsPromptOptions
-      )
-    : null;
+  const codePromise = promptTelegramText(
+    chatIds,
+    buildEventMessage({
+      title: 'Код из SMS',
+      status: 'wait',
+      step: 4,
+      total: AUTH_STEPS,
+      lines: [
+        'Отправьте 4–8 цифр из SMS, как только получите.',
+        'Можно вводить параллельно с капчей «не робот».',
+      ],
+    }),
+    smsPromptOptions
+  );
 
   const captchaAndNext = (async () => {
     await ensureCaptchaPassed(page, chatIds, options);
@@ -264,14 +289,7 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
     return waitForSmsOrCaptcha(page, chatIds, options);
   })();
 
-  let nextStep;
-  let code;
-
-  if (codePromise) {
-    [nextStep, code] = await Promise.all([captchaAndNext, codePromise]);
-  } else {
-    nextStep = await captchaAndNext;
-  }
+  const [nextStep, code] = await Promise.all([captchaAndNext, codePromise]);
 
   if (nextStep === 'done') {
     await notifyAuthDone(chatIds, options, {
@@ -286,20 +304,6 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   if (nextStep === 'password') {
     await tryHandleBrowserPasswordPrompt(page, chatIds, options);
   } else {
-    if (!code) {
-      code = await promptTelegramText(
-        chatIds,
-        buildEventMessage({
-          title: 'Код из SMS',
-          status: 'wait',
-          step: 4,
-          total: AUTH_STEPS,
-          lines: ['Введите 4–8 цифр из SMS.'],
-        }),
-        smsPromptOptions
-      );
-    }
-
     const smsReady = await waitForSmsPage(page, 90000);
     if (!smsReady) {
       throw new Error('Экран ввода SMS-кода не появился. Повторите /reauth');

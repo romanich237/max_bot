@@ -1,6 +1,3 @@
-const { sendPhotoBuffer, sendMessage } = require('./tg-api');
-const { buildEventMessage } = require('./tg-events');
-
 const CAPTCHA_IFRAME_RE = /not_robot_captcha|id\.vk\.ru/i;
 const CAPTCHA_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -112,58 +109,10 @@ async function tryClickCaptcha(page) {
   return false;
 }
 
-async function captureCaptchaScreenshot(page) {
-  await page.waitForTimeout(800);
-
-  const iframe = page.locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]').first();
-  if (await iframe.isVisible({ timeout: 1500 }).catch(() => false)) {
-    const box = await iframe.boundingBox();
-    if (box?.width && box?.height) {
-      const viewport = page.viewportSize() || { width: 1280, height: 900 };
-      const padding = 24;
-      return page.screenshot({
-        type: 'png',
-        clip: {
-          x: Math.max(0, box.x - padding),
-          y: Math.max(0, box.y - padding * 2),
-          width: Math.min(viewport.width - Math.max(0, box.x - padding), box.width + padding * 2),
-          height: Math.min(
-            viewport.height - Math.max(0, box.y - padding * 2),
-            box.height + padding * 4
-          ),
-        },
-      });
-    }
-  }
-
-  return page.screenshot({ type: 'png', fullPage: false });
-}
-
-async function notifyCaptcha(chatIds, page, options = {}) {
-  const caption = buildEventMessage({
-    title: 'Проверка «не робот»',
-    status: 'progress',
-    lines: [
-      'Бот нажимает галочку автоматически.',
-      'Если не проходит за 3 мин — /reauth и вход по номеру.',
-    ],
-  });
-
-  for (const chatId of chatIds || []) {
-    if (options.sendCaptchaPhotos === false) {
-      await sendMessage(chatId, caption, {}, options.token);
-    } else {
-      const buffer = await captureCaptchaScreenshot(page);
-      await sendPhotoBuffer(chatId, buffer, caption, options.token);
-    }
-  }
-}
-
 async function waitForCaptchaResolved(page, options = {}) {
   const timeoutMs = options.timeoutMs ?? CAPTCHA_TIMEOUT_MS;
   const started = Date.now();
   let lastClick = 0;
-  let notified = false;
 
   while (Date.now() - started < timeoutMs) {
     if (await hasVisibleSmsInputs(page)) {
@@ -172,11 +121,6 @@ async function waitForCaptchaResolved(page, options = {}) {
 
     if (!(await isCaptchaPage(page))) {
       return true;
-    }
-
-    if (!notified && options.chatIds?.length) {
-      notified = true;
-      await notifyCaptcha(options.chatIds, page, options);
     }
 
     if (Date.now() - lastClick >= 2500) {
@@ -195,6 +139,5 @@ module.exports = {
   hasVisibleSmsInputs,
   isCaptchaPage,
   tryClickCaptcha,
-  captureCaptchaScreenshot,
   waitForCaptchaResolved,
 };

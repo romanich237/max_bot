@@ -225,6 +225,36 @@ async function handleProfileNamesInput(chatId, text) {
   return true;
 }
 
+function buildAuthInputAcceptedMessage(waiter) {
+  const label = String(waiter?.label || '').toLowerCase();
+
+  if (/код из sms|sms/.test(label)) {
+    return buildEventMessage({
+      title: 'Код принят',
+      status: 'done',
+      lines: ['Ввожу код в MAX…'],
+    });
+  }
+
+  if (/номер телефона|телефон/.test(label)) {
+    return buildEventMessage({
+      title: 'Вхожу в MAX',
+      status: 'progress',
+      lines: ['Номер принят, продолжаю вход…'],
+    });
+  }
+
+  if (waiter?.field === 'password') {
+    return buildBrowserPasswordAcceptedMessage();
+  }
+
+  return buildEventMessage({
+    title: 'Принято',
+    status: 'done',
+    lines: ['Продолжаю…'],
+  });
+}
+
 async function handleAuthInput(chatId, text) {
   if (!authInputWaiter) return false;
 
@@ -245,7 +275,7 @@ async function handleAuthInput(chatId, text) {
       const waiter = authInputWaiter;
       clearAuthInputWaiter();
       waiter.onValid(setResult.value);
-      await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+      await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
       return true;
     }
     return false;
@@ -267,14 +297,14 @@ async function handleAuthInput(chatId, text) {
         const waiter = authInputWaiter;
         clearAuthInputWaiter();
         waiter.onValid(typeof validated === 'string' ? validated : text);
-        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+        await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
         return true;
   }
 
   const waiter = authInputWaiter;
   clearAuthInputWaiter();
   waiter.onValid(text);
-  await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+        await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
   return true;
 }
 
@@ -535,7 +565,7 @@ async function handleMessage(message) {
         const waiter = authInputWaiter;
         clearAuthInputWaiter();
         waiter.onValid(result.value);
-        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
+        await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
         return;
       }
 

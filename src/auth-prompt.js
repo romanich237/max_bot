@@ -20,6 +20,8 @@ function promptViaAdminPoll(chatIds, promptMessage, options = {}) {
 
     registerAuthInputWaiter({
       chatIds: admins,
+      field: options.field,
+      label: options.label,
       validate: options.validate,
       invalidMessage: options.invalidMessage,
       onValid: (value) => {
