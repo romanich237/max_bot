@@ -113,7 +113,10 @@ async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extr
   const url = `${TELEGRAM_API}/bot${token}/sendPhoto`;
   const form = new FormData();
   form.append('chat_id', String(chatId));
-  if (caption) form.append('caption', caption);
+  if (caption) {
+    form.append('caption', caption);
+    form.append('parse_mode', extra.parse_mode || 'HTML');
+  }
   if (extra.reply_markup) {
     form.append('reply_markup', JSON.stringify(extra.reply_markup));
   }
@@ -129,14 +132,15 @@ async function editPhotoBuffer(chatId, messageId, buffer, caption = '', tokenOve
   const form = new FormData();
   form.append('chat_id', String(chatId));
   form.append('message_id', String(messageId));
-  form.append(
-    'media',
-    JSON.stringify({
-      type: 'photo',
-      media: 'attach://photo',
-      caption: caption || undefined,
-    })
-  );
+  const media = {
+    type: 'photo',
+    media: 'attach://photo',
+  };
+  if (caption) {
+    media.caption = caption;
+    media.parse_mode = extra.parse_mode || 'HTML';
+  }
+  form.append('media', JSON.stringify(media));
   if (extra.reply_markup) {
     form.append('reply_markup', JSON.stringify(extra.reply_markup));
   }
@@ -179,6 +183,7 @@ async function editMessageCaption(chatId, messageId, caption, extra = {}, tokenO
       chat_id: chatId,
       message_id: messageId,
       caption,
+      parse_mode: 'HTML',
       ...extra,
     },
     tokenOverride

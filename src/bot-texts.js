@@ -154,7 +154,7 @@ const AUTH = {
   alreadyAuth: 'Вход уже выполняется.',
   qrCaption: (sec) =>
     [
-      '🔐 Вход в MAX',
+      '<b>🔐 Вход в MAX</b>',
       '',
       'Отсканируйте QR-код в приложении MAX.',
       `Код обновляется каждые ${sec} с.`,
@@ -162,11 +162,14 @@ const AUTH = {
     ].join('\n'),
   passwordCaption: (sec) =>
     [
-      '🔐 Подтверждение входа',
+      '<b>🔐 Подтверждение входа</b>',
       '',
       'MAX запрашивает пароль аккаунта.',
-      'Задать заранее: <code>/set browserpassword ваш_пароль</code>',
-      `Обновление экрана: ${sec} с`,
+      '',
+      'Сохранить пароль заранее:',
+      '<code>/set browserpassword ваш_пароль</code>',
+      '',
+      `Экран обновляется каждые ${sec} с`,
     ].join('\n'),
   passwordHint: (hasPassword, masked) => {
     const lines = [
