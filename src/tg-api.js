@@ -91,6 +91,17 @@ async function deleteWebhook(tokenOverride) {
   return api('deleteWebhook', { drop_pending_updates: true }, tokenOverride);
 }
 
+async function deleteMessage(chatId, messageId, tokenOverride) {
+  return api(
+    'deleteMessage',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+    },
+    tokenOverride
+  );
+}
+
 async function setBotCommands(commands, tokenOverride) {
   return api('setMyCommands', { commands }, tokenOverride);
 }
@@ -203,6 +214,7 @@ module.exports = {
   api,
   checkTelegramConnectivity,
   deleteWebhook,
+  deleteMessage,
   setBotCommands,
   sendMessage,
   sendPhotoBuffer,

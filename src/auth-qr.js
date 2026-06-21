@@ -23,6 +23,7 @@ const {
 } = require('./auth-caption');
 const { launchMaxContext } = require('./browser-context');
 const { BUTTONS, AUTH } = require('./bot-texts');
+const { deleteMessageQuiet } = require('./tg-step-chat');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
 const QR_REFRESH_MS = DEFAULT_QR_REFRESH_MS;
@@ -283,9 +284,28 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
         ],
       });
 
+    const introMessageIds = new Map();
     for (const chatId of chatIds) {
-      await sendMessage(chatId, intro, {}, options.token);
+      const result = await sendMessage(chatId, intro, {}, options.token);
+      if (result?.result?.message_id) {
+        introMessageIds.set(String(chatId), result.result.message_id);
+      }
     }
+
+    const cleanupIntro = async () => {
+      for (const [chatId, messageId] of introMessageIds) {
+        await deleteMessageQuiet(chatId, messageId, options.token);
+      }
+      introMessageIds.clear();
+    };
+
+    options.onQrSent = (() => {
+      const prev = options.onQrSent;
+      return async () => {
+        await cleanupIntro();
+        await prev?.();
+      };
+    })();
   }
 
   const ok = await waitForLogin(page, chatIds, options);
@@ -384,6 +404,9 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
         mode === 'phone' ? 'Вход по номеру' : 'Вход по QR',
         options.token
       );
+      if (query.message?.message_id) {
+        await deleteMessageQuiet(chatId, query.message.message_id, options.token);
+      }
       if (mode === 'phone') {
         await sendMessage(chatId, buildPhoneAuthWarningMessage(), {}, options.token);
       }

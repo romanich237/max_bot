@@ -15,6 +15,7 @@ const {
 const { registerBotCommands } = require('./tg-admin');
 const { buildEventMessage, buildPipeline } = require('./tg-events');
 const { SETUP, BUTTONS } = require('./bot-texts');
+const { createStepChat } = require('./tg-step-chat');
 
 const WIZARD_STEPS = 3;
 
@@ -31,8 +32,8 @@ function isMaxChatUrl(text) {
   return MAX_URL_RE.test((text || '').trim());
 }
 
-async function promptOptions(chatId, token) {
-  await sendMessage(
+async function promptOptions(chatId, stepChat) {
+  await stepChat.sendBot(
     chatId,
     buildEventMessage({
       title: SETUP.wizardTitle,
@@ -41,14 +42,14 @@ async function promptOptions(chatId, token) {
       total: WIZARD_STEPS,
       lines: [SETUP.wizardOptions],
     }),
-    { reply_markup: buildWizardKeyboard() },
-    token
+    { reply_markup: buildWizardKeyboard() }
   );
 }
 
 function runSetupWizard(options = {}) {
   const chatIds = (options.chatIds || getAdminChatIds()).map(String);
   const adminSet = new Set(chatIds);
+  const stepChat = createStepChat(options.token);
 
   return new Promise((resolve, reject) => {
     let step = 'chatUrl';
@@ -79,7 +80,11 @@ function runSetupWizard(options = {}) {
           if (data === 'wizard:profileNames') {
             step = 'profileNames';
             await answerCallback(query.id, 'Жду имена', options.token);
-            await sendMessage(chatId, PROFILE_NAMES_HINT, {}, options.token);
+            await stepChat.finishStep(chatId);
+            if (query.message?.message_id) {
+              await stepChat.deleteMessage(chatId, query.message.message_id);
+            }
+            await stepChat.sendBot(chatId, PROFILE_NAMES_HINT);
             return;
           }
 
@@ -92,10 +97,16 @@ function runSetupWizard(options = {}) {
               const names = store.getPath(['profileRotate', 'names']) || [];
               if (!names.length) {
                 step = 'profileNames';
-                await sendMessage(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT, {}, options.token);
+                await stepChat.finishStep(chatId);
+                if (query.message?.message_id) {
+                  await stepChat.deleteMessage(chatId, query.message.message_id);
+                }
+                await stepChat.sendBot(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT);
+                return;
               }
             }
 
+            stepChat.trackBot(chatId, query.message.message_id);
             await editMessageText(
               chatId,
               query.message.message_id,
@@ -112,12 +123,20 @@ function runSetupWizard(options = {}) {
             if (profileEnabled && !names.length) {
               await answerCallback(query.id, 'Сначала задайте имена', options.token);
               step = 'profileNames';
-              await sendMessage(chatId, PROFILE_NAMES_HINT, {}, options.token);
+              await stepChat.finishStep(chatId);
+              if (query.message?.message_id) {
+                await stepChat.deleteMessage(chatId, query.message.message_id);
+              }
+              await stepChat.sendBot(chatId, PROFILE_NAMES_HINT);
               return;
             }
 
             store.setPath(['setupComplete'], true);
             await answerCallback(query.id, 'Запускаю…', options.token);
+            await stepChat.finishStep(chatId);
+            if (query.message?.message_id) {
+              await stepChat.deleteMessage(chatId, query.message.message_id);
+            }
             await sendMessage(
               chatId,
               [
@@ -147,50 +166,56 @@ function runSetupWizard(options = {}) {
         }
 
         const text = update.message.text.trim();
+        const userMessageId = update.message.message_id;
 
         if (step === 'profileNames') {
           const names = parseNameList(text);
           if (!names.length) {
-            await sendMessage(chatId, 'Не распознано. ' + PROFILE_NAMES_HINT, {}, options.token);
+            await stepChat.deleteUserMessage(chatId, userMessageId);
+            await stepChat.sendBot(chatId, 'Не распознано. ' + PROFILE_NAMES_HINT);
             return;
           }
           saveProfileNames(names);
           step = 'options';
-          await sendMessage(
+          await stepChat.finishStep(chatId, userMessageId);
+          await stepChat.sendBot(
             chatId,
             buildEventMessage({
               title: 'Имена авто сохранены',
               status: 'done',
               step: 3,
               total: WIZARD_STEPS,
-              lines: [`Список: ${names.join(' → ')}`],
+              lines: [`Список: ${names.join(' → ')}`, '', SETUP.wizardOptions],
             }),
-            { reply_markup: buildWizardKeyboard() },
-            options.token
+            { reply_markup: buildWizardKeyboard() }
           );
           return;
         }
 
         if (step === 'chatUrl') {
           if (!isMaxChatUrl(text)) {
-            await sendMessage(
+            await stepChat.deleteUserMessage(chatId, userMessageId);
+            await stepChat.sendBot(
               chatId,
-            buildEventMessage({ ...SETUP.chatUrlPrompt, status: 'wait', step: 2, total: WIZARD_STEPS }),
-              {},
-              options.token
+              buildEventMessage({ ...SETUP.chatUrlPrompt, status: 'wait', step: 2, total: WIZARD_STEPS })
             );
             return;
           }
 
           store.setPath(['max', 'chatUrl'], text);
           step = 'options';
-          await sendMessage(
+          await stepChat.finishStep(chatId, userMessageId);
+          await stepChat.sendBot(
             chatId,
-            buildEventMessage({ ...SETUP.chatSaved(text), status: 'done', step: 2, total: WIZARD_STEPS }),
-            {},
-            options.token
+            buildEventMessage({
+              ...SETUP.chatSaved(text),
+              status: 'done',
+              step: 2,
+              total: WIZARD_STEPS,
+              lines: [...SETUP.chatSaved(text).lines, '', SETUP.wizardOptions],
+            }),
+            { reply_markup: buildWizardKeyboard() }
           );
-          await promptOptions(chatId, options.token);
         }
       } catch (err) {
         fail(err);
@@ -202,7 +227,7 @@ function runSetupWizard(options = {}) {
       await registerBotCommands(options.token);
 
       for (const chatId of chatIds) {
-        await sendMessage(
+        await stepChat.sendBot(
           chatId,
           [
             buildPipeline('Настройка MAX → Telegram', [
@@ -212,9 +237,7 @@ function runSetupWizard(options = {}) {
             ]),
             '',
             buildEventMessage({ ...SETUP.chatUrlPrompt, status: 'wait', step: 2, total: WIZARD_STEPS }),
-          ].join('\n'),
-          {},
-          options.token
+          ].join('\n')
         );
       }
 

@@ -9,6 +9,7 @@ const {
 } = require('./auth-browser');
 const { isCaptchaPage, waitForCaptchaResolved, hasVisibleSmsInputs } = require('./auth-captcha');
 const { beginCaptionSession, endCaptionSession } = require('./auth-caption');
+const { createStepChat, deleteMessageQuiet } = require('./tg-step-chat');
 
 const AUTH_STEPS = 5;
 const MAX_LOGIN_URL = 'https://web.max.ru/';
@@ -17,7 +18,22 @@ const SMS_CODE_OUTCOME_MS = 15000;
 const SMS_MAX_ATTEMPTS = 5;
 
 async function notifyAuthDone(chatIds, options, payload) {
+  const stepChat = options._stepChat;
+  if (stepChat) {
+    for (const chatId of chatIds) {
+      await stepChat.sendBot(chatId, buildEventMessage(payload));
+    }
+    return;
+  }
   await notifyEvent(chatIds, payload, options);
+}
+
+async function clearAuthStatus(chatIds, options) {
+  const stepChat = options._stepChat;
+  if (!stepChat) return;
+  for (const chatId of chatIds) {
+    await stepChat.clearBot(chatId);
+  }
 }
 
 function normalizePhone(input) {
@@ -275,6 +291,7 @@ async function submitSmsCodeWithRetry(page, chatIds, options, initialCode, smsPr
       ],
     });
 
+    await clearAuthStatus(chatIds, options);
     code = await promptSmsCode(chatIds, options, smsPromptOptions, [
       'Код не подошёл. Отправьте новый код из SMS.',
     ]);
@@ -324,6 +341,7 @@ async function waitForLoginComplete(page, timeoutMs = AUTH_TIMEOUT_MS) {
 
 async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   beginCaptionSession(chatIds, options, page);
+  options._stepChat = createStepChat(options.token);
 
   try {
   await page.goto(MAX_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
@@ -356,13 +374,24 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
         ],
       });
 
+    const introMessageIds = new Map();
     for (const chatId of chatIds) {
-      await sendMessage(chatId, intro, {}, options.token);
+      const result = await sendMessage(chatId, intro, {}, options.token);
+      if (result?.result?.message_id) {
+        introMessageIds.set(String(chatId), result.result.message_id);
+      }
     }
+
+    await openPhoneLoginForm(page);
+
+    for (const [chatId, messageId] of introMessageIds) {
+      await deleteMessageQuiet(chatId, messageId, options.token);
+    }
+  } else {
+    await openPhoneLoginForm(page);
   }
 
-  await openPhoneLoginForm(page);
-
+  await clearAuthStatus(chatIds, options);
   const phone = await promptTelegramText(
     chatIds,
     buildEventMessage({
@@ -406,6 +435,7 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
 
   const smsPromptOptions = buildSmsPromptOptions(options);
 
+  await clearAuthStatus(chatIds, options);
   const codePromise = promptSmsCode(chatIds, options, smsPromptOptions, [
     'Отправьте 4–8 цифр из SMS, как только получите.',
     'Можно вводить параллельно с капчей «не робот».',

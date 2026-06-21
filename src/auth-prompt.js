@@ -1,4 +1,5 @@
-const { pollUpdates, sendMessage } = require('./tg-api');
+const { pollUpdates } = require('./tg-api');
+const { sendInputPrompt, clearInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,6 +9,7 @@ function promptViaAdminPoll(chatIds, promptMessage, options = {}) {
   const { registerAuthInputWaiter, clearAuthInputWaiter } = require('./tg-admin');
   const admins = (chatIds || []).map(String);
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+  const token = options.token;
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -40,7 +42,7 @@ function promptViaAdminPoll(chatIds, promptMessage, options = {}) {
 
     if (promptMessage) {
       for (const chatId of admins) {
-        sendMessage(chatId, promptMessage, options.extra || {}, options.token).catch(() => {});
+        sendInputPrompt(chatId, promptMessage, options.extra || {}, token).catch(() => {});
       }
     }
   });
@@ -92,11 +94,14 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
     let stopPoll = null;
     let timer = null;
 
-    const finish = async (value) => {
+    const finish = async (value, update) => {
       if (settled) return;
       settled = true;
       stopPoll?.();
       if (timer) clearTimeout(timer);
+      if (update?.message) {
+        await clearInputPrompt(update.message.chat.id, update.message.message_id, token);
+      }
       if (options.onAccepted) {
         try {
           await options.onAccepted(value);
@@ -107,11 +112,14 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
       resolve(value);
     };
 
-    const fail = (err) => {
+    const fail = async (err, update) => {
       if (settled) return;
       settled = true;
       stopPoll?.();
       if (timer) clearTimeout(timer);
+      if (update?.message) {
+        await clearInputPrompt(update.message.chat.id, update.message.message_id, token);
+      }
       reject(err);
     };
 
@@ -124,7 +132,7 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
         if (!admins.has(chatId)) return false;
 
         if (/^\/cancel$/i.test(text)) {
-          fail(new Error('Вход отменён'));
+          await fail(new Error('Вход отменён'), update);
           return true;
         }
 
@@ -132,11 +140,12 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
         const browserCmd = parseBrowserPasswordCommand(text);
         if (browserCmd?.password) {
           const result = acceptBrowserPassword(browserCmd.password);
-          finish(result.password);
+          await finish(result.password, update);
           return true;
         }
         if (browserCmd?.error) {
-          await sendMessage(chatId, browserCmd.error, {}, token);
+          await deleteMessageQuiet(chatId, update.message.message_id, token);
+          await sendInputPrompt(chatId, browserCmd.error, {}, token);
           return true;
         }
 
@@ -147,7 +156,8 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
         if (options.validate) {
           const validated = options.validate(text);
           if (validated === false || validated == null) {
-            await sendMessage(
+            await deleteMessageQuiet(chatId, update.message.message_id, token);
+            await sendInputPrompt(
               chatId,
               options.invalidMessage || 'Неверный формат. Попробуйте ещё раз или /cancel.',
               {},
@@ -155,26 +165,26 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
             );
             return true;
           }
-          finish(typeof validated === 'string' ? validated : text);
+          await finish(typeof validated === 'string' ? validated : text, update);
           return true;
         }
 
-        finish(text);
+        await finish(text, update);
         return true;
       } catch (err) {
-        fail(err);
+        await fail(err, update);
         return true;
       }
     };
 
     timer = setTimeout(() => {
-      fail(new Error('Время ожидания ответа в Telegram истекло (10 мин)'));
+      void fail(new Error('Время ожидания ответа в Telegram истекло (10 мин)'));
     }, timeoutMs);
 
     (async () => {
       if (promptMessage) {
         for (const chatId of admins) {
-          await sendMessage(chatId, promptMessage, options.extra || {}, token);
+          await sendInputPrompt(chatId, promptMessage, options.extra || {}, token);
         }
       }
 
@@ -183,7 +193,9 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
         token,
         onError: (err) => console.error('auth-prompt:', err.message),
       });
-    })().catch(fail);
+    })().catch((err) => {
+      void fail(err);
+    });
   });
 }
 

@@ -79,6 +79,7 @@ const {
   parseBrowserPasswordCommand,
   getBrowserPassword,
 } = require('./auth-browser');
+const { clearInputPrompt, sendInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -354,15 +355,17 @@ function parseSetCommand(text) {
   return { ok: true, key, value };
 }
 
-async function handleBrowserPasswordInput(chatId, text) {
+async function handleBrowserPasswordInput(chatId, text, userMessageId) {
   const password = String(text || '').trim();
   if (!password) {
-    await sendMessage(chatId, AUTH.passwordEmpty);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, AUTH.passwordEmpty);
     return true;
   }
 
   const result = acceptBrowserPassword(password);
   waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId, userMessageId);
   await sendBrowserPasswordSetResponse(chatId, result);
   return true;
 }
@@ -388,15 +391,17 @@ async function sendBrowserPasswordSetResponse(chatId, result = {}) {
   );
 }
 
-async function handleProfileBioCityInput(chatId, text) {
+async function handleProfileBioCityInput(chatId, text, userMessageId) {
   const city = String(text || '').trim();
   if (!city) {
-    await sendMessage(chatId, ERRORS.cityNotRecognized + PROFILE_BIO_CITY_HINT);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, ERRORS.cityNotRecognized + PROFILE_BIO_CITY_HINT);
     return false;
   }
 
   saveProfileBioCity(city);
   waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId, userMessageId);
   await sendMessage(
     chatId,
       buildEventMessage({ ...SAVED.city(escapeHtml(city)), status: 'done', lines: [...SAVED.city(escapeHtml(city)).lines, '', buildStatusText()] }),
@@ -405,16 +410,18 @@ async function handleProfileBioCityInput(chatId, text) {
   return true;
 }
 
-async function handleProfileBioTemplateInput(chatId, text) {
+async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
   const template = String(text || '').trim();
   if (!template) {
-    await sendMessage(chatId, ERRORS.templateNotRecognized + PROFILE_BIO_TEMPLATE_HINT);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, ERRORS.templateNotRecognized + PROFILE_BIO_TEMPLATE_HINT);
     return false;
   }
 
   const preview = previewBioTemplate(template, getProfileBio().city);
   if (preview.length > MAX_BIO_LENGTH) {
-    await sendMessage(
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(
       chatId,
       `Слишком длинный результат (${preview.length} симв.). Сократите шаблон до ${MAX_BIO_LENGTH} символов.`
     );
@@ -423,6 +430,7 @@ async function handleProfileBioTemplateInput(chatId, text) {
 
   saveProfileBioTemplate(template);
   waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId, userMessageId);
   await sendMessage(
     chatId,
     buildEventMessage({
@@ -440,15 +448,17 @@ async function handleProfileBioTemplateInput(chatId, text) {
   return true;
 }
 
-async function handleProfileNamesInput(chatId, text) {
+async function handleProfileNamesInput(chatId, text, userMessageId) {
   const names = parseNameList(text);
   if (!names.length) {
-    await sendMessage(chatId, ERRORS.notRecognized + PROFILE_NAMES_HINT);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, ERRORS.notRecognized + PROFILE_NAMES_HINT);
     return false;
   }
 
   saveProfileNames(names);
   waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId, userMessageId);
   await sendMessage(
     chatId,
       buildEventMessage({
@@ -479,7 +489,7 @@ function buildAuthInputAcceptedMessage(waiter) {
   return buildEventMessage({ ...AUTH.inputAccepted, status: 'done' });
 }
 
-async function handleAuthInput(chatId, text) {
+async function handleAuthInput(chatId, text, userMessageId) {
   if (!authInputWaiter) return false;
 
   const chatIdStr = String(chatId);
@@ -489,19 +499,22 @@ async function handleAuthInput(chatId, text) {
   if (/^\/cancel$/i.test(text)) {
     const waiter = authInputWaiter;
     clearAuthInputWaiter();
+    await clearInputPrompt(chatId, userMessageId);
     waiter.onCancel?.();
     return true;
   }
 
   const browserCmd = parseBrowserPasswordCommand(text);
   if (browserCmd?.error) {
-    await sendMessage(chatId, browserCmd.error);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, browserCmd.error);
     return true;
   }
   if (browserCmd?.password) {
     const result = acceptBrowserPassword(browserCmd.password);
     const waiter = authInputWaiter;
     clearAuthInputWaiter();
+    await clearInputPrompt(chatId, userMessageId);
     waiter.onValid(result.password);
     await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
     return true;
@@ -514,7 +527,8 @@ async function handleAuthInput(chatId, text) {
   if (authInputWaiter.validate) {
         const validated = authInputWaiter.validate(text);
         if (validated === false || validated == null) {
-          await sendMessage(
+          await deleteMessageQuiet(chatId, userMessageId);
+          await sendInputPrompt(
             chatId,
             authInputWaiter.invalidMessage || ERRORS.invalidFormat
           );
@@ -522,6 +536,7 @@ async function handleAuthInput(chatId, text) {
         }
         const waiter = authInputWaiter;
         clearAuthInputWaiter();
+        await clearInputPrompt(chatId, userMessageId);
         waiter.onValid(typeof validated === 'string' ? validated : text);
         await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
         return true;
@@ -529,6 +544,7 @@ async function handleAuthInput(chatId, text) {
 
   const waiter = authInputWaiter;
   clearAuthInputWaiter();
+  await clearInputPrompt(chatId, userMessageId);
   waiter.onValid(text);
         await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
   return true;
@@ -596,14 +612,17 @@ async function showMaxChatView(chatId, messageId, index) {
   });
 }
 
-async function handleMaxChatUrlInput(chatId, text) {
+async function handleMaxChatUrlInput(chatId, text, userMessageId) {
   const result = addMonitorChatUrl(text);
-  waitingInput.delete(String(chatId));
 
   if (result.error) {
-    await sendMessage(chatId, result.error);
+    await deleteMessageQuiet(chatId, userMessageId);
+    await sendInputPrompt(chatId, result.error);
     return false;
   }
+
+  waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId, userMessageId);
 
   const lines = [
     result.duplicate
@@ -703,13 +722,15 @@ async function handleMessage(message) {
     return;
   }
 
-  if (await handleAuthInput(chatId, text)) return;
+  if (await handleAuthInput(chatId, text, message.message_id)) return;
 
   const waitKey = waitingInput.get(String(chatId));
+  const userMessageId = message.message_id;
 
   if (waitKey?.startsWith('reply:') && text && !text.startsWith('/')) {
     const target = replyStore.get(waitKey.slice('reply:'.length));
     waitingInput.delete(String(chatId));
+    await clearInputPrompt(chatId, userMessageId);
     await dispatchMaxReply(chatId, target, text);
     return;
   }
@@ -723,32 +744,33 @@ async function handleMessage(message) {
   }
 
   if (waitKey === 'profileNames' && text && !text.startsWith('/')) {
-    await handleProfileNamesInput(chatId, text);
+    await handleProfileNamesInput(chatId, text, userMessageId);
     return;
   }
 
   if (waitKey === 'profileBioCity' && text && !text.startsWith('/')) {
-    await handleProfileBioCityInput(chatId, text);
+    await handleProfileBioCityInput(chatId, text, userMessageId);
     return;
   }
 
   if (waitKey === 'profileBioTemplate' && text && !text.startsWith('/')) {
-    await handleProfileBioTemplateInput(chatId, text);
+    await handleProfileBioTemplateInput(chatId, text, userMessageId);
     return;
   }
 
   if (waitKey === 'browserPassword' && text && !text.startsWith('/')) {
-    await handleBrowserPasswordInput(chatId, text);
+    await handleBrowserPasswordInput(chatId, text, userMessageId);
     return;
   }
 
   if (waitKey === 'maxchat:add' && text && !text.startsWith('/')) {
-    await handleMaxChatUrlInput(chatId, text);
+    await handleMaxChatUrlInput(chatId, text, userMessageId);
     return;
   }
 
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    await clearInputPrompt(chatId);
     await sendMessage(chatId, ERRORS.cancelled);
     return;
   }
@@ -875,7 +897,7 @@ async function handleMessage(message) {
     }
     if (result?.prompt && result.key === 'browserpassword') {
       waitingInput.set(String(chatId), 'browserPassword');
-      await sendMessage(chatId, buildBrowserPasswordPromptMessage());
+      await sendInputPrompt(chatId, buildBrowserPasswordPromptMessage());
       return;
     }
     if (result?.ok && result.key === 'browserpassword') {
@@ -1027,7 +1049,7 @@ async function handleCallback(query) {
 
     waitingInput.set(String(chatId), data);
     await answerCallback(query.id, 'Жду ответ');
-    await sendMessage(
+    await sendInputPrompt(
       chatId,
       [
         `<b>Ответ для ${escapeHtml(target.author || 'пользователя')}</b>`,
@@ -1083,21 +1105,21 @@ async function handleCallback(query) {
   if (data === 'action:profileNames') {
     waitingInput.set(String(chatId), 'profileNames');
     await answerCallback(query.id, 'Жду имена');
-    await sendMessage(chatId, PROFILE_NAMES_HINT);
+    await sendInputPrompt(chatId, PROFILE_NAMES_HINT);
     return;
   }
 
   if (data === 'action:profileBioCity') {
     waitingInput.set(String(chatId), 'profileBioCity');
     await answerCallback(query.id, 'Жду город');
-    await sendMessage(chatId, PROFILE_BIO_CITY_HINT);
+    await sendInputPrompt(chatId, PROFILE_BIO_CITY_HINT);
     return;
   }
 
   if (data === 'action:profileBioTemplate') {
     waitingInput.set(String(chatId), 'profileBioTemplate');
     await answerCallback(query.id, 'Жду шаблон');
-    await sendMessage(chatId, PROFILE_BIO_TEMPLATE_HINT);
+    await sendInputPrompt(chatId, PROFILE_BIO_TEMPLATE_HINT);
     return;
   }
 
@@ -1120,7 +1142,7 @@ async function handleCallback(query) {
   if (data === 'maxchat:add') {
     waitingInput.set(String(chatId), 'maxchat:add');
     await answerCallback(query.id, 'Жду ссылку');
-    await sendMessage(
+    await sendInputPrompt(
       chatId,
       [
         '<b>Добавить чат MAX</b>',
@@ -1254,7 +1276,7 @@ async function handleCallback(query) {
       const names = store.getPath(['profileRotate', 'names']) || [];
       if (!names.length) {
         waitingInput.set(String(chatId), 'profileNames');
-        await sendMessage(chatId, HINTS.profileNamesEnabled + PROFILE_NAMES_HINT);
+        await sendInputPrompt(chatId, HINTS.profileNamesEnabled + PROFILE_NAMES_HINT);
       }
     }
 
@@ -1262,7 +1284,7 @@ async function handleCallback(query) {
       const city = store.getPath(['profileBio', 'city']) || '';
       if (!city) {
         waitingInput.set(String(chatId), 'profileBioCity');
-        await sendMessage(chatId, HINTS.profileBioEnabled + PROFILE_BIO_CITY_HINT);
+        await sendInputPrompt(chatId, HINTS.profileBioEnabled + PROFILE_BIO_CITY_HINT);
       }
     }
 
