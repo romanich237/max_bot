@@ -29,15 +29,14 @@ async function isLoginPage(page) {
     .catch(() => false);
   if (authFormVisible) return true;
 
-  const url = page.url();
-  if (/web\.max\.ru\/-\d+/.test(url)) {
-    const inChat = await page
-      .locator('.messageWrapper, .openedChat')
-      .first()
-      .isVisible({ timeout: 1500 })
-      .catch(() => false);
-    if (inChat) return false;
-  }
+  const inChat = await page
+    .locator(
+      '.messageWrapper, .openedChat, main[name*="Chat window" i], main[name*="чат" i]'
+    )
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+  if (inChat) return false;
 
   const captchaIframe = await page
     .locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]')

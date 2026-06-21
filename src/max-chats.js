@@ -128,7 +128,7 @@ function scopedMessageKey(chatUrl, messageKey) {
 function setDefaultChatUrl(url, options = {}) {
   const normalized = normalizeMaxChatUrl(url);
   if (!isMaxChatUrl(normalized)) {
-    return { error: 'Нужна ссылка вида <code>https://web.max.ru/-XXXXXXXX</code>' };
+    return { error: 'Нужна ссылка вида <code>https://web.max.ru/35859265</code> или <code>https://web.max.ru/-XXXXXXXX</code>' };
   }
 
   const currentDefault = normalizeMaxChatUrl(store.getPath(['max', 'chatUrl']));
@@ -150,7 +150,7 @@ function setDefaultChatUrl(url, options = {}) {
 function addMonitorChatUrl(url, options = {}) {
   const normalized = normalizeMaxChatUrl(url);
   if (!isMaxChatUrl(normalized)) {
-    return { error: 'Нужна ссылка вида <code>https://web.max.ru/-XXXXXXXX</code>' };
+    return { error: 'Нужна ссылка вида <code>https://web.max.ru/35859265</code> или <code>https://web.max.ru/-XXXXXXXX</code>' };
   }
 
   if (options.asDefault) {
