@@ -3,7 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('./config');
 const { sendMessage } = require('./tg-api');
-const { restartPm2Apps, restartPm2App, APP_NAME, UPDATE_APP_NAME } = require('./pm2');
+const { buildEventMessage } = require('./tg-events');
+const { UPDATES } = require('./bot-texts');
+const {
+  schedulePm2Restarts,
+  APP_NAME,
+  UPDATE_APP_NAME,
+} = require('./pm2');
 
 function run(cmd, options = {}) {
   return execSync(cmd, {
@@ -17,6 +23,13 @@ function run(cmd, options = {}) {
 
 function runQuiet(cmd) {
   return run(cmd, { silent: true })?.trim() || '';
+}
+
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function isGitRepo() {
@@ -43,6 +56,51 @@ async function notifyAdmins(text) {
       console.error(`auto-update: не удалось уведомить ${chatId}:`, err.message);
     }
   }
+}
+
+function formatUpdateError(err) {
+  const message = String(err?.message || err || 'неизвестная ошибка');
+  const lines = [escapeHtml(message)];
+
+  if (/pm2|restart/i.test(message)) {
+    lines.push(
+      '',
+      'Код на диске уже мог обновиться. Перезапустите вручную:',
+      '<code>pm2 restart max-tg max-tg-update</code>',
+      'или:',
+      '<code>cd ~/max-tg && npm run pm2</code>'
+    );
+  } else {
+    lines.push(
+      '',
+      'Попробуйте вручную:',
+      '<code>cd ~/max-tg && git pull --ff-only && npm install --omit=dev && pm2 restart max-tg max-tg-update</code>'
+    );
+  }
+
+  return lines;
+}
+
+async function applyUpdate(fromSha, toSha, notify) {
+  run(`git pull --ff-only origin ${getAutoUpdate().branch}`);
+  run('npm install --omit=dev --ignore-scripts');
+
+  schedulePm2Restarts([APP_NAME, UPDATE_APP_NAME], {
+    delayMs: 2000,
+    staggerMs: 5000,
+  });
+
+  if (notify) {
+    await notifyAdmins(
+      buildEventMessage({
+        ...UPDATES.done(fromSha, toSha),
+        status: 'done',
+      })
+    );
+  }
+
+  console.log('auto-update: код обновлён, перезапуск PM2 запланирован');
+  return { status: 'updated', fromSha, toSha };
 }
 
 async function checkForUpdates(options = {}) {
@@ -74,9 +132,7 @@ async function checkForUpdates(options = {}) {
     if (hasLocalChanges()) {
       console.error('auto-update: есть локальные изменения, обновление пропущено');
       if (notify) {
-        await notifyAdmins(
-          '⚠️ <b>Автообновление пропущено</b>\nНа сервере есть локальные изменения в репозитории.'
-        );
+        await notifyAdmins(buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
       }
       return { status: 'skipped', reason: 'local-changes' };
     }
@@ -91,29 +147,23 @@ async function checkForUpdates(options = {}) {
     console.log(`auto-update: обновление ${fromSha} → ${toSha}`);
 
     if (notify) {
-      await notifyAdmins('🔄 Вышла новая версия бота, обновляю сервер…');
+      await notifyAdmins(
+        buildEventMessage({
+          ...UPDATES.updating(fromSha, toSha),
+          status: 'progress',
+        })
+      );
     }
 
-    run(`git pull --ff-only origin ${cfg.branch}`);
-    run('npm install --omit=dev --ignore-scripts');
-    await restartPm2Apps([APP_NAME]);
-
-    if (notify) {
-      await notifyAdmins('✅ <b>Бот обновлён</b>\nСервер перезапущен с новой версией.');
-    }
-
-    console.log('auto-update: бот перезапущен');
-
-    void restartPm2App(UPDATE_APP_NAME).catch((err) => {
-      console.warn(`auto-update: не удалось перезапустить ${UPDATE_APP_NAME}:`, err.message);
-    });
-
-    return { status: 'updated', fromSha, toSha };
+    return await applyUpdate(fromSha, toSha, notify);
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
     if (notify) {
       await notifyAdmins(
-        `⚠️ <b>Ошибка автообновления</b>\n<code>${err.message}</code>\n\nПопробуйте вручную:\n<code>cd ~/max-tg && git pull && npm install --omit=dev && npm run pm2</code>`
+        buildEventMessage({
+          ...UPDATES.fail(formatUpdateError(err).join('\n')),
+          status: 'fail',
+        })
       );
     }
     return { status: 'error', message: err.message };

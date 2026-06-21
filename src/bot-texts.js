@@ -405,8 +405,8 @@ const UPDATES = {
   done: (fromSha, toSha) => ({
     title: 'Готово',
     lines: [
-      'Бот обновлён и перезапущен.',
-      fromSha && toSha ? `Версия: <code>${toSha}</code>` : null,
+      'Код обновлён. Бот перезапускается через несколько секунд.',
+      fromSha && toSha ? `Версия: <code>${fromSha}</code> → <code>${toSha}</code>` : null,
     ].filter(Boolean),
   }),
   skipped: {

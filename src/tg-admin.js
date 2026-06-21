@@ -1035,7 +1035,21 @@ async function handleManualUpdateCheck(chatId) {
           status: 'progress',
         })
       );
-      await checkForUpdates({ notify: false, performUpdate: true });
+      const result = await checkForUpdates({ notify: false, performUpdate: true });
+      if (result.status === 'updated') {
+        await sendMessage(
+          chatId,
+          buildEventMessage({
+            ...UPDATES.done(result.fromSha, result.toSha),
+            status: 'done',
+          })
+        );
+      } else if (result.status === 'error') {
+        await sendMessage(
+          chatId,
+          buildEventMessage({ ...UPDATES.fail(result.message), status: 'fail' })
+        );
+      }
       return;
     }
 

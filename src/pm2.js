@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { ROOT } = require('./config');
@@ -140,7 +140,7 @@ async function restartPm2App(name) {
     console.log(`pm2: перезапущен ${name} (CLI)`);
     return;
   } catch (cliErr) {
-    if (/не найден|not found/i.test(cliErr.message)) {
+    if (/не найден|not found|namespace not found|doesn't exist/i.test(cliErr.message)) {
       startPm2AppViaCli(name);
       console.log(`pm2: запущен ${name}`);
       return;
@@ -164,6 +164,72 @@ async function restartPm2Apps(names = [APP_NAME]) {
   if (errors.length) {
     throw new Error(errors.join('; '));
   }
+}
+
+function buildPm2RestartCommand(name, pm2Bin) {
+  const bin = pm2Bin || resolvePm2Bin();
+  const config = 'scripts/ecosystem.config.cjs';
+  return `"${bin}" restart ${name} 2>/dev/null || "${bin}" start ${config} --only ${name}`;
+}
+
+function schedulePm2Restarts(names = [APP_NAME], options = {}) {
+  const unique = [...new Set(names.filter(Boolean))];
+  if (!unique.length) return;
+
+  const pm2Bin = resolvePm2Bin();
+  const delaySec = Math.max(1, Math.ceil((options.delayMs ?? 2000) / 1000));
+  const staggerSec = Math.max(2, Math.ceil((options.staggerMs ?? 5000) / 1000));
+
+  const parts = [`sleep ${delaySec}`];
+  for (let i = 0; i < unique.length; i++) {
+    if (i > 0) parts.push(`sleep ${staggerSec}`);
+    parts.push(buildPm2RestartCommand(unique[i], pm2Bin));
+  }
+
+  const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
+  const shellArgs =
+    process.platform === 'win32'
+      ? ['/c', parts.join(' && ')]
+      : ['-c', parts.join(' && ')];
+
+  const child = spawn(shell, shellArgs, {
+    detached: true,
+    stdio: 'ignore',
+    cwd: ROOT,
+    env: process.env,
+  });
+  child.unref();
+}
+
+async function waitForPm2Process(name, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const intervalMs = options.intervalMs ?? 2000;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const pm2 = loadPm2Module();
+      const online = await new Promise((resolve, reject) => {
+        pm2.connect((err) => {
+          if (err) return reject(err);
+          pm2.describe(name, (describeErr, description) => {
+            pm2.disconnect();
+            if (describeErr || !description?.length) {
+              resolve(false);
+              return;
+            }
+            resolve(description[0]?.pm2_env?.status === 'online');
+          });
+        });
+      });
+      if (online) return true;
+    } catch {
+      /* retry */
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return false;
 }
 
 function setupPm2(options = {}) {
@@ -228,6 +294,8 @@ module.exports = {
   setupPm2,
   restartPm2App,
   restartPm2Apps,
+  schedulePm2Restarts,
+  waitForPm2Process,
   APP_NAME,
   UPDATE_APP_NAME,
 };
