@@ -2,38 +2,21 @@ const { getMax, store } = require('./config');
 const { sendMessage } = require('./tg-api');
 const { promptTelegramText } = require('./auth-prompt');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
+const { AUTH } = require('./bot-texts');
 
 function buildBrowserPasswordAcceptedMessage() {
-  return buildEventMessage({
-    title: 'Пароль принят',
-    status: 'done',
-    lines: ['Ввожу пароль в MAX…'],
-  });
+  return buildEventMessage({ ...AUTH.passwordAccepted, status: 'done' });
 }
 
 function buildBrowserPasswordSavedMessage({ delivered = false } = {}) {
-  return buildEventMessage({
-    title: delivered ? 'Пароль принят' : 'Пароль сохранён',
-    status: 'done',
-    lines: delivered
-      ? ['Ввожу пароль в MAX…']
-      : [
-          'Пароль сохранён в config.json.',
-          'Бот подставит его автоматически при входе @Browser.',
-        ],
-  });
+  if (delivered) {
+    return buildEventMessage({ ...AUTH.passwordAccepted, status: 'done' });
+  }
+  return buildEventMessage({ ...AUTH.passwordSaved, status: 'done' });
 }
 
 function buildBrowserPasswordPromptMessage() {
-  return buildEventMessage({
-    title: 'Пароль @Browser',
-    status: 'wait',
-    lines: [
-      'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
-      'Или сразу: <code>/set browserpassword ваш_пароль</code>',
-      'Отмена: /cancel',
-    ],
-  });
+  return buildEventMessage({ ...AUTH.passwordPrompt, status: 'wait' });
 }
 
 async function notifyPasswordAccepted(chatIds, options = {}) {
@@ -76,7 +59,7 @@ function parseBrowserPasswordCommand(text) {
   const withValue = String(text || '').match(/^\/set\s+browserpassword\s+([\s\S]+)$/i);
   if (withValue) {
     const password = withValue[1].trim();
-    return password ? { password } : { error: 'Пароль не может быть пустым' };
+    return password ? { password } : { error: AUTH.passwordEmpty };
   }
   if (/^\/set\s+browserpassword$/i.test(String(text || '').trim())) {
     return { prompt: true };
@@ -86,7 +69,7 @@ function parseBrowserPasswordCommand(text) {
 
 function acceptBrowserPassword(password) {
   const pwd = String(password || '').trim();
-  if (!pwd) return { ok: false, error: 'Пароль не может быть пустым' };
+  if (!pwd) return { ok: false, error: AUTH.passwordEmpty };
   store.setPath(['max', 'browserPassword'], pwd);
   return { ok: true, password: pwd, delivered: deliverBrowserPassword(pwd) };
 }
@@ -123,18 +106,7 @@ async function isBrowserPasswordPrompt(page) {
 
 function buildBrowserPasswordHintHtml() {
   const password = getBrowserPassword();
-  const lines = [
-    'Если MAX попросит пароль для входа с нового устройства — введите пароль от аккаунта (личный кабинет MAX → Безопасность).',
-  ];
-
-  if (password) {
-    lines.push(`Пароль задан: <code>${escapeHtml(maskBrowserPassword(password))}</code>`);
-    lines.push('Бот введёт его автоматически на странице входа.');
-  } else {
-    lines.push('Задайте пароль: <code>/set browserpassword ваш_пароль</code>');
-  }
-
-  return lines.join('\n');
+  return AUTH.passwordHint(Boolean(password), escapeHtml(maskBrowserPassword(password)));
 }
 
 const DEFAULT_QR_REFRESH_MS = 45000;
@@ -154,24 +126,13 @@ function qrSecondsRemaining(lastQrSent, refreshMs = DEFAULT_QR_REFRESH_MS) {
 function buildQrScreenshotCaption(options = {}) {
   const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
   const sec = options.secondsRemaining ?? qrRefreshSeconds(refreshMs);
-  return [
-    '🔐 Вход в MAX',
-    'Отсканируйте QR-код в приложении MAX.',
-    `QR-код обновляется каждые ${sec} секунд — это создаёт новую сессию.`,
-    '👉 Не успели? Нажмите «Обновить» вручную.',
-  ].join('\n');
+  return AUTH.qrCaption(sec);
 }
 
 function buildBrowserScreenshotCaption(options = {}) {
   const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
   const sec = options.secondsRemaining ?? qrRefreshSeconds(refreshMs);
-  return [
-    'Вход в MAX',
-    'Пароль: из личного кабинета.',
-    'Установка: /set browserpassword [пароль]',
-    `Обновление: ${sec} с · кнопка «Обновить»`,
-    'Статус: в процессе',
-  ].join('\n');
+  return AUTH.passwordCaption(sec);
 }
 
 async function buildScreenshotCaptionForPage(page, options = {}) {
@@ -256,14 +217,7 @@ async function resolveBrowserPassword(chatIds, options = {}) {
 
   const promptMessage = options.skipPromptMessage
     ? null
-    : buildEventMessage({
-        title: 'Пароль для входа',
-        status: 'wait',
-        lines: [
-          'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
-          'Или задайте заранее: <code>/set browserpassword ваш_пароль</code>',
-        ],
-      });
+    : buildEventMessage({ ...AUTH.passwordWait, status: 'wait' });
 
   let deliveryResolve;
   const deliveryPromise = new Promise((resolve) => {
@@ -286,7 +240,7 @@ async function resolveBrowserPassword(chatIds, options = {}) {
         label: 'Пароль для входа',
         hint: 'Пароль из личного кабинета MAX',
         validate: (text) => (text.trim() ? text.trim() : null),
-        invalidMessage: 'Пароль не может быть пустым. Отправьте пароль или /cancel.',
+        invalidMessage: AUTH.passwordEmpty,
         onAccepted: () => notifyPasswordAccepted(chatIds, options),
       }),
       deliveryPromise,
@@ -358,15 +312,7 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
     for (const chatId of chatIds) {
       await sendMessage(
         chatId,
-        buildEventMessage({
-          title: 'Пароль не принят',
-          status: 'fail',
-          lines: [
-            err.message,
-            'Отправьте пароль <b>текстом</b> (без команды) или:',
-            '<code>/set browserpassword ваш_пароль</code>',
-          ],
-        }),
+        buildEventMessage({ ...AUTH.passwordFail(err.message), status: 'fail' }),
         {},
         options.token
       );

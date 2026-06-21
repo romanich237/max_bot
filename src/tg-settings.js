@@ -1,10 +1,11 @@
 const { store } = require('./config');
 const { DEFAULT_BIO_TEMPLATE, MAX_BIO_LENGTH } = require('./profile-bio');
+const { TOGGLES, HINTS } = require('./bot-texts');
 
-const TOGGLES = [
-  { label: 'Бесконечный онлайн', path: ['alwaysOnline', 'enabled'] },
-  { label: 'Авто имя', path: ['profileRotate', 'enabled'] },
-  { label: 'Авто описание', path: ['profileBio', 'enabled'] },
+const TOGGLE_ITEMS = [
+  { label: TOGGLES.alwaysOnline, path: ['alwaysOnline', 'enabled'] },
+  { label: TOGGLES.profileRotate, path: ['profileRotate', 'enabled'] },
+  { label: TOGGLES.profileBio, path: ['profileBio', 'enabled'] },
 ];
 
 function buildToggleButton(prefix, item) {
@@ -17,7 +18,7 @@ function buildToggleButton(prefix, item) {
 }
 
 function buildToggleRows(prefix) {
-  return TOGGLES.map((item) => [buildToggleButton(prefix, item)]);
+  return TOGGLE_ITEMS.map((item) => [buildToggleButton(prefix, item)]);
 }
 
 function parseNameList(text) {
@@ -33,17 +34,9 @@ function saveProfileNames(names) {
   store.setPath(['max', 'ownAuthorNames'], names);
 }
 
-const PROFILE_NAMES_HINT =
-  'Отправьте имена авто через запятую.\nПример: <code>в, ва, вас, вася</code>';
-
-const PROFILE_BIO_CITY_HINT =
-  'Отправьте ваш город для погоды и часового пояса.\nПример: <code>Москва</code>';
-
-const PROFILE_BIO_TEMPLATE_HINT = [
-  'Отправьте шаблон описания профиля MAX (до 400 символов после подстановки).',
-  'Переменные: <code>{час}</code> <code>{минута}</code> <code>{день}</code> <code>{месяц}</code> <code>{погода}</code>',
-  `По умолчанию: <code>${DEFAULT_BIO_TEMPLATE}</code>`,
-].join('\n');
+const PROFILE_NAMES_HINT = HINTS.profileNames;
+const PROFILE_BIO_CITY_HINT = HINTS.profileBioCity;
+const PROFILE_BIO_TEMPLATE_HINT = HINTS.profileBioTemplate;
 
 function saveProfileBioCity(city) {
   store.setPath(['profileBio', 'city'], String(city || '').trim());
@@ -54,7 +47,7 @@ function saveProfileBioTemplate(template) {
 }
 
 module.exports = {
-  TOGGLES,
+  TOGGLES: TOGGLE_ITEMS,
   buildToggleButton,
   buildToggleRows,
   parseNameList,

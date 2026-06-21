@@ -58,6 +58,19 @@ const {
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
 const {
+  COMMANDS,
+  BUTTONS,
+  HINTS,
+  START,
+  STATUS,
+  AUTH,
+  REPLY,
+  MONITORING,
+  CHATS,
+  SAVED,
+  ERRORS,
+} = require('./bot-texts');
+const {
   buildBrowserPasswordAcceptedMessage,
   buildBrowserPasswordSavedMessage,
   buildBrowserPasswordPromptMessage,
@@ -76,9 +89,9 @@ const SETTABLE = {
 };
 
 const BOT_COMMANDS = [
-  { command: 'start', description: 'Старт и меню' },
-  { command: 'menu', description: 'Настройки бота' },
-  { command: 'reauth', description: 'Вход в MAX' },
+  { command: 'start', description: COMMANDS.start },
+  { command: 'menu', description: COMMANDS.menu },
+  { command: 'reauth', description: COMMANDS.reauth },
 ];
 
 let reauthHandler = null;
@@ -158,12 +171,12 @@ function previewText(text, max = 80) {
 
 async function dispatchMaxReply(chatId, target, text) {
   if (!target) {
-    await sendMessage(chatId, 'Сообщение устарело. Нажмите «Ответить» на новом сообщении из MAX.');
+    await sendMessage(chatId, REPLY.stale);
     return;
   }
 
   if (!replyHandler) {
-    await sendMessage(chatId, 'Ответы недоступны — перезапустите бота: <code>pm2 restart max-tg</code>');
+    await sendMessage(chatId, REPLY.unavailable);
     return;
   }
 
@@ -172,25 +185,23 @@ async function dispatchMaxReply(chatId, target, text) {
     await sendMessage(
       chatId,
       buildEventMessage({
-        title: 'Ответ отправлен в MAX',
+        ...REPLY.sent(escapeHtml(target.author || 'пользователя')),
         status: 'done',
-        lines: [`Получатель: <b>${escapeHtml(target.author || 'пользователь')}</b>`],
       })
     );
   } catch (err) {
     await sendMessage(
       chatId,
       buildEventMessage({
-        title: 'Не удалось отправить ответ',
+        ...REPLY.failed(escapeHtml(err.message)),
         status: 'fail',
-        lines: [escapeHtml(err.message)],
       })
     );
   }
 }
 
 function onFlag(value) {
-  return value ? '✅ вкл' : '❌ выкл';
+  return value ? `✅ ${STATUS.on}` : `❌ ${STATUS.off}`;
 }
 
 function buildStatusText() {
@@ -205,20 +216,20 @@ function buildStatusText() {
   const notifyIds = getNotificationChatIds();
 
   const lines = [
-    '<b>Настройки MAX → Telegram</b>',
+    STATUS.header,
     '',
-    `Мониторинг MAX: ${onFlag(isMonitoringEnabled())}`,
-    `Бесконечный онлайн: ${onFlag(online.enabled)} (${online.intervalMs / 1000} с)`,
-    `Авто имя: ${onFlag(profile.enabled)} (${profile.intervalMs / 1000} с)`,
-    profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : 'Имена: не заданы',
-    `Авто описание: ${onFlag(profileBio.enabled)} (${profileBio.intervalMs / 1000} с)`,
-    profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : 'Город: не задан',
+    `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}`,
+    `${STATUS.alwaysOnline}: ${onFlag(online.enabled)} · ${online.intervalMs / 1000} с`,
+    `${STATUS.profileRotate}: ${onFlag(profile.enabled)} · ${profile.intervalMs / 1000} с`,
+    profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : STATUS.namesUnset,
+    `${STATUS.profileBio}: ${onFlag(profileBio.enabled)} · ${profileBio.intervalMs / 1000} с`,
+    profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : STATUS.cityUnset,
     `Шаблон: <code>${escapeHtml(profileBio.template)}</code>`,
     maxName
       ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
-      : 'Имя в MAX: определяется автоматически',
+      : STATUS.nameAuto,
     '',
-    '<b>Чаты MAX:</b>',
+    `<b>${STATUS.chatsHeader}</b>`,
     monitorUrls.length
       ? monitorUrls
           .map((url) => {
@@ -226,16 +237,16 @@ function buildStatusText() {
             return `${star}<code>${escapeHtml(url)}</code>`;
           })
           .join('\n')
-      : 'не заданы',
+      : STATUS.chatsUnset,
     notifyIds.length
-      ? `Уведомления в TG: ${notifyIds.map((id) => `<code>${id}</code>`).join(', ')}`
-      : 'Уведомления в TG: не задан',
+      ? `Уведомления: ${notifyIds.map((id) => `<code>${id}</code>`).join(', ')}`
+      : STATUS.notifyUnset,
   ];
 
   return lines.filter(Boolean).join('\n');
 }
 
-const DISCOVER_ID_BUTTON = '🔍 Узнать ID';
+const DISCOVER_ID_BUTTON = BUTTONS.discoverId;
 const DISCOVER_CHAT_REQUEST_ID = 1;
 
 function buildDiscoverReplyKeyboard() {
@@ -266,22 +277,22 @@ function buildMenuKeyboard() {
   const rows = [
     [buildToggleButton(prefix, TOGGLES[0])],
     [buildToggleButton(prefix, TOGGLES[1]), buildToggleButton(prefix, TOGGLES[2])],
-    [{ text: 'Имена авто', callback_data: 'action:profileNames' }],
+    [{ text: BUTTONS.profileNames, callback_data: 'action:profileNames' }],
     [
-      { text: 'Шаблон описания', callback_data: 'action:profileBioTemplate' },
-      { text: 'Город', callback_data: 'action:profileBioCity' },
+      { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
+      { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
     ],
     [
-      { text: 'Чаты МАХ', callback_data: 'maxchat:list' },
-      { text: 'Чат уведомлений', callback_data: 'action:notifyChat' },
+      { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
+      { text: BUTTONS.notifyChat, callback_data: 'action:notifyChat' },
     ],
   ];
 
-  const statusRow = [{ text: 'Обновить статус', callback_data: 'status' }];
+  const statusRow = [{ text: BUTTONS.refreshStatus, callback_data: 'status' }];
   if (isMonitoringEnabled()) {
-    statusRow.push({ text: 'Остановить МАХ', callback_data: 'action:stopMax' });
+    statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax' });
   } else {
-    statusRow.push({ text: 'Запустить МАХ', callback_data: 'action:startMax' });
+    statusRow.push({ text: BUTTONS.startMax, callback_data: 'action:startMax' });
   }
   rows.push(statusRow);
 
@@ -300,7 +311,7 @@ function parseSetCommand(text) {
   const rawValue = (match[2] || '').trim();
 
   if (key === 'chaturl') {
-    if (!rawValue) return { error: 'Укажите ссылку на чат MAX' };
+    if (!rawValue) return { error: ERRORS.chatUrlRequired };
     const result = setDefaultChatUrl(rawValue);
     if (result.error) return { error: result.error };
     return { ok: true, key, value: result.url };
@@ -316,13 +327,13 @@ function parseSetCommand(text) {
   const rule = SETTABLE[key];
   if (!rule) {
     return {
-      error: `Неизвестный ключ. Доступно: chaturl, browserpassword, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`,
+      error: ERRORS.unknownKey(`chaturl, browserpassword, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`),
     };
   }
 
   if (rule.type === 'names') {
     const names = parseNameList(rawValue);
-    if (!names.length) return { error: 'Укажите имена через запятую' };
+    if (!names.length) return { error: ERRORS.namesRequired };
     saveProfileNames(names);
     return { ok: true, key, value: names.join(', ') };
   }
@@ -330,11 +341,11 @@ function parseSetCommand(text) {
   let value = rawValue;
   if (rule.type === 'int') {
     value = Number.parseInt(rawValue, 10);
-    if (Number.isNaN(value)) return { error: 'Нужно целое число' };
+    if (Number.isNaN(value)) return { error: ERRORS.numberRequired };
     if (rule.min != null && value < rule.min) return { error: `Минимум: ${rule.min}` };
     if (rule.max != null && value > rule.max) return { error: `Максимум: ${rule.max}` };
   } else if (!rawValue) {
-    return { error: 'Укажите значение после ключа' };
+    return { error: ERRORS.valueRequired };
   }
 
   store.setPath(rule.path, value);
@@ -344,7 +355,7 @@ function parseSetCommand(text) {
 async function handleBrowserPasswordInput(chatId, text) {
   const password = String(text || '').trim();
   if (!password) {
-    await sendMessage(chatId, 'Пароль не может быть пустым. Отправьте пароль или /cancel.');
+    await sendMessage(chatId, AUTH.passwordEmpty);
     return true;
   }
 
@@ -378,7 +389,7 @@ async function sendBrowserPasswordSetResponse(chatId, result = {}) {
 async function handleProfileBioCityInput(chatId, text) {
   const city = String(text || '').trim();
   if (!city) {
-    await sendMessage(chatId, 'Город не распознан. ' + PROFILE_BIO_CITY_HINT);
+    await sendMessage(chatId, ERRORS.cityNotRecognized + PROFILE_BIO_CITY_HINT);
     return false;
   }
 
@@ -386,11 +397,7 @@ async function handleProfileBioCityInput(chatId, text) {
   waitingInput.delete(String(chatId));
   await sendMessage(
     chatId,
-    buildEventMessage({
-      title: 'Город сохранён',
-      status: 'done',
-      lines: [`Город: <code>${escapeHtml(city)}</code>`, '', buildStatusText()],
-    }),
+      buildEventMessage({ ...SAVED.city(escapeHtml(city)), status: 'done', lines: [...SAVED.city(escapeHtml(city)).lines, '', buildStatusText()] }),
     { reply_markup: buildMenuKeyboard() }
   );
   return true;
@@ -399,7 +406,7 @@ async function handleProfileBioCityInput(chatId, text) {
 async function handleProfileBioTemplateInput(chatId, text) {
   const template = String(text || '').trim();
   if (!template) {
-    await sendMessage(chatId, 'Шаблон не распознан. ' + PROFILE_BIO_TEMPLATE_HINT);
+    await sendMessage(chatId, ERRORS.templateNotRecognized + PROFILE_BIO_TEMPLATE_HINT);
     return false;
   }
 
@@ -417,7 +424,7 @@ async function handleProfileBioTemplateInput(chatId, text) {
   await sendMessage(
     chatId,
     buildEventMessage({
-      title: 'Шаблон описания сохранён',
+      title: SAVED.template(escapeHtml(preview.text)).title,
       status: 'done',
       lines: [
         `Шаблон: <code>${escapeHtml(template)}</code>`,
@@ -434,7 +441,7 @@ async function handleProfileBioTemplateInput(chatId, text) {
 async function handleProfileNamesInput(chatId, text) {
   const names = parseNameList(text);
   if (!names.length) {
-    await sendMessage(chatId, 'Не распознано. ' + PROFILE_NAMES_HINT);
+    await sendMessage(chatId, ERRORS.notRecognized + PROFILE_NAMES_HINT);
     return false;
   }
 
@@ -442,10 +449,10 @@ async function handleProfileNamesInput(chatId, text) {
   waitingInput.delete(String(chatId));
   await sendMessage(
     chatId,
-    buildEventMessage({
-      title: 'Имена авто сохранены',
+      buildEventMessage({
+      title: SETUP.namesSaved(names.join(' → ')).title,
       status: 'done',
-      lines: [`Список: ${names.join(' → ')}`, '', buildStatusText()],
+      lines: [`Порядок смены: ${names.join(' → ')}`, '', buildStatusText()],
     }),
     { reply_markup: buildMenuKeyboard() }
   );
@@ -455,31 +462,19 @@ async function handleProfileNamesInput(chatId, text) {
 function buildAuthInputAcceptedMessage(waiter) {
   const label = String(waiter?.label || '').toLowerCase();
 
+  if (waiter?.field === 'password') {
+    return buildEventMessage({ ...AUTH.passwordAccepted, status: 'done' });
+  }
+
   if (/код из sms|sms/.test(label)) {
-    return buildEventMessage({
-      title: 'Код принят',
-      status: 'done',
-      lines: ['Ввожу код в MAX…'],
-    });
+    return buildEventMessage({ ...AUTH.codeAccepted, status: 'done' });
   }
 
   if (/номер телефона|телефон/.test(label)) {
-    return buildEventMessage({
-      title: 'Вхожу в MAX',
-      status: 'progress',
-      lines: ['Номер принят, продолжаю вход…'],
-    });
+    return buildEventMessage({ ...AUTH.phoneProgress(''), status: 'progress', lines: ['Номер принят, продолжаю вход…'] });
   }
 
-  if (waiter?.field === 'password') {
-    return buildBrowserPasswordAcceptedMessage();
-  }
-
-  return buildEventMessage({
-    title: 'Принято',
-    status: 'done',
-    lines: ['Продолжаю…'],
-  });
+  return buildEventMessage({ ...AUTH.inputAccepted, status: 'done' });
 }
 
 async function handleAuthInput(chatId, text) {
@@ -519,7 +514,7 @@ async function handleAuthInput(chatId, text) {
         if (validated === false || validated == null) {
           await sendMessage(
             chatId,
-            authInputWaiter.invalidMessage || 'Неверный формат. Попробуйте ещё раз или /cancel.'
+            authInputWaiter.invalidMessage || ERRORS.invalidFormat
           );
           return true;
         }
@@ -591,7 +586,7 @@ async function showMaxChatView(chatId, messageId, index) {
     `<b>${escapeHtml(chatLabelFromUrl(url))}</b>`,
     '',
     `<code>${escapeHtml(url)}</code>`,
-    url === defaultUrl ? '⭐ Основной чат' : 'Дополнительный чат',
+    url === defaultUrl ? CHATS.primary : CHATS.secondary,
   ];
 
   await editMessageText(chatId, messageId, lines.join('\n'), {
@@ -610,7 +605,7 @@ async function handleMaxChatUrlInput(chatId, text) {
 
   const lines = [
     result.duplicate
-      ? 'Этот чат уже в списке.'
+      ? CHATS.duplicate.lines[0]
       : `Чат добавлен: <code>${escapeHtml(result.url)}</code>`,
     '',
     buildMaxChatsText(),
@@ -619,7 +614,7 @@ async function handleMaxChatUrlInput(chatId, text) {
   await sendMessage(
     chatId,
     buildEventMessage({
-      title: result.duplicate ? 'Чат уже в списке' : 'Чат MAX добавлен',
+      title: result.duplicate ? CHATS.duplicate.title : CHATS.added.title,
       status: 'done',
       lines,
     }),
@@ -653,8 +648,7 @@ async function showDiscoverChats(chatId, messageId, page = 0) {
   const text = [
     '<b>Узнать ID чата</b>',
     '',
-    'Выберите чат — бот пришлёт ID и название.',
-    'Можно привязать чат для уведомлений из MAX.',
+    CHATS.discoverHint,
   ].join('\n');
 
   if (messageId) {
@@ -696,7 +690,7 @@ async function showChatInfo(chatId, messageId, targetChatId) {
 async function handleMessage(message) {
   const chatId = message.chat.id;
   if (!isAdmin(chatId)) {
-    await sendMessage(chatId, 'Нет доступа. Добавьте свой chat ID в <code>telegram.chatIds</code>.');
+    await sendMessage(chatId, ERRORS.noAccess);
     return;
   }
 
@@ -753,14 +747,14 @@ async function handleMessage(message) {
 
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await sendMessage(chatId, 'Отменено.');
+    await sendMessage(chatId, ERRORS.cancelled);
     return;
   }
 
   if (isDiscoverIdRequest(text)) {
     await sendMessage(
       chatId,
-      'Нажмите «🔍 Узнать ID» внизу и выберите чат из списка Telegram.',
+      START.discoverPrompt,
       { reply_markup: buildDiscoverReplyKeyboard() }
     );
     return;
@@ -770,16 +764,10 @@ async function handleMessage(message) {
     waitingInput.delete(String(chatId));
     await sendMessage(
       chatId,
-      [
-        '<b>MAX → Telegram</b>',
-        '',
-        'Бот пересылает сообщения из MAX в Telegram.',
-        'Управление — кнопками ниже.',
-        `ID чата — «${DISCOVER_ID_BUTTON}» внизу, затем выберите чат из списка.`,
-      ].join('\n'),
+      START.welcome,
       { reply_markup: buildDiscoverReplyKeyboard() }
     );
-    await sendMessage(chatId, 'Панель управления ботом:', {
+    await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
     return;
@@ -787,7 +775,7 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await sendMessage(chatId, 'Панель управления ботом:', {
+    await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
     return;
@@ -800,17 +788,13 @@ async function handleMessage(message) {
 
   if (/^\/(stop|pause)$/i.test(text)) {
     if (!stopHandler) {
-      await sendMessage(chatId, 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>');
+      await sendMessage(chatId, MONITORING.stopUnavailable);
       return;
     }
     stopHandler();
     await sendMessage(
       chatId,
-      buildEventMessage({
-        title: 'Мониторинг MAX остановлен',
-        status: 'done',
-        lines: ['Сообщения из MAX больше не пересылаются.'],
-      }),
+        buildEventMessage({ ...MONITORING.stopped, status: 'done' }),
       { reply_markup: buildMenuKeyboard() }
     );
     return;
@@ -818,17 +802,13 @@ async function handleMessage(message) {
 
   if (/^\/(resume|run)$/i.test(text)) {
     if (!startHandler) {
-      await sendMessage(chatId, 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>');
+      await sendMessage(chatId, MONITORING.startUnavailable);
       return;
     }
     startHandler();
     await sendMessage(
       chatId,
-      buildEventMessage({
-        title: 'Мониторинг MAX запущен',
-        status: 'done',
-        lines: ['Сообщения из MAX снова пересылаются в Telegram.'],
-      }),
+        buildEventMessage({ ...MONITORING.started, status: 'done' }),
       { reply_markup: buildMenuKeyboard() }
     );
     return;
@@ -838,7 +818,7 @@ async function handleMessage(message) {
     if (!reauthHandler) {
       await sendMessage(
         chatId,
-        'Перезапустите установку:\n<code>bash &lt;(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)</code>'
+        ERRORS.reinstall
       );
       return;
     }
@@ -849,11 +829,7 @@ async function handleMessage(message) {
 
     await sendMessage(
       chatId,
-      buildEventMessage({
-        title: 'Способ входа в MAX',
-        status: 'wait',
-        lines: ['Выберите: QR-код или номер телефона.'],
-      }),
+      buildEventMessage({ ...AUTH.chooseMode, status: 'wait', step: 1, total: 5 }),
       { reply_markup: buildAuthModeKeyboard() }
     );
     return;
@@ -883,7 +859,7 @@ async function handleMessage(message) {
   }
 
   if (/^\/help$/i.test(text)) {
-    await sendMessage(chatId, 'Всё управление — в /menu (кнопки ниже).', {
+    await sendMessage(chatId, START.help, {
       reply_markup: buildMenuKeyboard(),
     });
     return;
@@ -908,7 +884,7 @@ async function handleMessage(message) {
       await sendMessage(
         chatId,
         buildEventMessage({
-          title: 'Сохранено',
+          title: SAVED.setting(result.key, result.value).title,
           status: 'done',
           lines: [
             `<code>${result.key}</code> = <code>${result.value}</code>`,
@@ -937,13 +913,13 @@ async function handleCallback(query) {
       await answerCallback(query.id, 'Недоступно');
       await sendMessage(
         chatId,
-        'Перезапустите установку:\n<code>bash &lt;(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)</code>'
+        ERRORS.reinstall
       );
       return;
     }
 
     if (isAuthBusyCheck() || isAuthSessionActive()) {
-      await answerCallback(query.id, 'Уже идёт вход');
+      await answerCallback(query.id, AUTH.alreadyAuth);
       return;
     }
 
@@ -966,21 +942,13 @@ async function handleCallback(query) {
         }
         await sendMessage(
           chatId,
-          buildEventMessage({
-            title: 'Сессия MAX обновлена',
-            status: 'done',
-            lines: ['Мониторинг продолжается.'],
-          })
+          buildEventMessage({ ...AUTH.loginDoneReauth, status: 'done' }),
         );
       })
       .catch(async (err) => {
         await sendMessage(
           chatId,
-          buildEventMessage({
-            title: 'Ошибка входа в MAX',
-            status: 'fail',
-            lines: [err.message],
-          })
+          buildEventMessage({ ...AUTH.loginFail(err.message), status: 'fail' }),
         );
       });
     return;
@@ -989,7 +957,7 @@ async function handleCallback(query) {
   if (data === 'auth:refresh') {
     await answerCallback(query.id, 'Обновляю…');
     if (!isAuthSessionActive()) {
-      await sendMessage(chatId, 'Сейчас авторизация не идёт. Отправьте /reauth');
+      await sendMessage(chatId, AUTH.refreshNoAuth);
       return;
     }
 
@@ -1016,7 +984,8 @@ async function handleCallback(query) {
         `<b>Ответ для ${escapeHtml(target.author || 'пользователя')}</b>`,
         `<i>${escapeHtml(previewText(target.body))}</i>`,
         '',
-        'Напишите текст ответа (или /cancel).',
+        'Напишите текст сообщения.',
+        'Отмена: /cancel',
       ].join('\n')
     );
     return;
@@ -1025,7 +994,7 @@ async function handleCallback(query) {
   if (data === 'action:stopMax') {
     await answerCallback(query.id, 'Остановлено');
     if (!stopHandler) {
-      await sendMessage(chatId, 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>');
+      await sendMessage(chatId, MONITORING.stopUnavailable);
       return;
     }
     stopHandler();
@@ -1044,17 +1013,13 @@ async function handleCallback(query) {
   if (data === 'action:startMax') {
     await answerCallback(query.id, 'Запущено');
     if (!startHandler) {
-      await sendMessage(chatId, 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>');
+      await sendMessage(chatId, MONITORING.startUnavailable);
       return;
     }
     startHandler();
     await sendMessage(
       chatId,
-      buildEventMessage({
-        title: 'Мониторинг MAX запущен',
-        status: 'done',
-        lines: ['Пересылка сообщений включена.'],
-      }),
+        buildEventMessage({ ...MONITORING.started, status: 'done', lines: ['Пересылка сообщений включена.'] }),
       { reply_markup: buildMenuKeyboard() }
     );
     return;
@@ -1198,14 +1163,14 @@ async function handleCallback(query) {
     await sendMessage(
       chatId,
       buildEventMessage({
-        title: 'Чат привязан для уведомлений',
+        title: CHATS.bound.title,
         status: 'done',
         lines: [
           known?.title ? `Название: <b>${escapeHtml(known.title)}</b>` : null,
           `ID: <code>${targetChatId}</code>`,
           boundChatIds.length > 1
-            ? 'Сообщения из MAX будут приходить в ЛС и в этот чат.'
-            : 'Сообщения из MAX будут приходить в ЛС.',
+            ? CHATS.bound.lines(true)[0]
+            : CHATS.bound.lines(false)[0],
         ].filter(Boolean),
       }),
       { reply_markup: buildMenuKeyboard() }
@@ -1234,7 +1199,7 @@ async function handleCallback(query) {
       const names = store.getPath(['profileRotate', 'names']) || [];
       if (!names.length) {
         waitingInput.set(String(chatId), 'profileNames');
-        await sendMessage(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT);
+        await sendMessage(chatId, HINTS.profileNamesEnabled + PROFILE_NAMES_HINT);
       }
     }
 
@@ -1242,7 +1207,7 @@ async function handleCallback(query) {
       const city = store.getPath(['profileBio', 'city']) || '';
       if (!city) {
         waitingInput.set(String(chatId), 'profileBioCity');
-        await sendMessage(chatId, 'Авто описание включено. ' + PROFILE_BIO_CITY_HINT);
+        await sendMessage(chatId, HINTS.profileBioEnabled + PROFILE_BIO_CITY_HINT);
       }
     }
 

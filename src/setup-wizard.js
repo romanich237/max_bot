@@ -14,6 +14,7 @@ const {
 } = require('./tg-settings');
 const { registerBotCommands } = require('./tg-admin');
 const { buildEventMessage, buildPipeline } = require('./tg-events');
+const { SETUP, BUTTONS } = require('./bot-texts');
 
 const WIZARD_STEPS = 3;
 
@@ -21,8 +22,8 @@ const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
 function buildWizardKeyboard() {
   const rows = buildToggleRows('wizard:toggle:');
-  rows.push([{ text: '✏️ Имена авто', callback_data: 'wizard:profileNames' }]);
-  rows.push([{ text: '✅ Готово, запустить бота', callback_data: 'wizard:finish' }]);
+  rows.push([{ text: '✏️ Список имён', callback_data: 'wizard:profileNames' }]);
+  rows.push([{ text: '✅ Завершить настройку', callback_data: 'wizard:finish' }]);
   return { inline_keyboard: rows };
 }
 
@@ -34,11 +35,11 @@ async function promptOptions(chatId, token) {
   await sendMessage(
     chatId,
     buildEventMessage({
-      title: 'Настройки бота',
+      title: SETUP.wizardTitle,
       status: 'wait',
       step: 3,
       total: WIZARD_STEPS,
-      lines: ['Настройте бота кнопками ниже (всё можно изменить позже в /menu).'],
+      lines: [SETUP.wizardOptions],
     }),
     { reply_markup: buildWizardKeyboard() },
     token
@@ -174,16 +175,7 @@ function runSetupWizard(options = {}) {
           if (!isMaxChatUrl(text)) {
             await sendMessage(
               chatId,
-              buildEventMessage({
-                title: 'Ссылка на чат MAX',
-                status: 'wait',
-                step: 2,
-                total: WIZARD_STEPS,
-                lines: [
-                  'Отправьте ссылку на чат MAX, например:',
-                  '<code>https://web.max.ru/-68396892343002</code>',
-                ],
-              }),
+            buildEventMessage({ ...SETUP.chatUrlPrompt, status: 'wait', step: 2, total: WIZARD_STEPS }),
               {},
               options.token
             );
@@ -194,13 +186,7 @@ function runSetupWizard(options = {}) {
           step = 'options';
           await sendMessage(
             chatId,
-            buildEventMessage({
-              title: 'Чат MAX сохранён',
-              status: 'done',
-              step: 2,
-              total: WIZARD_STEPS,
-              lines: [`Ссылка: <code>${text}</code>`],
-            }),
+            buildEventMessage({ ...SETUP.chatSaved(text), status: 'done', step: 2, total: WIZARD_STEPS }),
             {},
             options.token
           );
@@ -225,16 +211,7 @@ function runSetupWizard(options = {}) {
               { label: 'Настройки бота', status: 'pending' },
             ]),
             '',
-            buildEventMessage({
-              title: 'Ссылка на чат MAX',
-              status: 'wait',
-              step: 2,
-              total: WIZARD_STEPS,
-              lines: [
-                'Отправьте ссылку на чат, который нужно мониторить.',
-                'Пример: <code>https://web.max.ru/-68396892343002</code>',
-              ],
-            }),
+            buildEventMessage({ ...SETUP.chatUrlPrompt, status: 'wait', step: 2, total: WIZARD_STEPS }),
           ].join('\n'),
           {},
           options.token

@@ -102,6 +102,7 @@ async function runTerminalSetup() {
   const { setupPm2 } = require('../src/pm2');
   const { provisionDatabase, formatDatabaseTelegramMessage } = require('../src/database-provision');
   const { buildEventMessage, buildPipeline } = require('../src/tg-events');
+  const { SETUP } = require('../src/bot-texts');
 
   store.reload();
 
@@ -127,15 +128,10 @@ async function runTerminalSetup() {
   await registerBotCommands();
   await runAuthTelegram({
     introMessage: buildEventMessage({
-      title: 'Настройка MAX → Telegram',
+      ...SETUP.installIntro,
       status: 'progress',
       step: 1,
       total: 5,
-      lines: [
-        'Всё в Telegram — без веб-страницы.',
-        'Выберите вход: <b>QR-код</b> или <b>номер телефона</b>.',
-        'Для QR пришлю скриншот; для телефона — запросы в чате.',
-      ],
     }),
     useAuthCallbackPoll: true,
     sendQrPhotos: true,
@@ -160,22 +156,18 @@ async function runTerminalSetup() {
       await sendMessage(
         chatId,
         [
-          buildPipeline('Установка завершена', [
+          buildPipeline(SETUP.installDone(botUsername).pipeline, [
             { label: 'Telegram', status: 'done' },
             { label: 'База данных', status: 'done' },
             { label: 'Вход в MAX', status: 'done' },
             { label: 'Чат MAX', status: 'done' },
-            { label: 'Настройки бота', status: 'done' },
-            { label: 'Запуск PM2', status: 'done' },
+            { label: 'Настройки', status: 'done' },
+            { label: 'Запуск', status: 'done' },
           ]),
           '',
           buildEventMessage({
-            title: 'Бот запущен',
+            ...SETUP.installDone(botUsername),
             status: 'done',
-            lines: [
-              botUsername ? `Telegram: @${botUsername}` : null,
-              'Отправьте /menu для управления.',
-            ].filter(Boolean),
           }),
         ].join('\n')
       );

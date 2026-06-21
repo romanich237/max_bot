@@ -22,6 +22,7 @@ const {
   upsertAuthText,
 } = require('./auth-caption');
 const { launchMaxContext } = require('./browser-context');
+const { BUTTONS, AUTH } = require('./bot-texts');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
 const QR_REFRESH_MS = DEFAULT_QR_REFRESH_MS;
@@ -30,36 +31,20 @@ const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
 function buildAuthModeKeyboard(options = {}) {
   const rows = [];
   if (options.allowQr !== false) {
-    rows.push([{ text: '📷 QR-код', callback_data: 'auth:mode:qr' }]);
+    rows.push([{ text: BUTTONS.authQr, callback_data: 'auth:mode:qr' }]);
   }
-  rows.push([{ text: '📱 Номер телефона', callback_data: 'auth:mode:phone' }]);
+  rows.push([{ text: BUTTONS.authPhone, callback_data: 'auth:mode:phone' }]);
   return { inline_keyboard: rows };
 }
 
 function buildPhoneAuthWarningMessage() {
-  return buildEventMessage({
-    title: 'Вход по номеру телефона',
-    status: 'wait',
-    lines: [
-      'Предупреждаем: для входа по номеру MAX требует установить пароль в личном кабинете.',
-      'Если вы уже это сделали — пропустите это сообщение.',
-    ],
-  });
+  return buildEventMessage({ ...AUTH.phoneWarning, status: 'wait' });
 }
 
-const PHONE_AUTH_WARNING_SHORT =
-  'Предупреждаем: для входа по номеру MAX требует установить пароль в личном кабинете. Если вы уже это сделали — пропустите.';
+const PHONE_AUTH_WARNING_SHORT = AUTH.phoneWarningShort;
 
 function buildActiveSessionMessage() {
-  return buildEventMessage({
-    title: 'Сессия MAX активна',
-    status: 'done',
-    lines: [
-      'Повторный вход не нужен — сессия уже авторизована.',
-      'Чтобы войти заново, удалите это устройство в MAX: настройки → Безопасность → Устройства.',
-      'После удаления отправьте /reauth.',
-    ],
-  });
+  return buildEventMessage({ ...AUTH.sessionActive, status: 'done' });
 }
 
 async function probeMaxSession(page, chatUrl) {
@@ -287,13 +272,12 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
     const intro =
       options.introMessage ||
       buildEventMessage({
-        title: 'Вход в MAX по QR-коду',
+        ...AUTH.qrIntro(qrRefreshSeconds(QR_REFRESH_MS)),
         status: 'wait',
         step: 1,
         total: 3,
         lines: [
-          'Сейчас пришлю скриншот QR — отсканируйте в приложении MAX.',
-          `QR обновляется каждые ${qrRefreshSeconds(QR_REFRESH_MS)} сек. Или нажмите «Обновить».`,
+          ...AUTH.qrIntro(qrRefreshSeconds(QR_REFRESH_MS)).lines,
           '',
           buildBrowserPasswordHintHtml(),
         ],
@@ -306,9 +290,7 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
 
   const ok = await waitForLogin(page, chatIds, options);
   if (!ok) {
-    throw new Error(
-      'Время ожидания входа истекло (10 мин). Запустите снова: bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)'
-    );
+    throw new Error(AUTH.timeout);
   }
 
   if (options.afterLoginChatUrl) {
@@ -322,10 +304,11 @@ async function runAuthQrOnPage(page, chatIds, options = {}) {
   await notifyEvent(
     chatIds,
     {
-      title: 'Вход в MAX завершён',
+      title: AUTH.loginDone.title,
       status: 'done',
       step: 5,
       total: 5,
+      lines: AUTH.loginDone.lines,
     },
     options
   );
@@ -354,13 +337,7 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
   for (const chatId of chatIds) {
     await sendMessage(
       chatId,
-      buildEventMessage({
-        title: 'Способ входа в MAX',
-        status: 'wait',
-        step: 1,
-        total: 5,
-        lines: ['Выберите: <b>QR-код</b> или <b>номер телефона</b>.'],
-      }),
+      buildEventMessage({ ...AUTH.chooseMode, status: 'wait', step: 1, total: 5 }),
       { reply_markup: keyboard },
       options.token
     );

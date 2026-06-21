@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { CHATS, BUTTONS } = require('./bot-texts');
 const path = require('path');
 const { store, resolveFromRoot, getNotificationChatIds, isPrivateChatId } = require('./config');
 
@@ -123,7 +124,7 @@ function buildDiscoverKeyboard(page = 0) {
 function buildChatInfoText(chat, freshTitle) {
   const title = freshTitle || chat.title || 'Без названия';
   const lines = [
-    '<b>Информация о чате</b>',
+    `<b>${CHATS.infoHeader}</b>`,
     '',
     `Название: <b>${escapeHtml(title)}</b>`,
     `ID: <code>${chat.id}</code>`,
@@ -134,41 +135,30 @@ function buildChatInfoText(chat, freshTitle) {
     lines.push(`Username: @${escapeHtml(chat.username)}`);
   }
 
-  lines.push(
-    '',
-    'Скопируйте ID или нажмите «Привязать», чтобы сюда приходили уведомления из MAX.',
-    'ЛС получает уведомления всегда; для группы — дублирование в ЛС и в группу.',
-    'Добавьте бота в этот чат, чтобы сообщения стабильно приходили куда надо.'
-  );
+  lines.push('', CHATS.infoFooter);
   return lines.join('\n');
 }
 
 function buildChatInfoKeyboard(chatId) {
   return {
     inline_keyboard: [
-      [{ text: '✅ Привязать для уведомлений', callback_data: `bindchat:${chatId}` }],
-      [{ text: '« К списку чатов', callback_data: 'discover:page:0' }],
-      [{ text: '« В меню', callback_data: 'discover:menu' }],
+      [{ text: BUTTONS.bindNotify, callback_data: `bindchat:${chatId}` }],
+      [{ text: BUTTONS.backToChats, callback_data: 'discover:page:0' }],
+      [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
     ],
   };
 }
 
 function buildDiscoverEmptyText() {
-  return [
-    '<b>Узнать ID чата</b>',
-    '',
-    'Нажмите «🔍 Узнать ID» внизу экрана — откроется список чатов Telegram.',
-    'Выберите чат — бот пришлёт ID и название.',
-    'Бот должен быть добавлен в выбранный чат.',
-  ].join('\n');
+  return CHATS.discoverEmpty;
 }
 
 function buildNotifyChatText() {
   const chatIds = getNotificationChatIds();
-  const lines = ['<b>Чат для уведомлений из MAX</b>', ''];
+  const lines = [`<b>${CHATS.notifyHeader}</b>`, ''];
 
   if (!chatIds.length) {
-    lines.push('Сейчас чат не задан.');
+    lines.push(CHATS.notifyEmpty);
   } else {
     for (const id of chatIds) {
       const known = getKnownChat(id);
@@ -178,13 +168,7 @@ function buildNotifyChatText() {
     }
   }
 
-  lines.push(
-    '',
-    'По умолчанию уведомления приходят в ЛС.',
-    'При привязке группы — дублируются в ЛС и в группу.',
-    '',
-    'Нажмите «🔍 Узнать ID» внизу — выберите чат из списка Telegram.'
-  );
+  lines.push('', CHATS.notifyFooter);
   return lines.join('\n');
 }
 
