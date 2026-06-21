@@ -36,6 +36,18 @@ function formatReply(reply) {
   return `↩ <b>${author}</b>:\n${body}`;
 }
 
+function displayAuthor(author) {
+  const clean = String(author || '').trim();
+  if (!clean || clean === 'Неизвестно') return '';
+  return clean;
+}
+
+function formatAuthorLine(author) {
+  const clean = displayAuthor(author);
+  if (!clean) return '';
+  return `<b>${escapeHtml(clean)}</b>`;
+}
+
 function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {}) {
   const telegram = getTelegram();
   const showTime = telegram.showTime ?? false;
@@ -57,7 +69,8 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
     );
   }
 
-  parts.push(`<b>${escapeHtml(message.author || 'Неизвестно')}</b>`);
+  const authorLine = formatAuthorLine(message.author);
+  if (authorLine) parts.push(authorLine);
 
   if (!sendContext.useNativeReply) {
     const replyText = formatReply(message.reply);
@@ -266,7 +279,7 @@ async function sendPhotoGroup(message, photoFiles, isCatchUp, sendContext, meta 
 }
 
 async function sendReplyPrompt(chatId, message, replyMarkup, token) {
-  const author = escapeHtml(message.author || 'Неизвестно');
+  const author = escapeHtml(displayAuthor(message.author) || 'сообщение');
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   const form = new FormData();
   form.append('chat_id', String(chatId));

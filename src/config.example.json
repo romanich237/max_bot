@@ -15,6 +15,7 @@
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",
+    "monitorAllChats": false,
     "monitoringEnabled": true,
     "browserPassword": ""
   },

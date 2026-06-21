@@ -11,6 +11,7 @@ const {
   getDefaultChatUrl,
   getMonitorChatUrls,
   getForwardingMonitorChatUrls,
+  isMonitorAllChatsEnabled,
   getDatabase,
   store,
 } = require('./config');
@@ -25,7 +26,7 @@ const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, discoverMaxChatsForMonitor } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -262,6 +263,39 @@ async function startMonitor() {
   let sessionExpiredNotified = false;
   let sessionExpiredAt = 0;
   const SESSION_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+  let discoveredMonitorUrls = [];
+  let lastDiscoveryAt = 0;
+  const DISCOVERY_INTERVAL_MS = 5 * 60 * 1000;
+
+  function getActiveMonitorUrls() {
+    return getForwardingMonitorChatUrls(discoveredMonitorUrls);
+  }
+
+  async function refreshDiscoveredUrlsIfNeeded(page, force = false) {
+    if (!isMonitorAllChatsEnabled()) {
+      discoveredMonitorUrls = [];
+      lastDiscoveryAt = 0;
+      return discoveredMonitorUrls;
+    }
+
+    const now = Date.now();
+    if (!force && discoveredMonitorUrls.length && now - lastDiscoveryAt < DISCOVERY_INTERVAL_MS) {
+      return discoveredMonitorUrls;
+    }
+
+    try {
+      const { urls } = await discoverMaxChatsForMonitor(page);
+      discoveredMonitorUrls = urls;
+      lastDiscoveryAt = now;
+      if (urls.length) {
+        console.log(`Режим «все чаты»: найдено ${urls.length} чатов в MAX`);
+      }
+    } catch (err) {
+      console.warn('Не удалось обновить список всех чатов MAX:', err.message);
+    }
+
+    return discoveredMonitorUrls;
+  }
 
   function isEditOk(result) {
     if (result?.ok) return true;
@@ -536,9 +570,20 @@ async function startMonitor() {
     }
   });
 
-  const monitorUrls = getForwardingMonitorChatUrls();
   const allUrls = getMonitorChatUrls();
-  console.log(`Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length}):`);
+  if (isMonitorAllChatsEnabled()) {
+    profileBusy = true;
+    try {
+      await refreshDiscoveredUrlsIfNeeded(page, true);
+    } finally {
+      profileBusy = false;
+    }
+  }
+
+  const monitorUrls = getActiveMonitorUrls();
+  console.log(
+    `Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length})${isMonitorAllChatsEnabled() ? ' · режим «все чаты»' : ''}:`
+  );
   for (const url of allUrls) {
     const mark = url === defaultChatUrl ? '⭐' : '•';
     const muted = monitorUrls.includes(url) ? '' : ' [пересылка выкл.]';
@@ -717,7 +762,11 @@ async function startMonitor() {
     if (!isMonitoringEnabled() || profileBusy || authBusy) return;
 
     try {
-      const monitorUrls = getForwardingMonitorChatUrls();
+      if (isMonitorAllChatsEnabled()) {
+        await refreshDiscoveredUrlsIfNeeded(page);
+      }
+
+      const monitorUrls = getActiveMonitorUrls();
       let urlsChanged = false;
 
       for (const url of monitorUrls) {

@@ -173,6 +173,7 @@ module.exports = {
   getDefaultChatUrl: maxChats.getDefaultChatUrl,
   getMonitorChatUrls: maxChats.getMonitorChatUrls,
   getForwardingMonitorChatUrls: maxChats.getForwardingMonitorChatUrls,
+  isMonitorAllChatsEnabled: maxChats.isMonitorAllChatsEnabled,
   getProfileRotate,
   getProfileBio,
   getAlwaysOnline,

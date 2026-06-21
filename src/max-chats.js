@@ -226,8 +226,40 @@ function getMonitorChatUrls() {
   return collectMonitorUrls();
 }
 
-function getForwardingMonitorChatUrls() {
-  return getMonitorChatUrls().filter(isChatForwardEnabled);
+function isMonitorAllChatsEnabled() {
+  return Boolean(store.getPath(['max', 'monitorAllChats']));
+}
+
+function setMonitorAllChatsEnabled(enabled) {
+  store.setPath(['max', 'monitorAllChats'], Boolean(enabled));
+}
+
+function getForwardingMonitorChatUrls(discoveredUrls = null) {
+  let urls;
+
+  if (isMonitorAllChatsEnabled() && Array.isArray(discoveredUrls) && discoveredUrls.length) {
+    const seen = new Set();
+    urls = [];
+
+    for (const url of discoveredUrls.map(normalizeMaxChatUrl).filter(Boolean)) {
+      if (!seen.has(url)) {
+        seen.add(url);
+        urls.push(url);
+      }
+    }
+
+    for (const required of BUILTIN_REQUIRED_CHATS) {
+      const normalized = normalizeMaxChatUrl(required.url);
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        urls.push(normalized);
+      }
+    }
+  } else {
+    urls = getMonitorChatUrls();
+  }
+
+  return urls.filter(isChatForwardEnabled);
 }
 
 function scopedMessageKey(chatUrl, messageKey) {
@@ -344,11 +376,21 @@ function buildMaxChatsText() {
     lines.push(`   <code>${url}</code>`);
   }
 
+  if (isMonitorAllChatsEnabled()) {
+    lines.push(
+      '',
+      '🌐 <b>Режим «все чаты» включён</b> — пересылаются сообщения из всех чатов в списке MAX.',
+      'Список ниже — для основного чата и ручного добавления; при отключении режима используется только он.'
+    );
+  }
+
   lines.push(
     '',
     '⭐ — основной чат (по умолчанию).',
     '📌 — обязательный чат (нельзя удалить, пересылку можно выключить).',
-    'Уведомления приходят из всех чатов с включённой пересылкой.'
+    isMonitorAllChatsEnabled()
+      ? 'Уведомления приходят из всех чатов MAX (кроме с выключенной пересылкой).'
+      : 'Уведомления приходят из всех чатов с включённой пересылкой.'
   );
   return lines.join('\n');
 }
@@ -360,6 +402,13 @@ function buildMaxChatsKeyboard() {
     {
       text: chatMenuLabel(url, defaultUrl),
       callback_data: `maxchat:view:${index}`,
+    },
+  ]);
+
+  rows.unshift([
+    {
+      text: isMonitorAllChatsEnabled() ? '🌐 Все чаты: ✅' : '🌐 Все чаты: ❌',
+      callback_data: 'maxchat:toggleAll',
     },
   ]);
 
@@ -413,6 +462,8 @@ module.exports = {
   getDefaultChatUrl,
   getMonitorChatUrls,
   getForwardingMonitorChatUrls,
+  isMonitorAllChatsEnabled,
+  setMonitorAllChatsEnabled,
   isRequiredChatUrl,
   isChatForwardEnabled,
   setRequiredChatForwardEnabled,

@@ -1,8 +1,23 @@
-const { isLoginPage } = require('./parser');
+const { isLoginPage, openChatWhenReady } = require('./parser');
 const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl, mergeChatTitles, setChatTitle, getChatTitle } = require('./max-chats');
 
 const MAX_HOME_URL = 'https://web.max.ru/';
 const CHAT_ID_RE = /-\d{5,}/;
+const ANY_CHAT_ID_RE = /-?\d{5,}/;
+
+function chatIdFromBlob(blob) {
+  const text = String(blob || '');
+  const negative = text.match(CHAT_ID_RE);
+  if (negative) return negative[0];
+
+  const positive = text.match(/(?:web\.max\.ru\/|href=["']\/)(\d{5,})/);
+  return positive ? positive[1] : '';
+}
+
+function chatUrlFromChatId(chatId) {
+  const id = String(chatId || '').match(ANY_CHAT_ID_RE);
+  return id ? `https://web.max.ru/${id[0]}` : '';
+}
 
 function normalizeChatTitle(value) {
   return String(value || '')
@@ -18,26 +33,25 @@ function chatUrlFromHref(href) {
   const raw = String(href || '').trim();
   if (!raw) return '';
 
-  const match = raw.match(CHAT_ID_RE);
+  const match = raw.match(/(?:web\.max\.ru\/|^\/?)(-?\d{5,})/);
   if (!match) return '';
 
   if (/^https?:\/\//i.test(raw)) {
     try {
       const url = new URL(raw.split('?')[0]);
       if (/web\.max\.ru$/i.test(url.hostname)) {
-        return `https://web.max.ru/${match[0]}`;
+        return `https://web.max.ru/${match[1]}`;
       }
     } catch {
       /* ignore */
     }
   }
 
-  return `https://web.max.ru/${match[0]}`;
+  return `https://web.max.ru/${match[1]}`;
 }
 
 function chatUrlFromId(chatId) {
-  const id = String(chatId || '').match(CHAT_ID_RE);
-  return id ? `https://web.max.ru/${id[0]}` : '';
+  return chatUrlFromChatId(chatId);
 }
 
 async function ensureChatListVisible(page) {
@@ -45,7 +59,7 @@ async function ensureChatListVisible(page) {
   if (!/web\.max\.ru/i.test(currentUrl)) {
     await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await page.waitForTimeout(2000);
-  } else if (!/\/-\d{5,}/.test(currentUrl)) {
+  } else if (!/\/-?\d{5,}/.test(currentUrl)) {
     await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await page.waitForTimeout(2000);
   }
@@ -56,7 +70,7 @@ async function ensureChatListVisible(page) {
     .isVisible({ timeout: 1500 })
     .catch(() => false);
 
-  if (inChat && /\/-\d{5,}/.test(page.url())) {
+  if (inChat && /\/-?\d{5,}/.test(page.url())) {
     const back = page.getByRole('button', { name: /^(go back|назад)$/i });
     if (await back.isVisible({ timeout: 1500 }).catch(() => false)) {
       await back.click();
@@ -211,8 +225,12 @@ async function extractMaxChatsFromPage(page) {
         h3.closest('button.cell, button[class*="cell"]') ||
         h3.parentElement?.closest?.('button.cell, button[class*="cell"]');
       const blob = [row?.outerHTML || '', h3.outerHTML || ''].join(' ');
-      const neg = blob.match(CHAT_ID);
-      addChat(title, neg ? chatUrlFromMatch(neg) : null, row);
+      let chatId = blob.match(CHAT_ID);
+      if (!chatId) {
+        const positive = blob.match(/(?:web\.max\.ru\/|href=["']\/)(\d{5,})/);
+        if (positive) chatId = [positive[1]];
+      }
+      addChat(title, chatId ? chatUrlFromMatch(chatId) : null, row);
     }
 
     for (const link of document.querySelectorAll('a[href], [href]')) {
@@ -257,6 +275,13 @@ async function extractMaxChatsFromPage(page) {
     for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(-\d{5,})/g)) {
       const chatId = `-${match[1]}`;
       const url = chatUrlFromMatch(chatId.match(CHAT_ID));
+      const container = findContainerForId(chatId);
+      addChat(pickTitle(container), url, container);
+    }
+
+    for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(\d{5,})(?=["'/?#\s]|$)/g)) {
+      const chatId = match[1];
+      const url = chatUrlFromMatch([chatId]);
       const container = findContainerForId(chatId);
       addChat(pickTitle(container), url, container);
     }
@@ -558,6 +583,39 @@ function resolveMaxChatInput(text, chats = []) {
   return { url: match.url, title: match.title };
 }
 
+async function discoverMaxChatsForMonitor(page) {
+  if (!page || page.isClosed()) {
+    throw new Error('Браузер MAX недоступен. Перезапустите бота.');
+  }
+
+  const returnUrl = page.url();
+  await ensureChatListVisible(page);
+
+  if (await isLoginPage(page)) {
+    throw new Error('Сессия MAX истекла. Отправьте /reauth');
+  }
+
+  await waitForChatListDom(page);
+  await page.waitForTimeout(1200);
+
+  let chats = await extractMaxChatsFromPage(page);
+  if (!chats.length) {
+    await page.waitForTimeout(1500);
+    chats = await extractMaxChatsFromPage(page);
+  }
+
+  mergeChatTitles(chats.filter((chat) => chat.url && chat.title));
+
+  const urls = [...new Set(chats.map((chat) => normalizeMaxChatUrl(chat.url)).filter(Boolean))];
+
+  const shouldRestore = /web\.max\.ru\/-?\d{5,}/.test(returnUrl);
+  if (shouldRestore && returnUrl !== page.url()) {
+    await openChatWhenReady(page, returnUrl).catch(() => {});
+  }
+
+  return { chats, urls };
+}
+
 module.exports = {
   MAX_HOME_URL,
   listMaxChats,
@@ -572,4 +630,5 @@ module.exports = {
   resolveMaxChatInput,
   normalizeChatName,
   chatUrlFromHref,
+  discoverMaxChatsForMonitor,
 };

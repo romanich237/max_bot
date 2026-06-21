@@ -22,6 +22,8 @@ const {
   isRequiredChatUrl,
   isChatForwardEnabled,
   setRequiredChatForwardEnabled,
+  isMonitorAllChatsEnabled,
+  setMonitorAllChatsEnabled,
 } = require('./max-chats');
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
@@ -297,6 +299,7 @@ function buildStatusText() {
       : STATUS.nameAuto,
     '',
     `<b>${STATUS.chatsHeader}</b>`,
+    isMonitorAllChatsEnabled() ? '🌐 Режим «все чаты»: ✅' : null,
     monitorUrls.length
       ? monitorUrls
           .map((url) => {
@@ -1352,6 +1355,14 @@ async function handleCallback(query) {
       }),
       { reply_markup: buildNotifyChatKeyboard() }
     );
+    return;
+  }
+
+  if (data === 'maxchat:toggleAll') {
+    const next = !isMonitorAllChatsEnabled();
+    setMonitorAllChatsEnabled(next);
+    await answerCallback(query.id, next ? 'Все чаты включены' : 'Только выбранные чаты');
+    await showMaxChats(chatId, query.message.message_id);
     return;
   }
 
