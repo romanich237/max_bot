@@ -17,7 +17,21 @@ function escapeHtml(text) {
 }
 
 function normalizeMaxChatUrl(url) {
-  return String(url || '').trim();
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw.split('?')[0]);
+    if (/web\.max\.ru$/i.test(parsed.hostname)) {
+      const segment = parsed.pathname.replace(/^\/+|\/+$/g, '');
+      if (segment) return `https://web.max.ru/${segment}`;
+      return 'https://web.max.ru/';
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return raw;
 }
 
 function isMaxChatUrl(url) {
@@ -39,17 +53,31 @@ function chatIdFromUrl(url) {
 }
 
 function chatLabelFromUrl(url) {
-  const title = getChatTitle(url);
+  const normalized = normalizeMaxChatUrl(url);
+  const title = getChatTitle(normalized);
   if (title) return title;
 
-  const id = chatIdFromUrl(url);
+  for (const required of BUILTIN_REQUIRED_CHATS) {
+    if (normalizeMaxChatUrl(required.url) === normalized) {
+      return required.title;
+    }
+  }
+
+  const id = chatIdFromUrl(normalized);
   return id ? `Чат ${id}` : 'MAX';
 }
 
 function getChatTitles() {
   const raw = store.getPath(['max', 'chatTitles']);
   if (!raw || typeof raw !== 'object') return {};
-  return { ...raw };
+
+  const titles = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const normalized = normalizeMaxChatUrl(key);
+    const clean = normalizeChatTitle(value);
+    if (normalized && clean) titles[normalized] = clean;
+  }
+  return titles;
 }
 
 function getChatTitle(url) {

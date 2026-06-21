@@ -25,7 +25,7 @@ const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -162,6 +162,8 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
       return null;
     }
   }
+
+  await ensureChatTitleFromPage(page, chatUrl);
 
   let messages = await readMessages(page);
   const needsBaseline = isStartup || chatState.baselineDone === false;

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram, getNotificationChatIds, getMaxDisplayName, getMonitorChatUrls } = require('./config');
+const { getTelegram, getNotificationChatIds, getMaxDisplayName } = require('./config');
 const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
@@ -42,7 +42,7 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
   const showServiceHeader = telegram.showServiceHeader ?? false;
   const parts = [];
 
-  if (getMonitorChatUrls().length > 1 && meta.maxChatUrl) {
+  if (meta.maxChatUrl) {
     parts.push(`📁 <b>${escapeHtml(chatLabelFromUrl(meta.maxChatUrl))}</b>`, '');
   }
 

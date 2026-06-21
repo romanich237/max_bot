@@ -340,6 +340,19 @@ function normalizePageChatUrl(url) {
 }
 
 async function readOpenChatTitle(page) {
+  const profileBtn = page
+    .getByRole('button', { name: /^(Open|Открыть)\s+.+(profile|профил)/i })
+    .first();
+  if (await profileBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+    const label =
+      (await profileBtn.getAttribute('aria-label')) || (await profileBtn.innerText()) || '';
+    const fromLabel =
+      label.match(/^Open\s+(.+?)(?:'s|’s)\s+profile$/i)?.[1] ||
+      label.match(/^Открыть профиль\s+(.+)$/i)?.[1] ||
+      label.match(/^(?:Open|Открыть)\s+(.+?)(?:'s|’s)?\s*(?:profile|профил)/i)?.[1];
+    if (fromLabel?.trim()) return fromLabel.trim();
+  }
+
   const mainName = await page
     .locator('main[name*="Chat window" i], main[name*="чат" i]')
     .first()
@@ -361,6 +374,19 @@ async function readOpenChatTitle(page) {
     const match = text.match(/(?:Chat window with|Чат)\s+(.+)/i);
     if (match?.[1]) return match[1].trim();
     return text.split('\n')[0].trim();
+  }
+
+  return '';
+}
+
+async function ensureChatTitleFromPage(page, chatUrl) {
+  const normalized = normalizeMaxChatUrl(chatUrl);
+  if (!normalized || getChatTitle(normalized)) return getChatTitle(normalized);
+
+  const title = await readOpenChatTitle(page);
+  if (title) {
+    setChatTitle(normalized, title);
+    return title;
   }
 
   return '';
@@ -539,6 +565,7 @@ module.exports = {
   extractMaxChatsFromPage,
   captureMaxChatListScreenshot,
   readOpenChatTitle,
+  ensureChatTitleFromPage,
   resolveChatUrlByTitle,
   syncMonitoredChatTitles,
   resolveMaxChatByName,
