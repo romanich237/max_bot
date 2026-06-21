@@ -22,6 +22,13 @@ function ownNamesLower() {
 }
 
 async function isLoginPage(page) {
+  const authFormVisible = await page
+    .locator('form.auth--qr-code, form.auth--password, form.auth--code, form.auth')
+    .first()
+    .isVisible({ timeout: 500 })
+    .catch(() => false);
+  if (authFormVisible) return true;
+
   const url = page.url();
   if (/web\.max\.ru\/-\d+/.test(url)) {
     const inChat = await page

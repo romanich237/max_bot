@@ -6,6 +6,7 @@ const {
   getProfileBio,
   getAlwaysOnline,
   getAdminChatIds,
+  getNotificationChatIds,
   isSetupComplete,
   getDefaultChatUrl,
   getMonitorChatUrls,
@@ -21,10 +22,12 @@ const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler } = require('./tg-admin');
-const { runAuthOnPage, probeMaxSession } = require('./auth-qr');
+const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
 const { listMaxChats } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
+const { buildEventMessage } = require('./tg-events');
+const { AUTH } = require('./bot-texts');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
@@ -249,6 +252,9 @@ async function startMonitor() {
   let monitorTimer = null;
   const reauthPromptIds = {};
   const defaultChatUrl = getDefaultChatUrl();
+  let sessionExpiredNotified = false;
+  let sessionExpiredAt = 0;
+  const SESSION_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 
   function isEditOk(result) {
     if (result?.ok) return true;
@@ -311,35 +317,65 @@ async function startMonitor() {
 
   const onlineKeeper = startAlwaysOnline(page, getAlwaysOnline);
 
+  function clearSessionExpiredNotice() {
+    sessionExpiredNotified = false;
+    sessionExpiredAt = 0;
+  }
+
   async function notifyReauthNeeded(introMessage) {
     const text =
       introMessage ||
-      '<b>Сессия MAX истекла</b>\nВыберите способ входа в MAX:';
+      buildEventMessage({ ...AUTH.sessionExpired, status: 'fail' });
     const replyMarkup = buildAuthModeKeyboard();
+    const adminIds = getAdminChatIds().map(String);
+    const adminSet = new Set(adminIds);
+    const notifyIds = getNotificationChatIds().map(String);
 
-    for (const chatId of getAdminChatIds()) {
-      const key = String(chatId);
-      const existingId = reauthPromptIds[key];
-      let result;
+    try {
+      for (const chatId of adminIds) {
+        const existingId = reauthPromptIds[chatId];
+        let result;
 
-      if (existingId) {
-        result = await editMessageText(key, existingId, text, { reply_markup: replyMarkup });
-        if (!isEditOk(result)) {
-          result = await sendTgMessage(key, text, { reply_markup: replyMarkup });
+        if (existingId) {
+          result = await editMessageText(chatId, existingId, text, { reply_markup: replyMarkup });
+          if (!isEditOk(result)) {
+            result = await sendTgMessage(chatId, text, { reply_markup: replyMarkup });
+          }
+        } else {
+          result = await sendTgMessage(chatId, text, { reply_markup: replyMarkup });
         }
-      } else {
-        result = await sendTgMessage(key, text, { reply_markup: replyMarkup });
+
+        if (!isEditOk(result) && !result?.ok) {
+          console.error(`Не удалось отправить уведомление о сессии в ${chatId}:`, result?.description);
+          continue;
+        }
+
+        if (result?.result?.message_id) {
+          reauthPromptIds[chatId] = result.result.message_id;
+        }
       }
 
-      if (!isEditOk(result) && !result?.ok) {
-        console.error(`Не удалось обновить запрос входа в ${key}:`, result?.description);
-        continue;
+      for (const chatId of notifyIds) {
+        if (adminSet.has(chatId)) continue;
+        const result = await sendTgMessage(chatId, text);
+        if (!result?.ok) {
+          console.error(`Не удалось отправить уведомление о сессии в ${chatId}:`, result?.description);
+        }
       }
-
-      if (result?.result?.message_id) {
-        reauthPromptIds[key] = result.result.message_id;
-      }
+    } catch (err) {
+      console.error('Не удалось отправить уведомление о недействительной сессии MAX:', err.message);
     }
+  }
+
+  async function notifySessionExpired() {
+    const now = Date.now();
+    if (sessionExpiredNotified && now - sessionExpiredAt < SESSION_NOTIFY_COOLDOWN_MS) {
+      return;
+    }
+    sessionExpiredNotified = true;
+    sessionExpiredAt = now;
+    console.log('Сессия MAX недействительна. Отправляю уведомление в Telegram…');
+    await notifyReauthNeeded();
   }
 
   async function performReauth(options = {}) {
@@ -349,6 +385,7 @@ async function startMonitor() {
       const chatUrl = getDefaultChatUrl();
       if (await probeMaxSession(page, chatUrl)) {
         clearReauthPromptIds();
+        clearSessionExpiredNotice();
         return { alreadyActive: true };
       }
 
@@ -373,6 +410,7 @@ async function startMonitor() {
         markSeen(scoped, defaultState.seenKeys);
       }
       clearReauthPromptIds();
+      clearSessionExpiredNotice();
       await syncOwnNames(page, {
         messages: loaded,
         readProfile: true,
@@ -500,8 +538,7 @@ async function startMonitor() {
       onLoginRequired: async () => {
         if (!sessionExpired) {
           sessionExpired = true;
-          console.log('Сессия истекла. Ожидание входа через Telegram…');
-          await notifyReauthNeeded();
+          await notifySessionExpired();
         }
       },
     });
@@ -657,8 +694,7 @@ async function startMonitor() {
           onLoginRequired: async () => {
             if (!sessionExpired) {
               sessionExpired = true;
-              console.log('Сессия истекла. Ожидание входа через Telegram…');
-              await notifyReauthNeeded();
+              await notifySessionExpired();
             }
           },
         });
