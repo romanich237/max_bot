@@ -160,17 +160,24 @@ const AUTH = {
       `Код обновляется каждые ${sec} с.`,
       `Не успели? Нажмите «${BUTTONS.refreshQr}».`,
     ].join('\n'),
-  passwordCaption: (sec) =>
-    [
+  passwordCaption: (sec, pageHint) => {
+    const lines = [
       '<b>🔐 Подтверждение входа</b>',
       '',
       'MAX запрашивает пароль аккаунта.',
+    ];
+    if (pageHint) {
+      lines.push('', `Подсказка: <code>${pageHint}</code>`);
+    }
+    lines.push(
       '',
       'Сохранить пароль заранее:',
       '<code>/set browserpassword ваш_пароль</code>',
       '',
-      `Экран обновляется каждые ${sec} с`,
-    ].join('\n'),
+      `Экран обновляется каждые ${sec} с`
+    );
+    return lines.join('\n');
+  },
   passwordHint: (hasPassword, masked) => {
     const lines = [
       'При входе с нового устройства MAX может запросить пароль аккаунта (личный кабинет → Безопасность).',
@@ -192,10 +199,12 @@ const AUTH = {
   },
   passwordWait: {
     title: 'Нужен пароль',
-    lines: [
-      'Отправьте пароль аккаунта MAX.',
-      'Или заранее: <code>/set browserpassword ваш_пароль</code>',
-    ],
+    lines: (pageHint) =>
+      [
+        'Отправьте пароль аккаунта MAX.',
+        pageHint ? `Подсказка: <code>${pageHint}</code>` : null,
+        'Или заранее: <code>/set browserpassword ваш_пароль</code>',
+      ].filter(Boolean),
   },
   passwordAccepted: { title: 'Пароль принят', lines: ['Ввожу пароль в MAX…'] },
   passwordSaved: {

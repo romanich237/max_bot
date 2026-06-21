@@ -79,6 +79,37 @@ function getBrowserPassword() {
   return value ? String(value) : '';
 }
 
+async function readBrowserPasswordHint(page) {
+  if (!page || page.isClosed()) return '';
+
+  return page
+    .evaluate(() => {
+      const form = document.querySelector('form.auth--password, form.auth.auth--password');
+      if (!form) return '';
+
+      const nodes = form.querySelectorAll('p.hint--hint, p.hint.hint--start, p.hint');
+      for (const node of nodes) {
+        if (node.classList.contains('hint--error')) continue;
+        const text = (node.innerText || '').replace(/\s+/g, ' ').trim();
+        if (!text || /^(подсказка|hint)$/i.test(text)) continue;
+        return text;
+      }
+      return '';
+    })
+    .catch(() => '');
+}
+
+function formatPasswordHintLine(hintText) {
+  const value = String(hintText || '').trim();
+  if (!value) return '';
+  return `Подсказка: <code>${escapeHtml(value)}</code>`;
+}
+
+async function readBrowserPasswordHintHtml(page) {
+  const hint = await readBrowserPasswordHint(page);
+  return formatPasswordHintLine(hint);
+}
+
 async function readBodyText(page) {
   return page.locator('body').innerText();
 }
@@ -132,7 +163,7 @@ function buildQrScreenshotCaption(options = {}) {
 function buildBrowserScreenshotCaption(options = {}) {
   const refreshMs = options.refreshMs ?? DEFAULT_QR_REFRESH_MS;
   const sec = options.secondsRemaining ?? qrRefreshSeconds(refreshMs);
-  return AUTH.passwordCaption(sec);
+  return AUTH.passwordCaption(sec, options.pageHint || '');
 }
 
 async function buildScreenshotCaptionForPage(page, options = {}) {
@@ -142,7 +173,11 @@ async function buildScreenshotCaptionForPage(page, options = {}) {
     secondsRemaining: options.secondsRemaining,
   };
   if (await isBrowserPasswordPrompt(page)) {
-    return buildBrowserScreenshotCaption(captionOptions);
+    const hint = await readBrowserPasswordHint(page);
+    return buildBrowserScreenshotCaption({
+      ...captionOptions,
+      pageHint: hint ? escapeHtml(hint) : '',
+    });
   }
   return buildQrScreenshotCaption(captionOptions);
 }
@@ -215,9 +250,16 @@ async function resolveBrowserPassword(chatIds, options = {}) {
   const configured = getBrowserPassword();
   if (configured) return configured;
 
+  const pageHint = options.page ? await readBrowserPasswordHint(options.page) : '';
+  const escapedHint = pageHint ? escapeHtml(pageHint) : '';
+
   const promptMessage = options.skipPromptMessage
     ? null
-    : buildEventMessage({ ...AUTH.passwordWait, status: 'wait' });
+    : buildEventMessage({
+        ...AUTH.passwordWait,
+        status: 'wait',
+        lines: AUTH.passwordWait.lines(escapedHint),
+      });
 
   let deliveryResolve;
   const deliveryPromise = new Promise((resolve) => {
@@ -238,7 +280,7 @@ async function resolveBrowserPassword(chatIds, options = {}) {
         useWebPoll: options.useWebPoll,
         field: 'password',
         label: 'Пароль для входа',
-        hint: 'Пароль из личного кабинета MAX',
+        hint: pageHint ? `Подсказка: ${pageHint}` : 'Пароль из личного кабинета MAX',
         validate: (text) => (text.trim() ? text.trim() : null),
         invalidMessage: AUTH.passwordEmpty,
         onAccepted: () => notifyPasswordAccepted(chatIds, options),
@@ -259,6 +301,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
     configured ||
     (await resolveBrowserPassword(chatIds, {
       ...options,
+      page,
       skipPromptMessage: Boolean(options.browserScreenshotSent),
     }));
 
@@ -267,12 +310,13 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
   }
 
   if (configured) {
+    const hintLine = await readBrowserPasswordHintHtml(page);
     await notifyEvent(
       chatIds,
       {
         title: 'Вхожу в MAX',
         status: 'progress',
-        lines: ['Ввожу пароль…'],
+        lines: ['Ввожу пароль…', hintLine].filter(Boolean),
       },
       options
     );
@@ -341,6 +385,8 @@ module.exports = {
   parseBrowserPasswordCommand,
   acceptBrowserPassword,
   isBrowserPasswordPrompt,
+  readBrowserPasswordHint,
+  readBrowserPasswordHintHtml,
   buildBrowserPasswordHintHtml,
   buildBrowserPasswordAcceptedMessage,
   buildBrowserPasswordSavedMessage,
