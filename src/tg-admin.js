@@ -1126,7 +1126,7 @@ async function handleCallback(query) {
         '<b>Добавить чат MAX</b>',
         '',
         'Отправьте ссылку на чат, например:',
-        '<code>https://web.max.ru/-68396892343002</code>',
+        '<code>https://web.max.ru/-999999999999</code>',
         '',
         'Или /cancel для отмены.',
       ].join('\n')

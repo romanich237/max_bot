@@ -51,7 +51,7 @@ const HINTS = {
   maxChatAdd: [
     'Отправьте ссылку на чат MAX, который нужно отслеживать.',
     '',
-    'Пример: <code>https://web.max.ru/-68396892343002</code>',
+    'Пример: <code>https://web.max.ru/-999999999999</code>',
     '',
     'Отмена: /cancel',
   ].join('\n'),
@@ -221,14 +221,14 @@ const SETUP = {
     title: 'Чат для мониторинга',
     lines: [
       'Отправьте ссылку на чат MAX, сообщения из которого нужно пересылать.',
-      'Пример: <code>https://web.max.ru/-68396892343002</code>',
+      'Пример: <code>https://web.max.ru/-999999999999</code>',
     ],
   },
   chatUrlInvalid: {
     title: 'Некорректная ссылка',
     lines: [
       'Отправьте ссылку на чат MAX, например:',
-      '<code>https://web.max.ru/-68396892343002</code>',
+      '<code>https://web.max.ru/-999999999999</code>',
     ],
   },
   chatSaved: (url) => ({

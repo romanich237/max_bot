@@ -56,7 +56,7 @@ function renderSetupPage(token) {
     <div class="card hidden" id="panel-max">
       <h2>2. MAX</h2>
       <label>Ссылка на чат MAX</label>
-      <input id="chatUrl" placeholder="https://web.max.ru/-68396892343002" />
+      <input id="chatUrl" placeholder="https://web.max.ru/-999999999999" />
       <label>Пароль для входа (если есть)</label>
       <input id="browserPassword" type="password" placeholder="из личного кабинета MAX" autocomplete="off" />
       <div class="checks">
