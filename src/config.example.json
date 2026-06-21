@@ -49,6 +49,8 @@
   },
   "database": {
     "enabled": true,
+    "driver": "mysql",
+    "file": "./data/max.db",
     "host": "",
     "port": 3306,
     "user": "",

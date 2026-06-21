@@ -9,6 +9,7 @@ const {
   isSetupComplete,
   getDefaultChatUrl,
   getMonitorChatUrls,
+  getDatabase,
   store,
 } = require('./config');
 const {
@@ -456,7 +457,12 @@ async function startMonitor() {
   }
   console.log(`Медиа сохраняются в: ${settings.dataDir}`);
   if (db.isEnabled()) {
-    console.log('Состояние и сообщения сохраняются в MySQL');
+    const dbCfg = getDatabase();
+    if (dbCfg.driver === 'sqlite') {
+      console.log(`Состояние и сообщения сохраняются в SQLite: ${dbCfg.file}`);
+    } else {
+      console.log(`Состояние и сообщения сохраняются в MySQL: ${dbCfg.host}/${dbCfg.database}`);
+    }
   }
 
   let sessionExpired = false;

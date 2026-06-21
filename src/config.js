@@ -99,10 +99,20 @@ function getAlwaysOnline() {
   };
 }
 
+function resolveDatabaseDriver(d) {
+  if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
+  if (d.file) return 'sqlite';
+  if (d.host && d.user && d.database) return 'mysql';
+  return 'mysql';
+}
+
 function getDatabase() {
   const d = getRaw().database || {};
+  const driver = resolveDatabaseDriver(d);
   return {
     enabled: d.enabled ?? true,
+    driver,
+    file: resolveFromRoot(d.file || './data/max.db'),
     host: process.env.MYSQL_HOST || d.host || 'localhost',
     port: Number(process.env.MYSQL_PORT || d.port || 3306),
     user: process.env.MYSQL_USER || d.user || '',

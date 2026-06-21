@@ -20,6 +20,7 @@ function isConfigured(db = {}) {
 
 function saveDatabaseConfig(store, credentials) {
   store.setPath(['database', 'enabled'], true);
+  store.setPath(['database', 'driver'], 'mysql');
   store.setPath(['database', 'host'], credentials.host);
   store.setPath(['database', 'port'], credentials.port);
   store.setPath(['database', 'user'], credentials.user);

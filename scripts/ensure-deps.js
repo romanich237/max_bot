@@ -26,7 +26,19 @@ if (missing.length) {
   process.exit(1);
 }
 
-const requiredDeps = ['playwright', 'mysql2', 'adm-zip'];
+function getDbDriver() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
+    const d = cfg.database || {};
+    if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
+    if (d.file) return 'sqlite';
+    return 'mysql';
+  } catch {
+    return 'mysql';
+  }
+}
+
+const requiredDeps = ['playwright', 'adm-zip', getDbDriver() === 'sqlite' ? 'better-sqlite3' : 'mysql2'];
 let missingDep = null;
 
 for (const dep of requiredDeps) {

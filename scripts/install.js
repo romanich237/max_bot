@@ -100,7 +100,7 @@ async function runTerminalSetup() {
   const { runAuthTelegram } = require('../src/auth-qr');
   const { runSetupWizard } = require('../src/setup-wizard');
   const { setupPm2 } = require('../src/pm2');
-  const { provisionLocalDatabase, formatDatabaseTelegramMessage } = require('../src/mysql-provision');
+  const { provisionDatabase, formatDatabaseTelegramMessage } = require('../src/database-provision');
   const { buildEventMessage, buildPipeline } = require('../src/tg-events');
 
   store.reload();
@@ -110,7 +110,10 @@ async function runTerminalSetup() {
   console.log(data.result?.username ? `Telegram API доступен (@${data.result.username})\n` : 'Telegram API доступен\n');
 
   console.log('\n--- Установка базы данных ---\n');
-  const dbCredentials = await provisionLocalDatabase(store);
+  const dbCredentials = await provisionDatabase(store, {
+    driver: process.env.DB_DRIVER,
+    ask,
+  });
   const adminChatIds = store.getPath(['telegram', 'chatIds']) || [];
   for (const chatId of adminChatIds) {
     try {
@@ -189,7 +192,7 @@ async function main() {
   ensureConfigFile();
   ensureDirs();
 
-  run('npm install --omit=dev --ignore-scripts');
+  run('npm install --omit=dev');
 
   await ensureTelegramCredentials();
 

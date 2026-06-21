@@ -79,5 +79,17 @@ if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
   exit 1
 fi
 
+if [ -z "${DB_DRIVER:-}" ]; then
+  echo ""
+  echo "База данных:"
+  echo "  1) MySQL (MariaDB) — рекомендуется для VPS"
+  echo "  2) SQLite — файл в папке data/, без отдельного сервера"
+  read -rp "Выберите [1]: " db_choice
+  case "$db_choice" in
+    2|sqlite|SQLite) export DB_DRIVER=sqlite ;;
+    *) export DB_DRIVER=mysql ;;
+  esac
+fi
+
 echo ""
-exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" npm run setup
+exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" DB_DRIVER="$DB_DRIVER" npm run setup

@@ -40,7 +40,7 @@ async function loadState() {
 
     return { seenKeys, lastSnapshot, chatSnapshots: {} };
   } catch (err) {
-    console.error('MySQL недоступен, fallback на state.json:', err.message);
+    console.error('БД недоступна, fallback на state.json:', err.message);
     return loadStateFromFile();
   }
 }
@@ -58,7 +58,7 @@ async function saveState(state) {
       await db.saveSeenKeys(keys);
       await db.saveSnapshot(state.lastSnapshot);
     } catch (err) {
-      console.error('Ошибка сохранения в MySQL:', err.message);
+      console.error('Ошибка сохранения в БД:', err.message);
     }
   }
 

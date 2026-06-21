@@ -9,7 +9,7 @@ const { parseNameList, saveProfileNames } = require('../tg-settings');
 const { runAuthOnPage, PHONE_AUTH_WARNING_SHORT } = require('../auth-qr');
 const { launchMaxContext } = require('../browser-context');
 const { captureLoginScreenshot } = require('../auth-qr');
-const { provisionLocalDatabase } = require('../mysql-provision');
+const { provisionDatabase } = require('../database-provision');
 const { setupPm2 } = require('../pm2');
 const { resolveServerPublicIp, buildPortalUrl } = require('../server-ip');
 const { getAdminChatIds } = require('../config');
@@ -188,7 +188,7 @@ async function runWebSetup(options = {}) {
           try {
             await deleteWebhook();
             await registerBotCommands();
-            await provisionLocalDatabase(store);
+            await provisionDatabase(store, { driver: process.env.DB_DRIVER });
             await runMaxAuth(state, authMode);
             store.setPath(['setupComplete'], true);
             store.setPath(['max', 'monitoringEnabled'], true);
