@@ -20,9 +20,10 @@ const {
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
+const { listMaxChats } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram } = require('./telegram');
@@ -402,6 +403,26 @@ async function startMonitor() {
 
   setStartHandler(() => {
     resumeMonitoring();
+  });
+
+  setMaxChatPickerHandler(async () => {
+    if (authBusy) {
+      throw new Error('Идёт авторизация MAX, повторите позже');
+    }
+
+    const returnUrl = getDefaultChatUrl() || page.url();
+    profileBusy = true;
+    try {
+      if (await isLoginPage(page)) {
+        throw new Error('Сессия MAX истекла. Отправьте /reauth');
+      }
+      return await listMaxChats(page);
+    } finally {
+      profileBusy = false;
+      if (returnUrl && returnUrl.includes('web.max.ru')) {
+        await openChatWhenReady(page, returnUrl).catch(() => {});
+      }
+    }
   });
 
   setReplyHandler(async (targetMessage, text) => {

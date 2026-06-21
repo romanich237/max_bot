@@ -145,7 +145,7 @@ function buildMaxChatsText() {
   const lines = ['<b>Чаты MAX для уведомлений</b>', ''];
 
   if (!urls.length) {
-    lines.push('Список пуст. Добавьте ссылку на чат MAX.');
+    lines.push('Список пуст. Добавьте чат MAX по названию или ссылке.');
     return lines.join('\n');
   }
 

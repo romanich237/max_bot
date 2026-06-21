@@ -20,6 +20,7 @@ const {
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
 } = require('./max-chats');
+const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
   deleteWebhook,
   setBotCommands,
@@ -28,6 +29,7 @@ const {
   editMessageText,
   getChat,
   pollUpdates,
+  sendPhotoBuffer,
 } = require('./tg-api');
 const {
   TOGGLES,
@@ -101,8 +103,10 @@ let sessionCheckHandler = null;
 let replyHandler = null;
 let stopHandler = null;
 let startHandler = null;
+let maxChatPickerHandler = null;
 let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
+const maxChatAddCache = new Map();
 
 let authInputWaiter = null;
 
@@ -152,6 +156,54 @@ function setStopHandler(fn) {
 
 function setStartHandler(fn) {
   startHandler = fn;
+}
+
+function setMaxChatPickerHandler(fn) {
+  maxChatPickerHandler = typeof fn === 'function' ? fn : null;
+}
+
+async function clearMaxChatAddPrompt(chatId, userMessageId) {
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key);
+  if (cache?.photoMessageId) {
+    await deleteMessageQuiet(chatId, cache.photoMessageId);
+  }
+  maxChatAddCache.delete(key);
+  await clearInputPrompt(chatId, userMessageId);
+}
+
+function buildMaxChatAddCaption() {
+  return CHATS.addPrompt;
+}
+
+async function beginMaxChatAdd(chatId) {
+  const key = String(chatId);
+  maxChatAddCache.delete(key);
+
+  if (!maxChatPickerHandler) {
+    await sendInputPrompt(chatId, CHATS.addPromptNoScreenshot);
+    return;
+  }
+
+  if (isAuthBusyCheck()) {
+    await sendInputPrompt(chatId, CHATS.addPickerBusy);
+    return;
+  }
+
+  try {
+    const { chats, screenshot } = await maxChatPickerHandler();
+    const result = await sendPhotoBuffer(chatId, screenshot, buildMaxChatAddCaption());
+    maxChatAddCache.set(key, {
+      chats,
+      photoMessageId: result?.result?.message_id || null,
+    });
+    if (!result?.ok) {
+      await sendInputPrompt(chatId, CHATS.addPromptNoScreenshot);
+      maxChatAddCache.set(key, { chats, photoMessageId: null });
+    }
+  } catch (err) {
+    await sendInputPrompt(chatId, CHATS.addPickerFail(escapeHtml(err.message)));
+  }
 }
 
 function isMonitoringEnabled() {
@@ -613,7 +665,45 @@ async function showMaxChatView(chatId, messageId, index) {
 }
 
 async function handleMaxChatUrlInput(chatId, text, userMessageId) {
-  const result = addMonitorChatUrl(text);
+  const cache = maxChatAddCache.get(String(chatId));
+  let chats = cache?.chats || [];
+  let resolved = resolveMaxChatInput(text, chats);
+
+  if (resolved.error === 'not_found' && maxChatPickerHandler && !chats.length) {
+    try {
+      const fresh = await maxChatPickerHandler();
+      chats = fresh.chats || [];
+      maxChatAddCache.set(String(chatId), {
+        ...cache,
+        chats,
+        photoMessageId: cache?.photoMessageId || null,
+      });
+      resolved = resolveMaxChatInput(text, chats);
+    } catch {
+      /* keep not_found */
+    }
+  }
+
+  if (resolved.error === 'ambiguous') {
+    await deleteMessageQuiet(chatId, userMessageId);
+    const titles = resolved.matches.map((chat) => escapeHtml(chat.title));
+    await sendMessage(chatId, CHATS.addAmbiguous(titles));
+    return false;
+  }
+
+  if (resolved.error) {
+    await deleteMessageQuiet(chatId, userMessageId);
+    const hint =
+      resolved.error === 'not_found' ? CHATS.addNotFound : CHATS.addPromptNoScreenshot;
+    if (cache?.photoMessageId) {
+      await sendMessage(chatId, hint);
+    } else {
+      await sendInputPrompt(chatId, hint);
+    }
+    return false;
+  }
+
+  const result = addMonitorChatUrl(resolved.url);
 
   if (result.error) {
     await deleteMessageQuiet(chatId, userMessageId);
@@ -622,15 +712,18 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
   }
 
   waitingInput.delete(String(chatId));
-  await clearInputPrompt(chatId, userMessageId);
+  await clearMaxChatAddPrompt(chatId, userMessageId);
 
   const lines = [
     result.duplicate
       ? CHATS.duplicate.lines[0]
-      : `Чат добавлен: <code>${escapeHtml(result.url)}</code>`,
+      : resolved.title
+        ? `Чат добавлен: <b>${escapeHtml(resolved.title)}</b>`
+        : `Чат добавлен: <code>${escapeHtml(result.url)}</code>`,
+    resolved.title ? `<code>${escapeHtml(result.url)}</code>` : null,
     '',
     buildMaxChatsText(),
-  ];
+  ].filter(Boolean);
 
   await sendMessage(
     chatId,
@@ -770,7 +863,7 @@ async function handleMessage(message) {
 
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await clearInputPrompt(chatId);
+    await clearMaxChatAddPrompt(chatId, userMessageId);
     await sendMessage(chatId, ERRORS.cancelled);
     return;
   }
@@ -1141,18 +1234,8 @@ async function handleCallback(query) {
 
   if (data === 'maxchat:add') {
     waitingInput.set(String(chatId), 'maxchat:add');
-    await answerCallback(query.id, 'Жду ссылку');
-    await sendInputPrompt(
-      chatId,
-      [
-        '<b>Добавить чат MAX</b>',
-        '',
-        'Отправьте ссылку на чат, например:',
-        '<code>https://web.max.ru/-999999999999</code>',
-        '',
-        'Или /cancel для отмены.',
-      ].join('\n')
-    );
+    await answerCallback(query.id, 'Готовлю список…');
+    void beginMaxChatAdd(chatId);
     return;
   }
 
@@ -1339,6 +1422,7 @@ module.exports = {
   setReplyHandler,
   setStopHandler,
   setStartHandler,
+  setMaxChatPickerHandler,
   buildStatusText,
   buildMenuKeyboard,
   BOT_COMMANDS,
