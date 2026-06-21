@@ -69,6 +69,7 @@ const {
   CHATS,
   SAVED,
   ERRORS,
+  UPDATES,
 } = require('./bot-texts');
 const {
   buildBrowserPasswordAcceptedMessage,
@@ -295,6 +296,7 @@ function buildMenuKeyboard() {
     statusRow.push({ text: BUTTONS.startMax, callback_data: 'action:startMax' });
   }
   rows.push(statusRow);
+  rows.push([{ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }]);
 
   return { inline_keyboard: rows };
 }
@@ -899,6 +901,53 @@ async function handleMessage(message) {
   }
 }
 
+async function handleManualUpdateCheck(chatId) {
+  const { checkForUpdates } = require('./auto-update');
+
+  try {
+    const preview = await checkForUpdates({ notify: false, performUpdate: false });
+
+    if (preview.status === 'up-to-date') {
+      await sendMessage(chatId, buildEventMessage({ ...UPDATES.none, status: 'done' }));
+      return;
+    }
+
+    if (preview.status === 'available') {
+      await sendMessage(
+        chatId,
+        buildEventMessage({
+          ...UPDATES.updating(preview.fromSha, preview.toSha),
+          status: 'progress',
+        })
+      );
+      await checkForUpdates({ notify: false, performUpdate: true });
+      return;
+    }
+
+    if (preview.status === 'skipped') {
+      await sendMessage(chatId, buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
+      return;
+    }
+
+    if (preview.status === 'unavailable') {
+      await sendMessage(chatId, buildEventMessage({ ...UPDATES.unavailable, status: 'info' }));
+      return;
+    }
+
+    if (preview.status === 'error') {
+      await sendMessage(
+        chatId,
+        buildEventMessage({ ...UPDATES.fail(preview.message), status: 'fail' })
+      );
+    }
+  } catch (err) {
+    await sendMessage(
+      chatId,
+      buildEventMessage({ ...UPDATES.fail(err.message), status: 'fail' })
+    );
+  }
+}
+
 async function handleCallback(query) {
   const chatId = query.message?.chat?.id;
   if (!chatId || !isAdmin(chatId)) {
@@ -1022,6 +1071,12 @@ async function handleCallback(query) {
         buildEventMessage({ ...MONITORING.started, status: 'done', lines: ['Пересылка сообщений включена.'] }),
       { reply_markup: buildMenuKeyboard() }
     );
+    return;
+  }
+
+  if (data === 'action:checkUpdate') {
+    await answerCallback(query.id, 'Проверяю…');
+    void handleManualUpdateCheck(chatId);
     return;
   }
 

@@ -24,6 +24,7 @@ const BUTTONS = {
   authQr: '📷 QR-код',
   authPhone: '📱 Номер телефона',
   refreshQr: '🔄 Обновить',
+  checkUpdates: 'Проверить обновления',
 };
 
 const TOGGLES = {
@@ -334,6 +335,39 @@ const SAVED = {
   }),
 };
 
+const UPDATES = {
+  none: {
+    title: 'Обновления',
+    lines: ['Обновлений нет.'],
+  },
+  updating: (fromSha, toSha) => ({
+    title: 'Обновление',
+    lines: [
+      'Вышла новая версия, обновляю…',
+      fromSha && toSha ? `Версия: <code>${fromSha}</code> → <code>${toSha}</code>` : null,
+    ].filter(Boolean),
+  }),
+  done: (fromSha, toSha) => ({
+    title: 'Готово',
+    lines: [
+      'Бот обновлён и перезапущен.',
+      fromSha && toSha ? `Версия: <code>${toSha}</code>` : null,
+    ].filter(Boolean),
+  }),
+  skipped: {
+    title: 'Обновление пропущено',
+    lines: ['На сервере есть локальные изменения в репозитории.'],
+  },
+  unavailable: {
+    title: 'Недоступно',
+    lines: ['Проверка обновлений возможна только на сервере с git-репозиторием.'],
+  },
+  fail: (message) => ({
+    title: 'Ошибка обновления',
+    lines: [message],
+  }),
+};
+
 const ERRORS = {
   noAccess: 'Нет доступа. Добавьте свой chat ID в <code>telegram.chatIds</code>.',
   cancelled: 'Действие отменено.',
@@ -364,5 +398,6 @@ module.exports = {
   MONITORING,
   CHATS,
   SAVED,
+  UPDATES,
   ERRORS,
 };
