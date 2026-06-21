@@ -199,16 +199,18 @@ async function captureLoginScreenshot(page) {
 }
 
 function startAuthCallbackPoll(options = {}) {
+  if (options.skipAuthCallbackPoll) return () => {};
+
   const adminIds = new Set((options.chatIds || getAdminChatIds()).map(String));
 
   return pollUpdates(async (update) => {
     const query = update.callback_query;
-    if (!query || query.data !== 'auth:refresh') return;
+    if (!query || query.data !== 'auth:refresh') return false;
 
     const chatId = String(query.message?.chat?.id || '');
     if (!adminIds.has(chatId)) {
       await answerCallback(query.id, 'Нет доступа', options.token);
-      return;
+      return true;
     }
 
     await answerCallback(query.id, 'Обновляю…', options.token);
@@ -218,7 +220,9 @@ function startAuthCallbackPoll(options = {}) {
     } catch (err) {
       await sendMessage(chatId, err.message, {}, options.token);
     }
+    return true;
   }, {
+    priority: 10,
     token: options.token,
     onError: (err) => console.error('auth-qr poll:', err.message),
   });
@@ -389,12 +393,12 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
 
     stopPoll = pollUpdates(async (update) => {
       const query = update.callback_query;
-      if (!query?.data?.startsWith('auth:mode:')) return;
+      if (!query?.data?.startsWith('auth:mode:')) return false;
 
       const chatId = String(query.message?.chat?.id || '');
       if (!admins.has(chatId)) {
         await answerCallback(query.id, 'Нет доступа', options.token);
-        return;
+        return true;
       }
 
       const mode = query.data === 'auth:mode:phone' ? 'phone' : 'qr';
@@ -407,7 +411,9 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
         await sendMessage(chatId, buildPhoneAuthWarningMessage(), {}, options.token);
       }
       finish(mode);
+      return true;
     }, {
+      priority: 10,
       token: options.token,
       onError: (err) => fail(err),
     });

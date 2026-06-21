@@ -356,6 +356,7 @@ async function startMonitor() {
         sendCaptchaPhotos: false,
         sendPasswordPhotos: true,
         useAuthCallbackPoll: true,
+        skipAuthCallbackPoll: true,
         ...options,
         useAdminPoll: true,
         afterLoginChatUrl: chatUrl,

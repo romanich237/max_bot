@@ -1279,6 +1279,8 @@ function startTelegramAdmin() {
     if (update.message) await handleMessage(update.message);
     if (update.callback_query) await handleCallback(update.callback_query);
   }, {
+    id: 'admin-main',
+    priority: 0,
     allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
     onError: (err) => console.error('Ошибка панели Telegram:', err.message),
   });

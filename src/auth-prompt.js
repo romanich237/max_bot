@@ -118,14 +118,14 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
     const handleUpdate = async (update) => {
       try {
         const text = update.message?.text?.trim();
-        if (!text) return;
+        if (!text) return false;
 
         const chatId = String(update.message.chat.id);
-        if (!admins.has(chatId)) return;
+        if (!admins.has(chatId)) return false;
 
         if (/^\/cancel$/i.test(text)) {
           fail(new Error('Вход отменён'));
-          return;
+          return true;
         }
 
         const { parseBrowserPasswordCommand, acceptBrowserPassword } = require('./auth-browser');
@@ -133,15 +133,15 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
         if (browserCmd?.password) {
           const result = acceptBrowserPassword(browserCmd.password);
           finish(result.password);
-          return;
+          return true;
         }
         if (browserCmd?.error) {
           await sendMessage(chatId, browserCmd.error, {}, token);
-          return;
+          return true;
         }
 
         if (text.startsWith('/') && !/^\/cancel$/i.test(text)) {
-          return;
+          return false;
         }
 
         if (options.validate) {
@@ -153,15 +153,17 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
               {},
               token
             );
-            return;
+            return true;
           }
           finish(typeof validated === 'string' ? validated : text);
-          return;
+          return true;
         }
 
         finish(text);
+        return true;
       } catch (err) {
         fail(err);
+        return true;
       }
     };
 
@@ -177,6 +179,7 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
       }
 
       stopPoll = pollUpdates(handleUpdate, {
+        priority: 10,
         token,
         onError: (err) => console.error('auth-prompt:', err.message),
       });

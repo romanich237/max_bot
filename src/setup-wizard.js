@@ -242,6 +242,7 @@ function runSetupWizard(options = {}) {
       }
 
       stopPoll = pollUpdates(handleUpdate, {
+        priority: 10,
         token: options.token,
         onError: (err) => console.error('Ошибка мастера настройки:', err.message),
       });

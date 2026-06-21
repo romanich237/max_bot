@@ -190,53 +190,8 @@ async function getChat(chatId, tokenOverride) {
 }
 
 function pollUpdates(handler, options = {}) {
-  const {
-    token: tokenOverride,
-    allowedUpdates = ['message', 'callback_query'],
-    onError,
-  } = options;
-
-  let offset = 0;
-  let stopped = false;
-  let timer = null;
-
-  const tick = async () => {
-    if (stopped) return;
-
-    try {
-      const data = await api(
-        'getUpdates',
-        {
-          offset,
-          timeout: 25,
-          allowed_updates: allowedUpdates,
-        },
-        tokenOverride
-      );
-
-      if (!data.ok) {
-        onError?.(new Error(data.description || 'getUpdates failed'));
-      } else {
-        for (const update of data.result || []) {
-          offset = update.update_id + 1;
-          await handler(update);
-        }
-      }
-    } catch (err) {
-      onError?.(err);
-    }
-
-    if (!stopped) {
-      timer = setTimeout(tick, 500);
-    }
-  };
-
-  tick();
-
-  return () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
-  };
+  const bus = require('./tg-update-bus');
+  return bus.subscribe(handler, options);
 }
 
 module.exports = {
