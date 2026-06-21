@@ -56,7 +56,11 @@ const {
   buildChatInfoText,
   buildChatInfoKeyboard,
   buildNotifyChatText,
+  buildNotifyChatKeyboard,
+  buildBindGroupReplyKeyboard,
   bindNotificationChat,
+  setDmOnlyNotifications,
+  NOTIFY_GROUP_REQUEST_ID,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
 const {
@@ -104,9 +108,11 @@ let replyHandler = null;
 let stopHandler = null;
 let startHandler = null;
 let maxChatPickerHandler = null;
+let maxChatResolveHandler = null;
 let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 const maxChatAddCache = new Map();
+const pendingProfileBioEnable = new Set();
 
 let authInputWaiter = null;
 
@@ -160,6 +166,10 @@ function setStartHandler(fn) {
 
 function setMaxChatPickerHandler(fn) {
   maxChatPickerHandler = typeof fn === 'function' ? fn : null;
+}
+
+function setMaxChatResolveHandler(fn) {
+  maxChatResolveHandler = typeof fn === 'function' ? fn : null;
 }
 
 async function clearMaxChatAddPrompt(chatId, userMessageId) {
@@ -288,12 +298,21 @@ function buildStatusText() {
       ? monitorUrls
           .map((url) => {
             const star = url === defaultUrl ? '⭐ ' : '• ';
-            return `${star}<code>${escapeHtml(url)}</code>`;
+            return `${star}<b>${escapeHtml(chatLabelFromUrl(url))}</b>`;
           })
           .join('\n')
       : STATUS.chatsUnset,
     notifyIds.length
-      ? `Уведомления: ${notifyIds.map((id) => `<code>${id}</code>`).join(', ')}`
+      ? (() => {
+          const effective = getNotificationChatIds();
+          const hasGroup = effective.some((id) => Number(id) < 0);
+          const mode = hasGroup ? 'ЛС + группа' : 'только ЛС';
+          const titles = effective.map((id) => {
+            const known = getKnownChat(id);
+            return known?.title || id;
+          });
+          return `Уведомления (${mode}): ${titles.map((t) => `<b>${escapeHtml(t)}</b>`).join(', ')}`;
+        })()
       : STATUS.notifyUnset,
   ];
 
@@ -451,12 +470,27 @@ async function handleProfileBioCityInput(chatId, text, userMessageId) {
     return false;
   }
 
+  const key = String(chatId);
+  const shouldEnableBio = pendingProfileBioEnable.has(key);
+
   saveProfileBioCity(city);
-  waitingInput.delete(String(chatId));
+  if (shouldEnableBio) {
+    pendingProfileBioEnable.delete(key);
+    store.setPath(['profileBio', 'enabled'], true);
+  }
+
+  waitingInput.delete(key);
   await clearInputPrompt(chatId, userMessageId);
+
+  const saved = SAVED.city(escapeHtml(city));
+  const lines = [...saved.lines];
+  if (shouldEnableBio) {
+    lines.unshift(HINTS.profileBioEnabled.trim());
+  }
+
   await sendMessage(
     chatId,
-      buildEventMessage({ ...SAVED.city(escapeHtml(city)), status: 'done', lines: [...SAVED.city(escapeHtml(city)).lines, '', buildStatusText()] }),
+    buildEventMessage({ ...saved, status: 'done', lines: [...lines, '', buildStatusText()] }),
     { reply_markup: buildMenuKeyboard() }
   );
   return true;
@@ -691,6 +725,19 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
     return false;
   }
 
+  if (resolved.needsUrl && maxChatResolveHandler) {
+    try {
+      const url = await maxChatResolveHandler(resolved.title);
+      if (url) {
+        resolved = { url, title: resolved.title };
+      } else {
+        resolved = { error: 'not_found' };
+      }
+    } catch {
+      resolved = { error: 'not_found' };
+    }
+  }
+
   if (resolved.error) {
     await deleteMessageQuiet(chatId, userMessageId);
     const hint =
@@ -703,7 +750,7 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
     return false;
   }
 
-  const result = addMonitorChatUrl(resolved.url);
+  const result = addMonitorChatUrl(resolved.url, { title: resolved.title });
 
   if (result.error) {
     await deleteMessageQuiet(chatId, userMessageId);
@@ -738,7 +785,37 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
 }
 
 async function handleChatShared(adminChatId, shared) {
-  await replyChatInfo(adminChatId, String(shared.chat_id), shared.title);
+  const targetChatId = String(shared.chat_id);
+  const title = shared.title || null;
+
+  recordChat({
+    id: targetChatId,
+    title,
+    type: 'unknown',
+  });
+
+  if (shared.request_id === NOTIFY_GROUP_REQUEST_ID) {
+    const known = getKnownChat(targetChatId);
+    const { chatIds: boundChatIds } = bindNotificationChat(targetChatId, adminChatId);
+    await sendMessage(
+      adminChatId,
+      buildEventMessage({
+        title: CHATS.bound.title,
+        status: 'done',
+        lines: [
+          known?.title || title ? `Группа: <b>${escapeHtml(known?.title || title)}</b>` : null,
+          `ID: <code>${targetChatId}</code>`,
+          CHATS.bound.lines(true)[0],
+          '',
+          buildNotifyChatText(),
+        ].filter(Boolean),
+      }),
+      { reply_markup: buildMenuKeyboard() }
+    );
+    return;
+  }
+
+  await replyChatInfo(adminChatId, targetChatId, title);
 }
 
 async function showDiscoverChats(chatId, messageId, page = 0) {
@@ -862,7 +939,9 @@ async function handleMessage(message) {
   }
 
   if (/^\/cancel$/i.test(text)) {
-    waitingInput.delete(String(chatId));
+    const key = String(chatId);
+    pendingProfileBioEnable.delete(key);
+    waitingInput.delete(key);
     await clearMaxChatAddPrompt(chatId, userMessageId);
     await sendMessage(chatId, ERRORS.cancelled);
     return;
@@ -1233,10 +1312,37 @@ async function handleCallback(query) {
   if (data === 'action:notifyChat') {
     await answerCallback(query.id, 'Чат уведомлений');
     await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
-      reply_markup: {
-        inline_keyboard: [[{ text: '« В меню', callback_data: 'discover:menu' }]],
-      },
+      reply_markup: buildNotifyChatKeyboard(),
     });
+    return;
+  }
+
+  if (data === 'notify:bindGroup') {
+    await answerCallback(query.id, 'Выбор группы');
+    await sendMessage(chatId, CHATS.bindGroupPrompt, {
+      reply_markup: buildBindGroupReplyKeyboard(),
+    });
+    return;
+  }
+
+  if (data === 'notify:dmOnly') {
+    const { chatIds: boundChatIds } = setDmOnlyNotifications(chatId);
+    await answerCallback(query.id, 'Только ЛС');
+    await editMessageText(
+      chatId,
+      query.message.message_id,
+      buildEventMessage({
+        title: 'Режим уведомлений',
+        status: 'done',
+        lines: [
+          CHATS.notifyDmMode,
+          `Личные сообщения: <code>${boundChatIds[0]}</code>`,
+          '',
+          buildNotifyChatText(),
+        ],
+      }),
+      { reply_markup: buildNotifyChatKeyboard() }
+    );
     return;
   }
 
@@ -1377,11 +1483,22 @@ async function handleCallback(query) {
       }
     }
 
+    if (path.join('.') === 'profileBio.enabled' && !next) {
+      pendingProfileBioEnable.delete(String(chatId));
+    }
+
     if (path.join('.') === 'profileBio.enabled' && next) {
-      const city = store.getPath(['profileBio', 'city']) || '';
+      const city = String(store.getPath(['profileBio', 'city']) || '').trim();
       if (!city) {
+        store.setPath(['profileBio', 'enabled'], false);
+        pendingProfileBioEnable.add(String(chatId));
         waitingInput.set(String(chatId), 'profileBioCity');
-        await sendInputPrompt(chatId, HINTS.profileBioEnabled + PROFILE_BIO_CITY_HINT);
+        await answerCallback(query.id, 'Сначала укажите город');
+        await sendInputPrompt(chatId, `${HINTS.profileBioCityRequired}\n\n${PROFILE_BIO_CITY_HINT}`);
+        await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
+          reply_markup: buildMenuKeyboard(),
+        });
+        return;
       }
     }
 
@@ -1437,6 +1554,7 @@ module.exports = {
   setStopHandler,
   setStartHandler,
   setMaxChatPickerHandler,
+  setMaxChatResolveHandler,
   buildStatusText,
   buildMenuKeyboard,
   BOT_COMMANDS,

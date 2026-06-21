@@ -1,5 +1,5 @@
 const { isLoginPage } = require('./parser');
-const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl } = require('./max-chats');
+const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl, mergeChatTitles, setChatTitle, getChatTitle } = require('./max-chats');
 
 const MAX_HOME_URL = 'https://web.max.ru/';
 const CHAT_ID_RE = /-\d{5,}/;
@@ -93,6 +93,11 @@ async function waitForChatListDom(page) {
           if (hasChatId(text)) return true;
         }
 
+        for (const h3 of document.querySelectorAll('h3')) {
+          const title = (h3.innerText || '').trim();
+          if (title && !/^(chats|чаты)$/i.test(title)) return true;
+        }
+
         return hasChatId(document.body?.innerHTML || '');
       },
       { timeout: 25000 }
@@ -171,18 +176,43 @@ async function extractMaxChatsFromPage(page) {
 
     const chats = [];
     const seen = new Set();
+    const seenTitles = new Set();
 
     function addChat(title, url, container) {
-      if (!url || seen.has(url)) return;
-
       let cleanTitle = (title || pickTitle(container) || '').replace(/\s+/g, ' ').trim();
-      if (!cleanTitle || CHAT_ID.test(cleanTitle)) {
+      if (!cleanTitle) return;
+
+      if (!url) {
+        const key = cleanTitle.toLowerCase();
+        if (seenTitles.has(key)) return;
+        seenTitles.add(key);
+        chats.push({ title: cleanTitle, url: null });
+        return;
+      }
+
+      if (seen.has(url)) return;
+
+      if (CHAT_ID.test(cleanTitle)) {
         const id = url.match(CHAT_ID);
         cleanTitle = id ? `Чат ${id[0]}` : url;
       }
 
       seen.add(url);
+      seenTitles.add(cleanTitle.toLowerCase());
       chats.push({ title: cleanTitle, url });
+    }
+
+    const SKIP_HEADINGS = /^(chats|чаты)$/i;
+    for (const h3 of document.querySelectorAll('h3')) {
+      const title = (h3.innerText || '').trim().split('\n')[0].trim();
+      if (!title || SKIP_HEADINGS.test(title)) continue;
+
+      const row =
+        h3.closest('button.cell, button[class*="cell"]') ||
+        h3.parentElement?.closest?.('button.cell, button[class*="cell"]');
+      const blob = [row?.outerHTML || '', h3.outerHTML || ''].join(' ');
+      const neg = blob.match(CHAT_ID);
+      addChat(title, neg ? chatUrlFromMatch(neg) : null, row);
     }
 
     for (const link of document.querySelectorAll('a[href], [href]')) {
@@ -288,7 +318,112 @@ async function captureMaxChatListScreenshot(page) {
   if (clip?.width > 40 && clip?.height > 40) {
     return page.screenshot({ type: 'png', clip });
   }
-  return page.screenshot({ type: 'png', fullPage: false });
+  return page.screenshot({ type: 'png', fullPage: false   });
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizePageChatUrl(url) {
+  const raw = String(url || '').trim();
+  if (!/web\.max\.ru/i.test(raw)) return '';
+
+  try {
+    const parsed = new URL(raw.split('?')[0]);
+    const segment = parsed.pathname.replace(/^\//, '').trim();
+    if (!segment) return '';
+    return `https://web.max.ru/${segment}`;
+  } catch {
+    return '';
+  }
+}
+
+async function readOpenChatTitle(page) {
+  const mainName = await page
+    .locator('main[name*="Chat window" i], main[name*="чат" i]')
+    .first()
+    .getAttribute('name')
+    .catch(() => null);
+
+  if (mainName) {
+    const cleaned = mainName
+      .replace(/^Chat window with\s+/i, '')
+      .replace(/^Чат с\s+/i, '')
+      .replace(/\u00a0/g, ' ')
+      .trim();
+    if (cleaned) return cleaned;
+  }
+
+  const heading = page.locator('h2').first();
+  if (await heading.isVisible({ timeout: 1000 }).catch(() => false)) {
+    const text = (await heading.innerText()).trim();
+    const match = text.match(/(?:Chat window with|Чат)\s+(.+)/i);
+    if (match?.[1]) return match[1].trim();
+    return text.split('\n')[0].trim();
+  }
+
+  return '';
+}
+
+async function resolveChatUrlByTitle(page, title) {
+  const query = normalizeChatTitle(title);
+  if (!query) return null;
+
+  await ensureChatListVisible(page);
+
+  const button = page
+    .getByRole('button', { name: new RegExp(`^${escapeRegExp(query)}`, 'i') })
+    .first();
+
+  if (await button.isVisible({ timeout: 2500 }).catch(() => false)) {
+    await button.click();
+  } else {
+    const heading = page
+      .locator('h3')
+      .filter({ hasText: new RegExp(`^${escapeRegExp(query)}$`, 'i') })
+      .first();
+
+    if (!(await heading.isVisible({ timeout: 2000 }).catch(() => false))) {
+      return null;
+    }
+
+    await heading.click();
+  }
+
+  await page.waitForTimeout(1500);
+  const url = normalizePageChatUrl(page.url());
+  if (!url || url === MAX_HOME_URL.replace(/\/$/, '')) return null;
+  return url;
+}
+
+async function syncMonitoredChatTitles(page, urls = [], options = {}) {
+  const { force = false } = options;
+  const updated = {};
+
+  for (const chatUrl of urls.filter(Boolean)) {
+    if (!force && getChatTitle(chatUrl)) continue;
+
+    try {
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2000);
+
+      if (await isLoginPage(page)) {
+        console.warn(`Не удалось прочитать название чата ${chatUrl}: сессия MAX истекла`);
+        continue;
+      }
+
+      const title = await readOpenChatTitle(page);
+      if (title) {
+        setChatTitle(chatUrl, title);
+        updated[chatUrl] = title;
+      }
+    } catch (err) {
+      console.warn(`Не удалось прочитать название чата ${chatUrl}:`, err.message);
+    }
+  }
+
+  return updated;
 }
 
 async function debugChatListState(page) {
@@ -349,6 +484,7 @@ async function listMaxChats(page) {
   }
 
   const screenshot = await captureMaxChatListScreenshot(page);
+  mergeChatTitles(chats.filter((chat) => chat.url && chat.title));
   return { chats, screenshot };
 }
 
@@ -389,6 +525,10 @@ function resolveMaxChatInput(text, chats = []) {
     return { error: 'ambiguous', matches: match.ambiguous };
   }
 
+  if (!match.url) {
+    return { title: match.title, needsUrl: true };
+  }
+
   return { url: match.url, title: match.title };
 }
 
@@ -398,6 +538,9 @@ module.exports = {
   ensureChatListVisible,
   extractMaxChatsFromPage,
   captureMaxChatListScreenshot,
+  readOpenChatTitle,
+  resolveChatUrlByTitle,
+  syncMonitoredChatTitles,
   resolveMaxChatByName,
   resolveMaxChatInput,
   normalizeChatName,

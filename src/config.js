@@ -36,15 +36,21 @@ function getNotificationChatIds() {
   const ids = (t.chatIds || []).map(String);
   if (!ids.length) return [];
 
-  const admins = getAdminChatIds();
-  const privateAdmin = admins.find(isPrivateChatId);
-  const hasGroup = ids.some((id) => !isPrivateChatId(id));
+  const groupIds = ids.filter((id) => !isPrivateChatId(id));
+  if (!groupIds.length) return [...new Set(ids)];
 
-  if (hasGroup && privateAdmin && !ids.includes(privateAdmin)) {
-    return [privateAdmin, ...ids];
+  const admins = getAdminChatIds().map(String);
+  const privateFromIds = ids.filter(isPrivateChatId);
+  const privateFromAdmins = admins.filter(isPrivateChatId);
+  const dmId = privateFromIds[0] || privateFromAdmins[0];
+
+  const result = [];
+  if (dmId) result.push(dmId);
+  for (const groupId of groupIds) {
+    if (!result.includes(groupId)) result.push(groupId);
   }
 
-  return [...new Set(ids)];
+  return [...new Set(result)];
 }
 
 function getMax() {

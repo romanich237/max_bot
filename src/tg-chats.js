@@ -5,6 +5,8 @@ const { store, resolveFromRoot, getNotificationChatIds, isPrivateChatId } = requ
 
 const KNOWN_CHATS_PATH = resolveFromRoot('data/known-chats.json');
 const CHATS_PER_PAGE = 8;
+const DISCOVER_CHAT_REQUEST_ID = 1;
+const NOTIFY_GROUP_REQUEST_ID = 2;
 
 function loadKnownChats() {
   try {
@@ -160,6 +162,9 @@ function buildNotifyChatText() {
   if (!chatIds.length) {
     lines.push(CHATS.notifyEmpty);
   } else {
+    const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
+    lines.push(hasGroup ? CHATS.notifyDualMode : CHATS.notifyDmMode, '');
+
     for (const id of chatIds) {
       const known = getKnownChat(id);
       const title = known?.title || 'Без названия';
@@ -170,6 +175,52 @@ function buildNotifyChatText() {
 
   lines.push('', CHATS.notifyFooter);
   return lines.join('\n');
+}
+
+function buildNotifyChatKeyboard() {
+  const chatIds = getNotificationChatIds();
+  const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
+  const rows = [
+    [{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }],
+  ];
+
+  if (hasGroup) {
+    rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
+  }
+
+  rows.push(
+    [{ text: BUTTONS.discoverId, callback_data: 'discover:page:0' }],
+    [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }]
+  );
+
+  return { inline_keyboard: rows };
+}
+
+function buildBindGroupReplyKeyboard() {
+  return {
+    keyboard: [
+      [
+        {
+          text: BUTTONS.bindGroup,
+          request_chat: {
+            request_id: NOTIFY_GROUP_REQUEST_ID,
+            chat_is_channel: false,
+          },
+        },
+      ],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true,
+  };
+}
+
+function setDmOnlyNotifications(adminChatId) {
+  const adminId = String(adminChatId);
+  const admins = new Set((store.getPath(['telegram', 'adminChatIds']) || []).map(String));
+  admins.add(adminId);
+  store.setPath(['telegram', 'adminChatIds'], [...admins]);
+  store.setPath(['telegram', 'chatIds'], [adminId]);
+  return { chatIds: [adminId] };
 }
 
 function bindNotificationChat(targetChatId, adminChatId) {
@@ -204,6 +255,8 @@ function escapeHtml(text) {
 
 module.exports = {
   CHATS_PER_PAGE,
+  DISCOVER_CHAT_REQUEST_ID,
+  NOTIFY_GROUP_REQUEST_ID,
   recordChat,
   recordChatFromUpdate,
   listKnownChats,
@@ -213,6 +266,9 @@ module.exports = {
   buildChatInfoText,
   buildChatInfoKeyboard,
   buildNotifyChatText,
+  buildNotifyChatKeyboard,
+  buildBindGroupReplyKeyboard,
   bindNotificationChat,
+  setDmOnlyNotifications,
   getChatTypeLabel,
 };

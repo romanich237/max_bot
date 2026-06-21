@@ -10,6 +10,7 @@
   "max": {
     "chatUrl": "",
     "monitorChatUrls": [],
+    "chatTitles": {},
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",

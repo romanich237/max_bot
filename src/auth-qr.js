@@ -45,7 +45,8 @@ function buildPhoneAuthWarningMessage() {
 const PHONE_AUTH_WARNING_SHORT = AUTH.phoneWarningShort;
 
 function buildActiveSessionMessage() {
-  return buildEventMessage({ ...AUTH.sessionActive, status: 'done' });
+  const { title, lines } = AUTH.sessionActive;
+  return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
 
 async function probeMaxSession(page, chatUrl) {

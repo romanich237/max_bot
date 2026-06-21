@@ -21,10 +21,10 @@ const {
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -467,6 +467,26 @@ async function startMonitor() {
     }
   });
 
+  setMaxChatResolveHandler(async (title) => {
+    if (authBusy) {
+      throw new Error('Идёт авторизация MAX, повторите позже');
+    }
+
+    const returnUrl = getDefaultChatUrl() || page.url();
+    profileBusy = true;
+    try {
+      if (await isLoginPage(page)) {
+        throw new Error('Сессия MAX истекла. Отправьте /reauth');
+      }
+      return await resolveChatUrlByTitle(page, title);
+    } finally {
+      profileBusy = false;
+      if (returnUrl && returnUrl.includes('web.max.ru')) {
+        await openChatWhenReady(page, returnUrl).catch(() => {});
+      }
+    }
+  });
+
   setReplyHandler(async (targetMessage, text) => {
     if (authBusy) {
       throw new Error('Идёт авторизация MAX, повторите позже');
@@ -566,6 +586,25 @@ async function startMonitor() {
       reason: 'Имя взято из настроек профиля MAX.',
     });
     await saveState(persistChatStates(chatStates));
+
+    const monitorUrls = getMonitorChatUrls();
+    profileBusy = true;
+    syncMonitoredChatTitles(page, monitorUrls)
+      .then((updated) => {
+        const count = Object.keys(updated).length;
+        if (count) {
+          console.log(`Названия чатов MAX обновлены (${count})`);
+        }
+      })
+      .catch((err) => {
+        console.warn('Не удалось синхронизировать названия чатов MAX:', err.message);
+      })
+      .finally(() => {
+        profileBusy = false;
+        if (defaultChatUrl) {
+          openChatWhenReady(page, defaultChatUrl).catch(() => {});
+        }
+      });
   }
 
   console.log('Мониторинг запущен. Жду новые сообщения...');

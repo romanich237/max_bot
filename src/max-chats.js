@@ -2,6 +2,13 @@ const store = require('./settings-store');
 
 const MAX_CHAT_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function normalizeMaxChatUrl(url) {
   return String(url || '').trim();
 }
@@ -10,14 +17,70 @@ function isMaxChatUrl(url) {
   return MAX_CHAT_URL_RE.test(normalizeMaxChatUrl(url));
 }
 
+function normalizeChatTitle(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function chatIdFromUrl(url) {
-  const match = normalizeMaxChatUrl(url).match(/(-\d+)/);
-  return match ? match[1] : '';
+  const normalized = normalizeMaxChatUrl(url);
+  const negative = normalized.match(/(-\d{5,})/);
+  if (negative) return negative[1];
+  const positive = normalized.match(/web\.max\.ru\/(\d{5,})/i);
+  return positive ? positive[1] : '';
 }
 
 function chatLabelFromUrl(url) {
+  const title = getChatTitle(url);
+  if (title) return title;
+
   const id = chatIdFromUrl(url);
   return id ? `Чат ${id}` : 'MAX';
+}
+
+function getChatTitles() {
+  const raw = store.getPath(['max', 'chatTitles']);
+  if (!raw || typeof raw !== 'object') return {};
+  return { ...raw };
+}
+
+function getChatTitle(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  return normalizeChatTitle(getChatTitles()[normalized]);
+}
+
+function setChatTitle(url, title) {
+  const normalized = normalizeMaxChatUrl(url);
+  const clean = normalizeChatTitle(title);
+  if (!normalized || !clean) return;
+
+  const titles = getChatTitles();
+  titles[normalized] = clean;
+  store.setPath(['max', 'chatTitles'], titles);
+}
+
+function removeChatTitle(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  const titles = getChatTitles();
+  if (!titles[normalized]) return;
+
+  delete titles[normalized];
+  store.setPath(['max', 'chatTitles'], titles);
+}
+
+function mergeChatTitles(entries = []) {
+  for (const entry of entries) {
+    if (entry?.url && entry?.title) {
+      setChatTitle(entry.url, entry.title);
+    }
+  }
+}
+
+function chatMenuLabel(url, defaultUrl = getDefaultChatUrl()) {
+  const star = url === defaultUrl ? '⭐ ' : '';
+  const title = getChatTitle(url) || truncateUrl(url, 28);
+  return `${star}${title}`;
 }
 
 function truncateUrl(url, max = 36) {
@@ -62,7 +125,7 @@ function scopedMessageKey(chatUrl, messageKey) {
   return `${prefix}::${messageKey}`;
 }
 
-function setDefaultChatUrl(url) {
+function setDefaultChatUrl(url, options = {}) {
   const normalized = normalizeMaxChatUrl(url);
   if (!isMaxChatUrl(normalized)) {
     return { error: 'Нужна ссылка вида <code>https://web.max.ru/-XXXXXXXX</code>' };
@@ -80,6 +143,7 @@ function setDefaultChatUrl(url) {
   extras = extras.filter((item) => item !== normalized);
   store.setPath(['max', 'chatUrl'], normalized);
   store.setPath(['max', 'monitorChatUrls'], extras);
+  if (options.title) setChatTitle(normalized, options.title);
   return { ok: true, url: normalized };
 }
 
@@ -109,6 +173,10 @@ function addMonitorChatUrl(url, options = {}) {
     store.setPath(['max', 'chatUrl'], normalized);
   }
 
+  if (options.title) {
+    setChatTitle(normalized, options.title);
+  }
+
   return { ok: true, url: normalized };
 }
 
@@ -136,6 +204,7 @@ function removeMonitorChatUrl(url) {
   }
 
   store.setPath(['max', 'monitorChatUrls'], extras);
+  removeChatTitle(normalized);
   return { ok: true, url: normalized };
 }
 
@@ -151,7 +220,9 @@ function buildMaxChatsText() {
 
   for (const url of urls) {
     const star = url === defaultUrl ? '⭐ ' : '• ';
-    lines.push(`${star}<code>${url}</code>`);
+    const title = escapeHtml(chatLabelFromUrl(url));
+    lines.push(`${star}<b>${title}</b>`);
+    lines.push(`   <code>${url}</code>`);
   }
 
   lines.push(
@@ -167,7 +238,7 @@ function buildMaxChatsKeyboard() {
   const defaultUrl = getDefaultChatUrl();
   const rows = urls.map((url, index) => [
     {
-      text: `${url === defaultUrl ? '⭐ ' : ''}${truncateUrl(url)}`,
+      text: chatMenuLabel(url, defaultUrl),
       callback_data: `maxchat:view:${index}`,
     },
   ]);
@@ -201,6 +272,12 @@ module.exports = {
   normalizeMaxChatUrl,
   chatIdFromUrl,
   chatLabelFromUrl,
+  chatMenuLabel,
+  getChatTitles,
+  getChatTitle,
+  setChatTitle,
+  removeChatTitle,
+  mergeChatTitles,
   truncateUrl,
   getDefaultChatUrl,
   getMonitorChatUrls,
