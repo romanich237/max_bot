@@ -7,6 +7,7 @@ const {
   setChatTitle,
   getDefaultChatUrl,
   getMonitorChatUrls,
+  ensureRequiredChats,
 } = require('../src/max-chats');
 const store = require('../src/settings-store');
 const { getAdminChatIds, isPrivateChatId } = require('../src/config');
@@ -43,6 +44,8 @@ if (result.error) {
 if (title) {
   setChatTitle(url, title);
 }
+
+ensureRequiredChats();
 
 if (dmOnly) {
   const admins = getAdminChatIds();

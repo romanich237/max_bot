@@ -390,6 +390,9 @@ const CHATS = {
     ].join('\n'),
   primary: '⭐ Основной чат',
   secondary: 'Дополнительный чат',
+  requiredPinned: '📌 Обязательный чат — удалить нельзя, пересылку можно отключить.',
+  requiredForwardOn: 'Пересылка: ✅ включена',
+  requiredForwardOff: 'Пересылка: 🔕 выключена',
 };
 
 const SAVED = {

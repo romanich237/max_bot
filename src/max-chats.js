@@ -2,6 +2,13 @@ const store = require('./settings-store');
 
 const MAX_CHAT_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
+const BUILTIN_REQUIRED_CHATS = [
+  {
+    url: 'https://web.max.ru/35859265',
+    title: 'Коды подтверждения',
+  },
+];
+
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
@@ -79,8 +86,10 @@ function mergeChatTitles(entries = []) {
 
 function chatMenuLabel(url, defaultUrl = getDefaultChatUrl()) {
   const star = url === defaultUrl ? '⭐ ' : '';
+  const pin = isRequiredChatUrl(url) ? '📌 ' : '';
+  const muted = isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? '🔕 ' : '';
   const title = getChatTitle(url) || truncateUrl(url, 28);
-  return `${star}${title}`;
+  return `${star}${pin}${muted}${title}`;
 }
 
 function truncateUrl(url, max = 36) {
@@ -96,7 +105,7 @@ function getDefaultChatUrl() {
   return urls[0] || '';
 }
 
-function getMonitorChatUrls() {
+function collectMonitorUrls() {
   const primary = normalizeMaxChatUrl(store.getPath(['max', 'chatUrl']));
   const extra = (store.getPath(['max', 'monitorChatUrls']) || [])
     .map(normalizeMaxChatUrl)
@@ -118,6 +127,79 @@ function getMonitorChatUrls() {
   }
 
   return urls;
+}
+
+function isRequiredChatUrl(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  return BUILTIN_REQUIRED_CHATS.some(
+    (item) => normalizeMaxChatUrl(item.url) === normalized
+  );
+}
+
+function getDisabledRequiredChatUrls() {
+  return (store.getPath(['max', 'disabledRequiredChats']) || [])
+    .map(normalizeMaxChatUrl)
+    .filter(Boolean);
+}
+
+function isChatForwardEnabled(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!isRequiredChatUrl(normalized)) return true;
+  return !getDisabledRequiredChatUrls().includes(normalized);
+}
+
+function setRequiredChatForwardEnabled(url, enabled) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!isRequiredChatUrl(normalized)) {
+    return { error: 'Этот чат нельзя настроить как обязательный.' };
+  }
+
+  let disabled = getDisabledRequiredChatUrls();
+  if (enabled) {
+    disabled = disabled.filter((item) => item !== normalized);
+  } else if (!disabled.includes(normalized)) {
+    disabled.push(normalized);
+  }
+
+  store.setPath(['max', 'disabledRequiredChats'], disabled);
+  return { ok: true, url: normalized, forwardEnabled: enabled };
+}
+
+function ensureRequiredChats() {
+  let changed = false;
+  const urls = collectMonitorUrls();
+  const extras = (store.getPath(['max', 'monitorChatUrls']) || [])
+    .map(normalizeMaxChatUrl)
+    .filter(Boolean);
+
+  for (const required of BUILTIN_REQUIRED_CHATS) {
+    const normalized = normalizeMaxChatUrl(required.url);
+    if (!getChatTitle(normalized)) {
+      setChatTitle(normalized, required.title);
+    }
+
+    if (urls.includes(normalized)) continue;
+
+    extras.push(normalized);
+    changed = true;
+
+    if (!store.getPath(['max', 'chatUrl'])) {
+      store.setPath(['max', 'chatUrl'], normalized);
+    }
+  }
+
+  if (changed) {
+    store.setPath(['max', 'monitorChatUrls'], extras);
+  }
+}
+
+function getMonitorChatUrls() {
+  ensureRequiredChats();
+  return collectMonitorUrls();
+}
+
+function getForwardingMonitorChatUrls() {
+  return getMonitorChatUrls().filter(isChatForwardEnabled);
 }
 
 function scopedMessageKey(chatUrl, messageKey) {
@@ -188,6 +270,12 @@ function removeMonitorChatUrl(url) {
     return { error: 'Этот чат не в списке мониторинга.' };
   }
 
+  if (isRequiredChatUrl(normalized)) {
+    return {
+      error: 'Этот чат обязателен. Отключите пересылку в карточке чата, если не нужны уведомления.',
+    };
+  }
+
   if (urls.length === 1) {
     return { error: 'Нельзя удалить единственный чат MAX.' };
   }
@@ -220,15 +308,19 @@ function buildMaxChatsText() {
 
   for (const url of urls) {
     const star = url === defaultUrl ? '⭐ ' : '• ';
+    const pin = isRequiredChatUrl(url) ? '📌 ' : '';
     const title = escapeHtml(chatLabelFromUrl(url));
-    lines.push(`${star}<b>${title}</b>`);
+    const forwardNote =
+      isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? ' · <i>пересылка выкл.</i>' : '';
+    lines.push(`${star}${pin}<b>${title}</b>${forwardNote}`);
     lines.push(`   <code>${url}</code>`);
   }
 
   lines.push(
     '',
     '⭐ — основной чат (по умолчанию).',
-    'Уведомления приходят из всех чатов списка.'
+    '📌 — обязательный чат (нельзя удалить, пересылку можно выключить).',
+    'Уведомления приходят из всех чатов с включённой пересылкой.'
   );
   return lines.join('\n');
 }
@@ -254,11 +346,21 @@ function buildMaxChatViewKeyboard(index) {
   const defaultUrl = getDefaultChatUrl();
   const rows = [];
 
+  if (url && isRequiredChatUrl(url)) {
+    const enabled = isChatForwardEnabled(url);
+    rows.push([
+      {
+        text: enabled ? '🔕 Отключить пересылку' : '🔔 Включить пересылку',
+        callback_data: `maxchat:toggleRequired:${index}`,
+      },
+    ]);
+  }
+
   if (url && url !== defaultUrl) {
     rows.push([{ text: '⭐ Сделать основным', callback_data: `maxchat:default:${index}` }]);
   }
 
-  if (urls.length > 1 && url) {
+  if (urls.length > 1 && url && !isRequiredChatUrl(url)) {
     rows.push([{ text: '🗑 Удалить из списка', callback_data: `maxchat:remove:${index}` }]);
   }
 
@@ -268,6 +370,7 @@ function buildMaxChatViewKeyboard(index) {
 
 module.exports = {
   MAX_CHAT_URL_RE,
+  BUILTIN_REQUIRED_CHATS,
   isMaxChatUrl,
   normalizeMaxChatUrl,
   chatIdFromUrl,
@@ -281,6 +384,11 @@ module.exports = {
   truncateUrl,
   getDefaultChatUrl,
   getMonitorChatUrls,
+  getForwardingMonitorChatUrls,
+  isRequiredChatUrl,
+  isChatForwardEnabled,
+  setRequiredChatForwardEnabled,
+  ensureRequiredChats,
   scopedMessageKey,
   setDefaultChatUrl,
   addMonitorChatUrl,

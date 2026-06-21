@@ -19,6 +19,9 @@ const {
   buildMaxChatsKeyboard,
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
+  isRequiredChatUrl,
+  isChatForwardEnabled,
+  setRequiredChatForwardEnabled,
 } = require('./max-chats');
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
@@ -692,6 +695,12 @@ async function showMaxChatView(chatId, messageId, index) {
     `<code>${escapeHtml(url)}</code>`,
     url === defaultUrl ? CHATS.primary : CHATS.secondary,
   ];
+
+  if (isRequiredChatUrl(url)) {
+    lines.push('');
+    lines.push(CHATS.requiredPinned);
+    lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
+  }
 
   await editMessageText(chatId, messageId, lines.join('\n'), {
     reply_markup: buildMaxChatViewKeyboard(index),
@@ -1383,6 +1392,22 @@ async function handleCallback(query) {
     }
 
     await answerCallback(query.id, 'Основной чат');
+    await showMaxChatView(chatId, query.message.message_id, index);
+    return;
+  }
+
+  if (data.startsWith('maxchat:toggleRequired:')) {
+    const index = Number.parseInt(data.slice('maxchat:toggleRequired:'.length), 10) || 0;
+    const urls = getMonitorChatUrls();
+    const url = urls[index];
+    if (!url || !isRequiredChatUrl(url)) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+
+    const next = !isChatForwardEnabled(url);
+    setRequiredChatForwardEnabled(url, next);
+    await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
     await showMaxChatView(chatId, query.message.message_id, index);
     return;
   }

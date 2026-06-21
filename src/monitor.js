@@ -10,6 +10,7 @@ const {
   isSetupComplete,
   getDefaultChatUrl,
   getMonitorChatUrls,
+  getForwardingMonitorChatUrls,
   getDatabase,
   store,
 } = require('./config');
@@ -533,11 +534,13 @@ async function startMonitor() {
     }
   });
 
-  const monitorUrls = getMonitorChatUrls();
-  console.log(`Чаты MAX для мониторинга (${monitorUrls.length}):`);
-  for (const url of monitorUrls) {
+  const monitorUrls = getForwardingMonitorChatUrls();
+  const allUrls = getMonitorChatUrls();
+  console.log(`Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length}):`);
+  for (const url of allUrls) {
     const mark = url === defaultChatUrl ? '⭐' : '•';
-    console.log(`  ${mark} ${url}`);
+    const muted = monitorUrls.includes(url) ? '' : ' [пересылка выкл.]';
+    console.log(`  ${mark} ${url}${muted}`);
   }
   console.log(`Медиа сохраняются в: ${settings.dataDir}`);
   if (db.isEnabled()) {
@@ -712,7 +715,7 @@ async function startMonitor() {
     if (!isMonitoringEnabled() || profileBusy || authBusy) return;
 
     try {
-      const monitorUrls = getMonitorChatUrls();
+      const monitorUrls = getForwardingMonitorChatUrls();
       let urlsChanged = false;
 
       for (const url of monitorUrls) {

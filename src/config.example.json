@@ -11,6 +11,7 @@
     "chatUrl": "",
     "monitorChatUrls": [],
     "chatTitles": {},
+    "disabledRequiredChats": [],
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",
