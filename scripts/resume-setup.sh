@@ -82,8 +82,8 @@ fi
 if [ -z "${DB_DRIVER:-}" ]; then
   echo ""
   echo "База данных:"
-  echo "  1) MySQL (MariaDB) — рекомендуется для VPS"
-  echo "  2) SQLite — файл в папке data/, без отдельного сервера"
+  echo "  1) MySQL — рекомендуется для VPS"
+  echo "  2) SQLite — файл в папке, если порт занят"
   read -rp "Выберите [1]: " db_choice
   case "$db_choice" in
     2|sqlite|SQLite) export DB_DRIVER=sqlite ;;

@@ -21,13 +21,19 @@ function nextDisplayName(options = {}, index = 0) {
 
 async function clickSettings(page) {
   const settings = page.getByRole('button', { name: /^settings$/i });
-  if (await settings.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await settings.click();
+  if (await settings.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await settings.first().click();
     return;
   }
 
-  const settingsRu = page.getByRole('button', { name: /настройки/i });
-  await settingsRu.click({ timeout: 10000 });
+  const settingsRu = page.getByRole('button', { name: 'Настройки', exact: true });
+  if (await settingsRu.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await settingsRu.click();
+    return;
+  }
+
+  const sidebarSettings = page.locator('button.button').filter({ hasText: /^настройки$/i });
+  await sidebarSettings.first().click({ timeout: 10000 });
 }
 
 async function openProfileEditor(page) {

@@ -140,6 +140,10 @@ function persistChatStates(chatStates) {
 async function processChatMessages(page, chatUrl, chatState, options = {}) {
   const { onLoginRequired, forwardOnStart = 0, isStartup = false } = options;
 
+  if (!page || page.isClosed()) {
+    throw new Error('Страница браузера закрыта');
+  }
+
   await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForTimeout(2500);
 
@@ -326,12 +330,12 @@ async function startMonitor() {
     const text =
       introMessage ||
       buildEventMessage({ ...AUTH.sessionExpired, status: 'fail' });
-    const replyMarkup = buildAuthModeKeyboard();
     const adminIds = getAdminChatIds().map(String);
     const adminSet = new Set(adminIds);
     const notifyIds = getNotificationChatIds().map(String);
 
     try {
+      const replyMarkup = buildAuthModeKeyboard();
       for (const chatId of adminIds) {
         const existingId = reauthPromptIds[chatId];
         let result;
@@ -532,19 +536,23 @@ async function startMonitor() {
     const chatState = chatStates.get(chatUrl);
     if (!chatState) continue;
 
-    const result = await processChatMessages(page, chatUrl, chatState, {
-      forwardOnStart,
-      isStartup: true,
-      onLoginRequired: async () => {
-        if (!sessionExpired) {
-          sessionExpired = true;
-          await notifySessionExpired();
-        }
-      },
-    });
+    try {
+      const result = await processChatMessages(page, chatUrl, chatState, {
+        forwardOnStart,
+        isStartup: true,
+        onLoginRequired: async () => {
+          if (!sessionExpired) {
+            sessionExpired = true;
+            await notifySessionExpired();
+          }
+        },
+      });
 
-    if (result === null && sessionExpired) {
-      break;
+      if (result === null && sessionExpired) {
+        break;
+      }
+    } catch (err) {
+      console.error(`Ошибка при старте [${chatLabelFromUrl(chatUrl)}]:`, err.message);
     }
   }
 
@@ -617,6 +625,8 @@ async function startMonitor() {
 
     console.log(`Авто описание: каждые ${profileBio.intervalMs / 1000} с`);
 
+    let bioCityMissingLogged = false;
+
     const tick = async () => {
       const current = getProfileBio();
       if (!current.enabled || !isMonitoringEnabled()) return;
@@ -627,10 +637,15 @@ async function startMonitor() {
       }
 
       if (!String(current.city || '').trim()) {
-        console.warn('Авто описание: город не задан');
-        bioTimer = setTimeout(tick, current.intervalMs);
+        if (!bioCityMissingLogged) {
+          console.warn('Авто описание: город не задан (укажите в /menu → профиль)');
+          bioCityMissingLogged = true;
+        }
+        bioTimer = setTimeout(tick, Math.max(current.intervalMs, 10 * 60 * 1000));
         return;
       }
+
+      bioCityMissingLogged = false;
 
       profileBusy = true;
       try {

@@ -1,5 +1,5 @@
 const { isLoginPage } = require('./parser');
-const { isMaxChatUrl, normalizeMaxChatUrl } = require('./max-chats');
+const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl } = require('./max-chats');
 
 const MAX_HOME_URL = 'https://web.max.ru/';
 const CHAT_ID_RE = /-\d{5,}/;
@@ -35,62 +35,200 @@ function chatUrlFromHref(href) {
   return `https://web.max.ru/${match[0]}`;
 }
 
+function chatUrlFromId(chatId) {
+  const id = String(chatId || '').match(CHAT_ID_RE);
+  return id ? `https://web.max.ru/${id[0]}` : '';
+}
+
+async function ensureChatListVisible(page) {
+  const currentUrl = page.url();
+  if (!/web\.max\.ru/i.test(currentUrl)) {
+    await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.waitForTimeout(2000);
+  } else if (!/\/-\d{5,}/.test(currentUrl)) {
+    await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.waitForTimeout(2000);
+  }
+
+  const inChat = await page
+    .locator('.messageWrapper, .openedChat')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+
+  if (inChat && /\/-\d{5,}/.test(page.url())) {
+    const back = page.getByRole('button', { name: /^(go back|назад)$/i });
+    if (await back.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await back.click();
+      await page.waitForTimeout(800);
+    } else {
+      await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  const chatsBtn = page.getByRole('button', { name: /^(chats|чаты)$/i });
+  if (await chatsBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await chatsBtn.click();
+    await page.waitForTimeout(800);
+  }
+}
+
+async function waitForChatListDom(page) {
+  await page
+    .waitForFunction(
+      () => {
+        const CHAT_ID = /-\d{5,}/;
+        const hasChatId = (value) => CHAT_ID.test(String(value || ''));
+
+        for (const el of document.querySelectorAll('[href], a, button, [role="listitem"], [class*="cell" i]')) {
+          const href = el.getAttribute('href') || '';
+          if (hasChatId(href)) return true;
+
+          for (const attr of el.attributes || []) {
+            if (hasChatId(attr.value)) return true;
+          }
+
+          const text = el.innerText || '';
+          if (hasChatId(text)) return true;
+        }
+
+        return hasChatId(document.body?.innerHTML || '');
+      },
+      { timeout: 25000 }
+    )
+    .catch(() => {});
+}
+
 async function extractMaxChatsFromPage(page) {
   return page.evaluate(() => {
     const CHAT_ID = /-\d{5,}/;
-    const chats = [];
-    const seen = new Set();
 
-    function pickTitle(link, container) {
-      const fromAria = link.getAttribute('aria-label') || '';
-      if (fromAria.trim()) return fromAria.trim();
+    function chatUrlFromMatch(match) {
+      return `https://web.max.ru/${match[0]}`;
+    }
 
-      const titleNode = container?.querySelector?.(
+    function pickTitle(container) {
+      if (!container) return '';
+
+      const fromAria = container.getAttribute('aria-label') || '';
+      if (fromAria.trim()) {
+        return fromAria.trim().split(',')[0].trim();
+      }
+
+      const titleNode = container.querySelector?.(
         '[class*="title" i], [class*="name" i], [class*="header" i], [class*="peer" i] span, h3, h4'
       );
       const fromNode = titleNode?.innerText || '';
-      if (fromNode.trim()) return fromNode.trim().split('\n')[0].trim();
+      if (fromNode.trim()) {
+        return fromNode.trim().split('\n')[0].trim();
+      }
 
-      const fromLink = (link.innerText || '').trim();
-      if (fromLink) return fromLink.split('\n')[0].trim();
+      const lines = (container.innerText || '')
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
 
-      return '';
+      for (const line of lines) {
+        if (/^\d{1,2}:\d{2}$/.test(line)) continue;
+        if (CHAT_ID.test(line)) continue;
+        if (/^(вчера|сегодня|yesterday|today)$/i.test(line)) continue;
+        return line;
+      }
+
+      return lines[0] || '';
     }
 
-    function addChat(title, href, container) {
-      const match = String(href || '').match(CHAT_ID);
-      if (!match) return;
+    function findContainerForId(chatId) {
+      const escaped = chatId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const selectors = [
+        `a[href*="${chatId}"]`,
+        `[href*="${chatId}"]`,
+        `button`,
+        '[role="listitem"]',
+        '[class*="cell" i]',
+        '[class*="chat" i]',
+        '[class*="dialog" i]',
+        '[class*="peer" i]',
+        '[class*="conversation" i]',
+      ];
 
-      const url = (() => {
-        const raw = String(href || '').trim();
-        if (/^https?:\/\//i.test(raw)) {
-          try {
-            const parsed = new URL(raw.split('?')[0]);
-            if (/web\.max\.ru$/i.test(parsed.hostname)) {
-              return `https://web.max.ru/${match[0]}`;
-            }
-          } catch {
-            /* ignore */
+      for (const selector of selectors) {
+        for (const el of document.querySelectorAll(selector)) {
+          const blob = [
+            el.getAttribute('href') || '',
+            el.outerHTML || '',
+            el.innerText || '',
+          ].join(' ');
+          if (new RegExp(escaped).test(blob)) {
+            return el.closest('li, [role="listitem"], button, [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i]') || el;
           }
         }
-        return `https://web.max.ru/${match[0]}`;
-      })();
+      }
 
-      if (seen.has(url)) return;
+      return null;
+    }
 
-      const cleanTitle = (title || '').replace(/\s+/g, ' ').trim();
-      if (!cleanTitle || cleanTitle.length < 1) return;
+    const chats = [];
+    const seen = new Set();
+
+    function addChat(title, url, container) {
+      if (!url || seen.has(url)) return;
+
+      let cleanTitle = (title || pickTitle(container) || '').replace(/\s+/g, ' ').trim();
+      if (!cleanTitle || CHAT_ID.test(cleanTitle)) {
+        const id = url.match(CHAT_ID);
+        cleanTitle = id ? `Чат ${id[0]}` : url;
+      }
 
       seen.add(url);
       chats.push({ title: cleanTitle, url });
     }
 
-    const links = [...document.querySelectorAll('a[href]')];
-    for (const link of links) {
+    for (const link of document.querySelectorAll('a[href], [href]')) {
       const href = link.getAttribute('href') || '';
-      if (!CHAT_ID.test(href)) continue;
-      const container = link.closest('li, [role="listitem"], [class*="chat" i], [class*="dialog" i], [class*="peer" i], [class*="conversation" i]') || link.parentElement;
-      addChat(pickTitle(link, container), href, container);
+      const match = href.match(CHAT_ID);
+      if (!match) continue;
+
+      const container =
+        link.closest(
+          'li, [role="listitem"], button, [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i], [class*="conversation" i]'
+        ) || link.parentElement;
+
+      addChat(pickTitle(container) || pickTitle(link), chatUrlFromMatch(match), container);
+    }
+
+    for (const el of document.querySelectorAll(
+      'button, [role="button"], [role="listitem"], [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i]'
+    )) {
+      let chatId = '';
+
+      for (const attr of el.attributes || []) {
+        const match = String(attr.value || '').match(CHAT_ID);
+        if (match) {
+          chatId = match[0];
+          break;
+        }
+      }
+
+      if (!chatId) {
+        const innerLink = el.querySelector('a[href], [href]');
+        const href = innerLink?.getAttribute('href') || '';
+        const match = href.match(CHAT_ID);
+        if (match) chatId = match[0];
+      }
+
+      if (!chatId) continue;
+
+      addChat(pickTitle(el), chatUrlFromMatch(chatId.match(CHAT_ID)), el);
+    }
+
+    const html = document.body?.innerHTML || '';
+    for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(-\d{5,})/g)) {
+      const chatId = `-${match[1]}`;
+      const url = chatUrlFromMatch(chatId.match(CHAT_ID));
+      const container = findContainerForId(chatId);
+      addChat(pickTitle(container), url, container);
     }
 
     return chats;
@@ -102,16 +240,23 @@ async function findChatListClip(page) {
     const CHAT_ID = /-\d{5,}/;
     const counts = new Map();
 
-    for (const link of document.querySelectorAll('a[href]')) {
-      const href = link.getAttribute('href') || '';
-      if (!CHAT_ID.test(href)) continue;
-
-      let el = link;
-      for (let depth = 0; depth < 12 && el; depth++) {
-        el = el.parentElement;
-        if (!el || el === document.body) break;
-        counts.set(el, (counts.get(el) || 0) + 1);
+    function bump(el) {
+      let node = el;
+      for (let depth = 0; depth < 12 && node; depth++) {
+        node = node.parentElement;
+        if (!node || node === document.body) break;
+        counts.set(node, (counts.get(node) || 0) + 1);
       }
+    }
+
+    for (const el of document.querySelectorAll('a[href], [href], button, [role="listitem"], [class*="cell" i]')) {
+      const blob = [
+        el.getAttribute('href') || '',
+        el.outerHTML || '',
+      ].join(' ');
+
+      if (!CHAT_ID.test(blob)) continue;
+      bump(el);
     }
 
     let best = null;
@@ -146,27 +291,58 @@ async function captureMaxChatListScreenshot(page) {
   return page.screenshot({ type: 'png', fullPage: false });
 }
 
+async function debugChatListState(page) {
+  return page.evaluate(() => {
+    const CHAT_ID = /-\d{5,}/;
+    const links = [...document.querySelectorAll('a[href], [href]')].filter((el) =>
+      CHAT_ID.test(el.getAttribute('href') || '')
+    );
+    const buttons = document.querySelectorAll('button, [role="listitem"], [class*="cell" i]').length;
+    const htmlMatches = (document.body?.innerHTML || '').match(/\/-\d{5,}/g) || [];
+    return {
+      url: location.href,
+      chatLinks: links.length,
+      buttons,
+      htmlChatIds: [...new Set(htmlMatches)].slice(0, 5),
+    };
+  });
+}
+
 async function listMaxChats(page) {
-  await page.goto(MAX_HOME_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.waitForTimeout(2500);
+  if (!page || page.isClosed()) {
+    throw new Error('Браузер MAX недоступен. Перезапустите бота.');
+  }
+
+  await ensureChatListVisible(page);
 
   if (await isLoginPage(page)) {
     throw new Error('Сессия MAX истекла. Отправьте /reauth');
   }
 
-  await page
-    .waitForFunction(
-      () => {
-        const CHAT_ID = /-\d{5,}/;
-        return [...document.querySelectorAll('a[href]')].some((link) =>
-          CHAT_ID.test(link.getAttribute('href') || '')
-        );
-      },
-      { timeout: 20000 }
-    )
-    .catch(() => {});
+  let chats = [];
 
-  let chats = await extractMaxChatsFromPage(page);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await waitForChatListDom(page);
+    await page.waitForTimeout(attempt === 0 ? 1500 : 2500);
+
+    chats = await extractMaxChatsFromPage(page);
+    if (chats.length) break;
+
+    await ensureChatListVisible(page);
+  }
+
+  if (!chats.length) {
+    const debug = await debugChatListState(page).catch(() => ({}));
+    console.warn('listMaxChats: пустой список', JSON.stringify(debug));
+
+    const knownUrls = [...new Set((debug.htmlChatIds || []).map((id) => chatUrlFromId(id)).filter(Boolean))];
+    if (knownUrls.length) {
+      chats = knownUrls.map((url) => ({
+        url,
+        title: chatLabelFromUrl(url),
+      }));
+    }
+  }
 
   if (!chats.length) {
     throw new Error('Не удалось прочитать список чатов MAX. Отправьте ссылку вручную.');
@@ -219,6 +395,7 @@ function resolveMaxChatInput(text, chats = []) {
 module.exports = {
   MAX_HOME_URL,
   listMaxChats,
+  ensureChatListVisible,
   extractMaxChatsFromPage,
   captureMaxChatListScreenshot,
   resolveMaxChatByName,
