@@ -11,6 +11,31 @@ function buildBrowserPasswordAcceptedMessage() {
   });
 }
 
+function buildBrowserPasswordSavedMessage({ delivered = false } = {}) {
+  return buildEventMessage({
+    title: delivered ? 'Пароль принят' : 'Пароль сохранён',
+    status: 'done',
+    lines: delivered
+      ? ['Ввожу пароль в MAX…']
+      : [
+          'Пароль сохранён в config.json.',
+          'Бот подставит его автоматически при входе @Browser.',
+        ],
+  });
+}
+
+function buildBrowserPasswordPromptMessage() {
+  return buildEventMessage({
+    title: 'Пароль @Browser',
+    status: 'wait',
+    lines: [
+      'Отправьте пароль от аккаунта (личный кабинет MAX → Безопасность).',
+      'Или сразу: <code>/set browserpassword ваш_пароль</code>',
+      'Отмена: /cancel',
+    ],
+  });
+}
+
 async function notifyPasswordAccepted(chatIds, options = {}) {
   const text = buildBrowserPasswordAcceptedMessage();
   for (const chatId of chatIds || []) {
@@ -40,6 +65,32 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
+function maskBrowserPassword(password) {
+  const value = String(password || '');
+  if (!value) return '';
+  if (value.length <= 2) return '••••';
+  return `${value[0]}${'•'.repeat(Math.min(value.length - 2, 8))}${value[value.length - 1]}`;
+}
+
+function parseBrowserPasswordCommand(text) {
+  const withValue = String(text || '').match(/^\/set\s+browserpassword\s+([\s\S]+)$/i);
+  if (withValue) {
+    const password = withValue[1].trim();
+    return password ? { password } : { error: 'Пароль не может быть пустым' };
+  }
+  if (/^\/set\s+browserpassword$/i.test(String(text || '').trim())) {
+    return { prompt: true };
+  }
+  return null;
+}
+
+function acceptBrowserPassword(password) {
+  const pwd = String(password || '').trim();
+  if (!pwd) return { ok: false, error: 'Пароль не может быть пустым' };
+  store.setPath(['max', 'browserPassword'], pwd);
+  return { ok: true, password: pwd, delivered: deliverBrowserPassword(pwd) };
+}
+
 function getBrowserPassword() {
   const value = getMax().browserPassword;
   return value ? String(value) : '';
@@ -50,15 +101,14 @@ async function readBodyText(page) {
 }
 
 async function isBrowserPasswordPrompt(page) {
-  const bodyText = await readBodyText(page);
-  if (/@browser/i.test(bodyText)) return true;
-
-  const hasPassword = await page
-    .locator('input[type="password"]')
-    .first()
-    .isVisible({ timeout: 400 })
+  const passwordInput = page.locator('input[type="password"]').first();
+  const hasPassword = await passwordInput
+    .isVisible({ timeout: 300 })
     .catch(() => false);
   if (!hasPassword) return false;
+
+  const bodyText = await readBodyText(page);
+  if (/@browser/i.test(bodyText)) return true;
 
   const lower = bodyText.toLowerCase();
   return (
@@ -78,7 +128,7 @@ function buildBrowserPasswordHintHtml() {
   ];
 
   if (password) {
-    lines.push(`Пароль: <code>${escapeHtml(password)}</code>`);
+    lines.push(`Пароль задан: <code>${escapeHtml(maskBrowserPassword(password))}</code>`);
     lines.push('Бот введёт его автоматически на странице входа.');
   } else {
     lines.push('Задайте пароль: <code>/set browserpassword ваш_пароль</code>');
@@ -137,7 +187,7 @@ async function buildScreenshotCaptionForPage(page, options = {}) {
 }
 
 async function captureBrowserScreenshot(page) {
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(500);
 
   const passwordInput = page.locator('input[type="password"]').first();
   if (await passwordInput.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -172,32 +222,32 @@ async function fillBrowserPassword(page, password) {
     .or(page.getByRole('textbox', { name: /password|пароль/i }));
 
   await input.waitFor({ state: 'visible', timeout: 10000 });
-  await input.click();
-  await input.fill('');
-  await input.pressSequentially(password, { delay: 40 });
+  await input.fill(password);
 
   const continueBtn = page
-    .getByRole('button', { name: /продолжить|continue|войти|sign in|далее|next|готово|done|подтвердить|confirm/i })
+    .getByRole('button', {
+      name: /продолжить|continue|войти|sign in|далее|next|готово|done|подтвердить|confirm/i,
+    })
     .first();
 
-  if (await continueBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await continueBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
     await continueBtn.click({ timeout: 5000 });
     return;
   }
 
-  const submit = page.getByRole('button', {
-    name: /войти|sign in|продолжить|continue|подтвердить|confirm|далее|next|готово|done/i,
-  });
+  await input.press('Enter');
+}
 
-  for (let i = 0; i < await submit.count(); i++) {
-    const btn = submit.nth(i);
-    if (await btn.isVisible().catch(() => false) && (await btn.isEnabled().catch(() => false))) {
-      await btn.click();
-      return;
+async function waitForBrowserPasswordResult(page) {
+  const passwordInput = page.locator('input[type="password"]').first();
+  try {
+    await passwordInput.waitFor({ state: 'hidden', timeout: 8000 });
+    return;
+  } catch {
+    if (await isBrowserPasswordPrompt(page)) {
+      throw new Error('Пароль не принят. Проверьте пароль и отправьте /reauth');
     }
   }
-
-  await input.press('Enter');
 }
 
 async function resolveBrowserPassword(chatIds, options = {}) {
@@ -259,7 +309,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
     }));
 
   if (!configured && password) {
-    store.setPath(['max', 'browserPassword'], password);
+    acceptBrowserPassword(password);
   }
 
   if (configured) {
@@ -275,11 +325,7 @@ async function handleBrowserPasswordPrompt(page, chatIds, options = {}) {
   }
 
   await fillBrowserPassword(page, password);
-  await page.waitForTimeout(2500);
-
-  if (await isBrowserPasswordPrompt(page)) {
-    throw new Error('Пароль не принят. Проверьте пароль и отправьте /reauth');
-  }
+  await waitForBrowserPasswordResult(page);
 
   return true;
 }
@@ -345,9 +391,14 @@ async function tryHandleBrowserPasswordPrompt(page, chatIds, options = {}) {
 
 module.exports = {
   getBrowserPassword,
+  maskBrowserPassword,
+  parseBrowserPasswordCommand,
+  acceptBrowserPassword,
   isBrowserPasswordPrompt,
   buildBrowserPasswordHintHtml,
   buildBrowserPasswordAcceptedMessage,
+  buildBrowserPasswordSavedMessage,
+  buildBrowserPasswordPromptMessage,
   deliverBrowserPassword,
   buildQrScreenshotCaption,
   buildBrowserScreenshotCaption,

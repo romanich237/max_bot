@@ -128,14 +128,16 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
           return;
         }
 
-        if (/^\/set\s+browserpassword\s+/i.test(text)) {
-          const pwd = text.replace(/^\/set\s+browserpassword\s+/i, '').trim();
-          if (pwd) {
-            const { store } = require('./config');
-            store.setPath(['max', 'browserPassword'], pwd);
-            finish(pwd);
-            return;
-          }
+        const { parseBrowserPasswordCommand, acceptBrowserPassword } = require('./auth-browser');
+        const browserCmd = parseBrowserPasswordCommand(text);
+        if (browserCmd?.password) {
+          const result = acceptBrowserPassword(browserCmd.password);
+          finish(result.password);
+          return;
+        }
+        if (browserCmd?.error) {
+          await sendMessage(chatId, browserCmd.error, {}, token);
+          return;
         }
 
         if (text.startsWith('/') && !/^\/cancel$/i.test(text)) {

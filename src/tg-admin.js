@@ -57,7 +57,14 @@ const {
   bindNotificationChat,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
-const { buildBrowserPasswordAcceptedMessage, deliverBrowserPassword } = require('./auth-browser');
+const {
+  buildBrowserPasswordAcceptedMessage,
+  buildBrowserPasswordSavedMessage,
+  buildBrowserPasswordPromptMessage,
+  acceptBrowserPassword,
+  parseBrowserPasswordCommand,
+  getBrowserPassword,
+} = require('./auth-browser');
 
 const SETTABLE = {
   profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -66,7 +73,6 @@ const SETTABLE = {
   biotemplate: { path: ['profileBio', 'template'], type: 'string' },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
   profilenames: { path: ['profileRotate', 'names'], type: 'names' },
-  browserpassword: { path: ['max', 'browserPassword'], type: 'string' },
 };
 
 const BOT_COMMANDS = [
@@ -300,10 +306,17 @@ function parseSetCommand(text) {
     return { ok: true, key, value: result.url };
   }
 
+  if (key === 'browserpassword') {
+    if (!rawValue) return { prompt: true, key };
+    const result = acceptBrowserPassword(rawValue);
+    if (!result.ok) return { error: result.error };
+    return { ok: true, key, secret: true, delivered: result.delivered };
+  }
+
   const rule = SETTABLE[key];
   if (!rule) {
     return {
-      error: `Неизвестный ключ. Доступно: chaturl, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`,
+      error: `Неизвестный ключ. Доступно: chaturl, browserpassword, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`,
     };
   }
 
@@ -326,6 +339,40 @@ function parseSetCommand(text) {
 
   store.setPath(rule.path, value);
   return { ok: true, key, value };
+}
+
+async function handleBrowserPasswordInput(chatId, text) {
+  const password = String(text || '').trim();
+  if (!password) {
+    await sendMessage(chatId, 'Пароль не может быть пустым. Отправьте пароль или /cancel.');
+    return true;
+  }
+
+  const result = acceptBrowserPassword(password);
+  waitingInput.delete(String(chatId));
+  await sendBrowserPasswordSetResponse(chatId, result);
+  return true;
+}
+
+async function sendBrowserPasswordSetResponse(chatId, result = {}) {
+  const password = result.password || getBrowserPassword();
+
+  if (authInputWaiter) {
+    const waiter = authInputWaiter;
+    clearAuthInputWaiter();
+    waiter.onValid(password);
+    await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
+    return;
+  }
+
+  const { isCaptionSessionActive } = require('./auth-caption');
+  await sendMessage(
+    chatId,
+    buildBrowserPasswordSavedMessage({
+      delivered: result.delivered || isCaptionSessionActive(),
+    }),
+    { reply_markup: buildMenuKeyboard() }
+  );
 }
 
 async function handleProfileBioCityInput(chatId, text) {
@@ -449,16 +496,18 @@ async function handleAuthInput(chatId, text) {
     return true;
   }
 
-  if (/^\/set\s+browserpassword\s+/i.test(text)) {
-    const setResult = parseSetCommand(text);
-    if (setResult?.ok) {
-      const waiter = authInputWaiter;
-      clearAuthInputWaiter();
-      waiter.onValid(setResult.value);
-      await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
-      return true;
-    }
-    return false;
+  const browserCmd = parseBrowserPasswordCommand(text);
+  if (browserCmd?.error) {
+    await sendMessage(chatId, browserCmd.error);
+    return true;
+  }
+  if (browserCmd?.password) {
+    const result = acceptBrowserPassword(browserCmd.password);
+    const waiter = authInputWaiter;
+    clearAuthInputWaiter();
+    waiter.onValid(result.password);
+    await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
+    return true;
   }
 
   if (text.startsWith('/') && !/^\/cancel$/i.test(text)) {
@@ -692,6 +741,11 @@ async function handleMessage(message) {
     return;
   }
 
+  if (waitKey === 'browserPassword' && text && !text.startsWith('/')) {
+    await handleBrowserPasswordInput(chatId, text);
+    return;
+  }
+
   if (waitKey === 'maxchat:add' && text && !text.startsWith('/')) {
     await handleMaxChatUrlInput(chatId, text);
     return;
@@ -841,21 +895,14 @@ async function handleMessage(message) {
       await sendMessage(chatId, result.error);
       return;
     }
+    if (result?.prompt && result.key === 'browserpassword') {
+      waitingInput.set(String(chatId), 'browserPassword');
+      await sendMessage(chatId, buildBrowserPasswordPromptMessage());
+      return;
+    }
     if (result?.ok && result.key === 'browserpassword') {
-      if (authInputWaiter) {
-        const waiter = authInputWaiter;
-        clearAuthInputWaiter();
-        waiter.onValid(result.value);
-        await sendMessage(chatId, buildAuthInputAcceptedMessage(waiter));
-        return;
-      }
-
-      const delivered = deliverBrowserPassword(result.value);
-      const { isCaptionSessionActive } = require('./auth-caption');
-      if (delivered || isCaptionSessionActive()) {
-        await sendMessage(chatId, buildBrowserPasswordAcceptedMessage());
-        return;
-      }
+      await sendBrowserPasswordSetResponse(chatId, result);
+      return;
     }
     if (result?.ok) {
       await sendMessage(
