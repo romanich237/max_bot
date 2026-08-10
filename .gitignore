@@ -1,0 +1,9 @@
+node_modules/
+package-lock.json
+max_user_data/
+max_session.zip
+max-deploy.zip
+state.json
+config.json
+logs/
+data/

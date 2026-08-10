@@ -1,0 +1,63 @@
+{
+  "setupComplete": false,
+  "telegram": {
+    "token": "",
+    "chatIds": [],
+    "adminChatIds": [],
+    "showTime": false,
+    "showServiceHeader": false
+  },
+  "max": {
+    "chatUrl": "",
+    "monitorChatUrls": [],
+    "chatTitles": {},
+    "disabledRequiredChats": [],
+    "skipOwnMessages": true,
+    "ownAuthorNames": [],
+    "currentDisplayName": "",
+    "monitorAllChats": false,
+    "monitoringEnabled": true,
+    "browserPassword": ""
+  },
+  "setupPortal": {
+    "port": 3847,
+    "ssl": true
+  },
+  "sitePortal": {
+    "enabled": true,
+    "port": 3847,
+    "ssl": true,
+    "token": ""
+  },
+  "profileRotate": {
+    "enabled": false,
+    "intervalMs": 600000,
+    "mode": "list",
+    "names": []
+  },
+  "profileBio": {
+    "enabled": false,
+    "intervalMs": 60000,
+    "template": "{час}:{минута} · {день}.{месяц} · {погода}",
+    "city": "",
+    "weatherApiKey": "bd5e378503939ddaee76f12ad7a97608"
+  },
+  "alwaysOnline": {
+    "enabled": false,
+    "intervalMs": 30000
+  },
+  "autoUpdate": {
+    "intervalMs": 60000,
+    "branch": "main"
+  },
+  "database": {
+    "enabled": true,
+    "driver": "mysql",
+    "file": "./data/max.db",
+    "host": "",
+    "port": 3306,
+    "user": "",
+    "password": "",
+    "database": ""
+  }
+}

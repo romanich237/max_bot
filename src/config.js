@@ -1,0 +1,185 @@
+const path = require('path');
+const store = require('./settings-store');
+
+const ROOT = path.resolve(__dirname, '..');
+
+function resolveFromRoot(relativePath) {
+  return path.resolve(ROOT, relativePath);
+}
+
+function getRaw() {
+  return store.get();
+}
+
+function getTelegram() {
+  const t = getRaw().telegram || {};
+  return {
+    ...t,
+    showTime: t.showTime ?? false,
+    showServiceHeader: t.showServiceHeader ?? false,
+  };
+}
+
+function getAdminChatIds() {
+  const t = getTelegram();
+  const explicit = t.adminChatIds || [];
+  if (explicit.length) return explicit.map(String);
+  return (t.chatIds || []).map(String);
+}
+
+function isPrivateChatId(chatId) {
+  return Number(chatId) > 0;
+}
+
+function getNotificationChatIds() {
+  const t = getTelegram();
+  const ids = (t.chatIds || []).map(String);
+  if (!ids.length) return [];
+
+  const groupIds = ids.filter((id) => !isPrivateChatId(id));
+  if (!groupIds.length) return [...new Set(ids)];
+
+  const admins = getAdminChatIds().map(String);
+  const privateFromIds = ids.filter(isPrivateChatId);
+  const privateFromAdmins = admins.filter(isPrivateChatId);
+  const dmId = privateFromIds[0] || privateFromAdmins[0];
+
+  const result = [];
+  if (dmId) result.push(dmId);
+  for (const groupId of groupIds) {
+    if (!result.includes(groupId)) result.push(groupId);
+  }
+
+  return [...new Set(result)];
+}
+
+function getMax() {
+  const m = getRaw().max || {};
+  return {
+    ...m,
+    monitoringEnabled: m.monitoringEnabled !== false,
+  };
+}
+
+function getMaxDisplayName() {
+  const max = getMax();
+  const direct = String(max.currentDisplayName || '').trim();
+  if (direct) return direct;
+
+  const names = max.ownAuthorNames || [];
+  for (let i = names.length - 1; i >= 0; i--) {
+    const name = String(names[i] || '').trim();
+    if (name) return name;
+  }
+
+  return '';
+}
+
+function getProfileRotate() {
+  const p = getRaw().profileRotate || {};
+  return {
+    enabled: p.enabled ?? false,
+    intervalMs: p.intervalMs ?? 600000,
+    mode: p.mode ?? 'letter',
+    baseName: p.baseName ?? '',
+    names: p.names ?? [],
+  };
+}
+
+function getProfileBio() {
+  const b = getRaw().profileBio || {};
+  return {
+    enabled: b.enabled ?? false,
+    intervalMs: b.intervalMs ?? 60000,
+    template: b.template || '{час}:{минута} · {день}.{месяц} · {погода}',
+    city: b.city || '',
+    weatherApiKey: process.env.OPENWEATHER_API_KEY || b.weatherApiKey || '',
+  };
+}
+
+function getAlwaysOnline() {
+  const o = getRaw().alwaysOnline || {};
+  return {
+    enabled: o.enabled ?? false,
+    intervalMs: o.intervalMs ?? 30000,
+  };
+}
+
+function resolveDatabaseDriver(d) {
+  if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
+  if (d.file) return 'sqlite';
+  if (d.host && d.user && d.database) return 'mysql';
+  return 'mysql';
+}
+
+function getDatabase() {
+  const d = getRaw().database || {};
+  const driver = resolveDatabaseDriver(d);
+  return {
+    enabled: d.enabled ?? true,
+    driver,
+    file: resolveFromRoot(d.file || './data/max.db'),
+    host: process.env.MYSQL_HOST || d.host || 'localhost',
+    port: Number(process.env.MYSQL_PORT || d.port || 3306),
+    user: process.env.MYSQL_USER || d.user || '',
+    password: process.env.MYSQL_PASSWORD || d.password || '',
+    database: process.env.MYSQL_DATABASE || d.database || '',
+  };
+}
+
+function getAutoUpdate() {
+  const u = getRaw().autoUpdate || {};
+  return {
+    enabled: true,
+    intervalMs: u.intervalMs ?? 60 * 1000,
+    branch: u.branch || process.env.AUTO_UPDATE_BRANCH || 'main',
+  };
+}
+
+function isPortalSslEnabled() {
+  const setup = getRaw().setupPortal || {};
+  const site = getRaw().sitePortal || {};
+  return setup.ssl !== false && site.ssl !== false;
+}
+
+function getSettings() {
+  return {
+    checkIntervalMs: 2000,
+    headless: true,
+    forwardOnStart: 3,
+    userDataDir: resolveFromRoot('./max_user_data'),
+    stateFile: resolveFromRoot('./state.json'),
+    dataDir: resolveFromRoot('./data'),
+  };
+}
+
+function isSetupComplete() {
+  return getRaw().setupComplete === true;
+}
+
+const maxChats = require('./max-chats');
+
+module.exports = {
+  ROOT,
+  store,
+  resolveFromRoot,
+  getRaw,
+  getTelegram,
+  getAdminChatIds,
+  getNotificationChatIds,
+  isPrivateChatId,
+  getMax,
+  getMaxDisplayName,
+  getDefaultChatUrl: maxChats.getDefaultChatUrl,
+  getMonitorChatUrls: maxChats.getMonitorChatUrls,
+  getForwardingMonitorChatUrls: maxChats.getForwardingMonitorChatUrls,
+  isMonitorAllChatsEnabled: maxChats.isMonitorAllChatsEnabled,
+  getProfileRotate,
+  getProfileBio,
+  getAlwaysOnline,
+  getDatabase,
+  getAutoUpdate,
+  isPortalSslEnabled,
+  getSettings,
+  isSetupComplete,
+};

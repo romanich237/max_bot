@@ -1,0 +1,41 @@
+{
+  "name": "max-to-tg-bot",
+  "version": "1.0.0",
+  "description": "Пересылка уведомлений из мессенджера MAX в Telegram",
+  "scripts": {
+    "auth": "node scripts/auth.js",
+    "export-session": "node scripts/export-session.js",
+    "import-session": "node scripts/import-session.js",
+    "init-db": "node scripts/init-db.js",
+    "setup": "node scripts/install.js",
+    "setup-resume": "bash scripts/resume-setup.sh",
+    "setup-web": "node scripts/install-web.js",
+    "setup-vps": "node scripts/setup-vps.js",
+    "auth-qr": "node scripts/auth-qr.js",
+    "pack-deploy": "node scripts/pack-deploy.js",
+    "sync-github": "node scripts/sync-github.js",
+    "set-max-chat": "node scripts/set-max-chat.js",
+    "pm2": "node scripts/pm2-setup.js",
+    "auto-update": "node scripts/auto-update.js",
+    "prestart": "node scripts/ensure-deps.js",
+    "start": "node scripts/monitor.js",
+    "stop": "pm2 stop max-tg",
+    "logs": "pm2 logs max-tg",
+    "status": "pm2 status"
+  },
+  "keywords": [
+    "playwright",
+    "telegram",
+    "bot",
+    "max-messenger"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "better-sqlite3": "^11.10.0",
+    "mysql2": "^3.22.5",
+    "playwright": "^1.49.0",
+    "undici": "^6.21.0"
+  }
+}

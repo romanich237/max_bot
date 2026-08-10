@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+trap 'echo ""; echo "Ошибка install.sh, строка $LINENO (код $?)"; exit 1' ERR
+
+REPO_URL="${REPO_URL:-https://github.com/romanich237/max_bot.git}"
+BRANCH="${BRANCH:-main}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/max-tg}"
+NODE_VERSION="${NODE_VERSION:-20.18.1}"
+NVM_VERSION="${NVM_VERSION:-0.40.3}"
+
+echo "=== MAX → Telegram — установка ==="
+echo ""
+echo "Установка: bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)"
+echo "С token/chat ID заранее: TG_TOKEN=... TG_CHAT_ID=... bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)"
+echo ""
+
+run_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+can_sudo() {
+  [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null || sudo true 2>/dev/null
+}
+
+apt_install() {
+  run_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"
+}
+
+prepend_nvm_to_path() {
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  local bin_dir
+  bin_dir="$(ls -1d "$NVM_DIR/versions/node/v"*/bin 2>/dev/null | sort -V | tail -n1)"
+  [ -n "$bin_dir" ] && [ -x "$bin_dir/node" ] && PATH="$bin_dir:$PATH"
+  export PATH
+}
+
+refresh_path() {
+  prepend_nvm_to_path
+
+  if [ -d "$HOME/.local/node/bin" ]; then
+    PATH="$HOME/.local/node/bin:$PATH"
+  fi
+
+  if [ -d /usr/local/bin ]; then
+    PATH="/usr/local/bin:$PATH"
+  fi
+
+  export PATH
+}
+
+resolve_node_bin() {
+  refresh_path
+  if [ -x "$HOME/.local/node/bin/node" ]; then
+    echo "$HOME/.local/node/bin/node"
+    return
+  fi
+  type -P node 2>/dev/null || type -P nodejs 2>/dev/null || true
+}
+
+node_major() {
+  local bin ver
+  bin="$(resolve_node_bin)"
+  if [ -z "$bin" ]; then
+    echo 0
+    return 0
+  fi
+  if [ ! -x "$bin" ]; then
+    echo 0
+    return 0
+  fi
+  ver="$("$bin" -v 2>/dev/null || true)"
+  ver="${ver#v}"
+  ver="${ver%%.*}"
+  ver="${ver//[!0-9]/}"
+  if [ -n "$ver" ]; then
+    echo "$ver"
+  else
+    echo 0
+  fi
+  return 0
+}
+
+node_version_label() {
+  local bin ver
+  bin="$(resolve_node_bin)"
+  if [ -z "$bin" ]; then
+    echo "не найден"
+    return 0
+  fi
+  ver="$("$bin" -v 2>/dev/null || true)"
+  [ -n "$ver" ] && echo "$ver" || echo "не найден"
+}
+
+has_node() {
+  [ -n "$(resolve_node_bin)" ]
+}
+
+ensure_curl() {
+  if command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1 && can_sudo; then
+    echo "Установка curl..."
+    apt_install update -qq
+    apt_install install -y curl ca-certificates
+    return 0
+  fi
+
+  echo "Ошибка: нужен curl"
+  return 1
+}
+
+ensure_apt_packages() {
+  local missing=()
+  for pkg in "$@"; do
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+      missing+=("$pkg")
+    fi
+  done
+
+  if [ "${#missing[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  echo "Установка: ${missing[*]}..."
+  apt_install update -qq
+  apt_install install -y "${missing[@]}"
+}
+
+ensure_git() {
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Git не найден, устанавливаю..."
+
+  if [ "$(uname -s)" != "Linux" ] || ! command -v apt-get >/dev/null 2>&1; then
+    echo "Ошибка: установите git вручную"
+    exit 1
+  fi
+
+  if ! can_sudo; then
+    echo "Ошибка: для установки git нужен sudo"
+    exit 1
+  fi
+
+  ensure_apt_packages git
+}
+
+install_node_via_nvm() {
+  echo "Способ 1/3: NVM..."
+  ensure_curl || return 1
+
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
+  fi
+
+  # shellcheck disable=SC1091
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+  nvm install 20
+  nvm alias default 20
+  prepend_nvm_to_path
+  return 0
+}
+
+install_node_via_nodesource() {
+  echo "Способ 2/3: NodeSource (apt)..."
+
+  if [ "$(uname -s)" != "Linux" ] || ! command -v apt-get >/dev/null 2>&1; then
+    echo "  apt недоступен"
+    return 1
+  fi
+
+  if ! can_sudo; then
+    echo "  sudo недоступен"
+    return 1
+  fi
+
+  ensure_curl || return 1
+  ensure_apt_packages curl ca-certificates gnupg || return 1
+
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; then
+      echo "  NodeSource setup не удался"
+      return 1
+    fi
+  else
+    if ! curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -; then
+      echo "  NodeSource setup не удался"
+      return 1
+    fi
+  fi
+
+  apt_install install -y nodejs || return 1
+  return 0
+}
+
+install_node_via_binary() {
+  echo "Способ 3/3: бинарник nodejs.org..."
+  ensure_curl || return 1
+
+  local arch tar_arch install_dir
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) tar_arch="x64" ;;
+    aarch64|arm64) tar_arch="arm64" ;;
+    *)
+      echo "  архитектура не поддержана: $arch"
+      return 1
+      ;;
+  esac
+
+  install_dir="$HOME/.local/node"
+  mkdir -p "$install_dir"
+
+  local url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${tar_arch}.tar.gz"
+  echo "  загрузка $url"
+  curl -fsSL "$url" | tar -xz -C "$install_dir" --strip-components=1
+  return 0
+}
+
+ensure_node() {
+  refresh_path
+  local major
+  major="$(node_major)"
+  major="${major:-0}"
+
+  if [ "$major" -ge 18 ] 2>/dev/null; then
+    echo "Node.js $(node_version_label)"
+    return 0
+  fi
+
+  if has_node; then
+    echo "Node.js $(node_version_label) устарел, ставлю 20.x..."
+  else
+    echo "Node.js не найден, ставлю 20.x..."
+  fi
+
+  set +e
+  if [ "$(id -u)" -eq 0 ]; then
+    install_node_via_nodesource
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nodesource)"
+      return 0
+    fi
+
+    install_node_via_binary
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (binary)"
+      return 0
+    fi
+
+    install_node_via_nvm
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nvm)"
+      return 0
+    fi
+  else
+    install_node_via_nvm
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nvm)"
+      return 0
+    fi
+
+    install_node_via_nodesource
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (nodesource)"
+      return 0
+    fi
+
+    install_node_via_binary
+    refresh_path
+    major="$(node_major)"
+    major="${major:-0}"
+    if [ "$major" -ge 18 ] 2>/dev/null; then
+      set -e
+      echo "Node.js $(node_version_label) готов (binary)"
+      return 0
+    fi
+  fi
+  set -e
+
+  echo ""
+  echo "Ошибка: не удалось установить Node.js 18+"
+  echo "Если Node уже установлен, продолжите установку бота:"
+  echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
+  echo "Или вручную:"
+  echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+  echo "  apt-get install -y nodejs"
+  echo "  cd ${INSTALL_DIR} && bash scripts/resume-setup.sh"
+  exit 1
+}
+
+open_portal_port() {
+  local port="${SETUP_PORT:-3847}"
+
+  if ! can_sudo; then
+    echo "Порт ${port}/tcp: нет sudo — откройте вручную при необходимости"
+    return 0
+  fi
+
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -qi 'Status: active'; then
+      echo "Открываю порт ${port}/tcp (ufw)..."
+      run_root ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+      echo "Порт ${port}/tcp открыт"
+      return 0
+    fi
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if run_root firewall-cmd --state >/dev/null 2>&1; then
+      echo "Открываю порт ${port}/tcp (firewalld)..."
+      run_root firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
+      run_root firewall-cmd --reload >/dev/null 2>&1 || true
+      echo "Порт ${port}/tcp открыт"
+      return 0
+    fi
+  fi
+
+  if command -v iptables >/dev/null 2>&1; then
+    echo "Открываю порт ${port}/tcp (iptables)..."
+    if run_root iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1; then
+      echo "Порт ${port}/tcp уже открыт"
+      return 0
+    fi
+    if run_root iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1; then
+      echo "Порт ${port}/tcp открыт (iptables)"
+      echo "Чтобы сохранить после перезагрузки: apt-get install -y iptables-persistent"
+      return 0
+    fi
+  fi
+
+  echo "Порт ${port}/tcp: локальный файрвол не найден (ufw/firewalld/iptables)"
+  echo "Откройте порт ${port}/tcp в панели хостинга (Security Groups / Firewall)"
+}
+
+echo "Проверка git..."
+ensure_git
+echo "Проверка Node.js..."
+set +e
+ensure_node
+ensure_node_status=$?
+set -e
+if [ "$ensure_node_status" -ne 0 ]; then
+  exit "$ensure_node_status"
+fi
+refresh_path
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Ошибка: npm не найден после установки Node.js"
+  exit 1
+fi
+
+if [ -d "$INSTALL_DIR/.git" ]; then
+  echo "Обновление: $INSTALL_DIR"
+  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+elif [ -d "$INSTALL_DIR" ]; then
+  echo "Ошибка: $INSTALL_DIR уже существует, но это не git-репозиторий"
+  echo "Удалите папку или задайте другой путь: INSTALL_DIR=/path bash ..."
+  exit 1
+else
+  echo "Клонирование в $INSTALL_DIR"
+  git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+fi
+
+cd "$INSTALL_DIR"
+refresh_path
+open_portal_port
+echo ""
+echo "Node: $(resolve_node_bin) ($(node_version_label))"
+echo "npm:  $(command -v npm 2>/dev/null || echo 'не найден') ($(npm -v 2>/dev/null || echo '?'))"
+echo ""
+
+if [ -z "${TG_TOKEN:-}" ]; then
+  read -rp "Telegram bot token: " TG_TOKEN
+  export TG_TOKEN
+fi
+
+if [ -z "${TG_CHAT_ID:-}" ]; then
+  read -rp "Ваш Telegram chat ID: " TG_CHAT_ID
+  export TG_CHAT_ID
+fi
+
+if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
+  echo "Ошибка: нужны Telegram bot token и chat ID"
+  exit 1
+fi
+
+if [ -z "${DB_DRIVER:-}" ]; then
+  echo ""
+  echo "База данных:"
+  echo "  1) MySQL (MariaDB) — рекомендуется для VPS"
+  echo "  2) SQLite — файл в папке data/, без отдельного сервера"
+  read -rp "Выберите [1]: " db_choice
+  case "$db_choice" in
+    2|sqlite|SQLite) export DB_DRIVER=sqlite ;;
+    *) export DB_DRIVER=mysql ;;
+  esac
+fi
+
+echo ""
+exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" DB_DRIVER="$DB_DRIVER" npm run setup
