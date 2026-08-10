@@ -25,6 +25,12 @@ async function askDatabaseDriver(ask) {
     return fromEnv;
   }
 
+  // авто: без вопросов, если неинтерактивно или ask нет
+  const canAsk = typeof ask === 'function' && process.stdin.isTTY;
+  if (!canAsk) {
+    return 'sqlite';
+  }
+
   console.log('База данных:');
   console.log('  1) MySQL (MariaDB) — рекомендуется для VPS');
   console.log('  2) SQLite — файл в папке data/, без отдельного сервера');

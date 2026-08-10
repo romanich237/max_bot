@@ -452,6 +452,21 @@ echo "npm:  $(command -v npm) ($(npm -v 2>/dev/null || echo '?'))"
 echo "NODE_OPTIONS=$NODE_OPTIONS"
 echo ""
 
+pick_db_driver() {
+  if [ -n "${DB_DRIVER:-}" ]; then
+    echo "DB_DRIVER=$DB_DRIVER"
+    return 0
+  fi
+  if command -v mysql >/dev/null 2>&1 || command -v mariadb >/dev/null 2>&1 \
+    || dpkg -s mariadb-server >/dev/null 2>&1 || dpkg -s mysql-server >/dev/null 2>&1; then
+    export DB_DRIVER=mysql
+    echo "DB_DRIVER=mysql (нашли MySQL/MariaDB)"
+  else
+    export DB_DRIVER=sqlite
+    echo "DB_DRIVER=sqlite (авто, без лишних вопросов)"
+  fi
+}
+
 if [ -z "${TG_TOKEN:-}" ]; then
   read -rp "Telegram bot token (@BotFather): " TG_TOKEN
   export TG_TOKEN
@@ -462,22 +477,7 @@ if [ -z "${TG_CHAT_ID:-}" ]; then
 fi
 [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || fail "нужны TG_TOKEN и TG_CHAT_ID"
 
-if [ -z "${DB_DRIVER:-}" ]; then
-  if [ -t 0 ]; then
-    echo ""
-    echo "База:"
-    echo "  1) MySQL/MariaDB (VPS)"
-    echo "  2) SQLite (файл, проще)"
-    read -rp "Выбор [1]: " db_choice
-    case "$db_choice" in
-      2|sqlite|SQLite) export DB_DRIVER=sqlite ;;
-      *) export DB_DRIVER=mysql ;;
-    esac
-  else
-    export DB_DRIVER="${DB_DRIVER:-mysql}"
-    echo "DB_DRIVER=$DB_DRIVER (неинтерактивно)"
-  fi
-fi
+pick_db_driver
 
 echo ""
 echo "запускаю npm run setup…"

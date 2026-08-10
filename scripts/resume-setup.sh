@@ -80,15 +80,13 @@ if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
 fi
 
 if [ -z "${DB_DRIVER:-}" ]; then
-  echo ""
-  echo "База данных:"
-  echo "  1) MySQL — рекомендуется для VPS"
-  echo "  2) SQLite — файл в папке, если порт занят"
-  read -rp "Выберите [1]: " db_choice
-  case "$db_choice" in
-    2|sqlite|SQLite) export DB_DRIVER=sqlite ;;
-    *) export DB_DRIVER=mysql ;;
-  esac
+  if command -v mysql >/dev/null 2>&1 || command -v mariadb >/dev/null 2>&1 \
+    || dpkg -s mariadb-server >/dev/null 2>&1 || dpkg -s mysql-server >/dev/null 2>&1; then
+    export DB_DRIVER=mysql
+  else
+    export DB_DRIVER=sqlite
+  fi
+  echo "DB_DRIVER=$DB_DRIVER (авто)"
 fi
 
 echo ""
