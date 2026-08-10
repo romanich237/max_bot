@@ -125,7 +125,7 @@ async function isBrowserPasswordPrompt(page) {
     .catch(() => false);
   if (!hasPassword) return false;
 
-  // Уже на форме auth — этого достаточно (веб-клиент всегда называется @Browser)
+  // форма auth → уже капча/пароль, не чат
   const onAuthForm = await page
     .locator('form.auth--password, form.auth--qr-code, form.auth')
     .first()
@@ -134,7 +134,7 @@ async function isBrowserPasswordPrompt(page) {
   if (onAuthForm) return true;
 
   const bodyText = await readBodyText(page);
-  // Явный экран пароля / подтверждения входа — НЕ любое упоминание @Browser в UI
+  // реальный экран пароля, а не @Browser где-то в меню
   return /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|enter your password|password for|двухфактор|2fa/i.test(
     bodyText
   );

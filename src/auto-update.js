@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
 const os = require('os');
@@ -14,9 +14,40 @@ const {
 } = require('./pm2');
 
 const REPO_SLUG = process.env.AUTO_UPDATE_REPO || 'romanich237/max_bot';
-const FETCH_RETRIES = 3;
-const FETCH_RETRY_MS = 2000;
-const DOH_ENDPOINTS = ['https://1.1.1.1/dns-query', 'https://8.8.8.8/resolve'];
+const FETCH_RETRIES = 2;
+const FETCH_RETRY_MS = 1500;
+const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
+
+// DoH по IP — когда DNS в ахуе и github.com не резолвится
+const DOH_PROVIDERS = [
+  {
+    ip: '1.1.1.1',
+    servername: 'cloudflare-dns.com',
+    host: 'cloudflare-dns.com',
+    pathFor: (name) => `/dns-query?name=${encodeURIComponent(name)}&type=A`,
+    accept: 'application/dns-json',
+    parse: (data) => (data?.Answer || []).find((a) => a.type === 1)?.data,
+  },
+  {
+    ip: '8.8.8.8',
+    servername: 'dns.google',
+    host: 'dns.google',
+    pathFor: (name) => `/resolve?name=${encodeURIComponent(name)}&type=A`,
+    accept: 'application/json',
+    parse: (data) => (data?.Answer || []).find((a) => a.type === 1)?.data,
+  },
+  {
+    ip: '9.9.9.9',
+    servername: 'dns.quad9.net',
+    host: 'dns.quad9.net',
+    pathFor: (name) => `/dns-query?name=${encodeURIComponent(name)}&type=A`,
+    accept: 'application/dns-json',
+    parse: (data) => (data?.Answer || []).find((a) => a.type === 1)?.data,
+  },
+];
+
+const GITHUB_HOSTS = ['github.com', 'api.github.com', 'codeload.github.com', 'objects.githubusercontent.com'];
+
 const PRESERVE_ON_ARCHIVE = new Set([
   '.git',
   'node_modules',
@@ -34,6 +65,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errText(err) {
+  const parts = [err?.stderr, err?.stdout, err?.message, err]
+    .map((value) => {
+      if (value == null) return '';
+      if (Buffer.isBuffer(value)) return value.toString('utf8');
+      return String(value);
+    })
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [...new Set(parts)].join('\n');
+}
+
 function run(cmd, options = {}) {
   return execSync(cmd, {
     encoding: 'utf8',
@@ -41,16 +84,15 @@ function run(cmd, options = {}) {
     shell: true,
     stdio: options.silent ? 'pipe' : 'inherit',
     env: { ...process.env, ...(options.env || {}) },
-    ...options,
+    timeout: options.timeout,
   });
 }
 
 function runQuiet(cmd, options = {}) {
   try {
-    return run(cmd, { silent: true, ...options })?.trim() || '';
+    return run(cmd, { silent: true, timeout: 45000, ...options })?.trim() || '';
   } catch (err) {
-    const detail = err?.stderr || err?.stdout || err?.message || '';
-    const wrapped = new Error(String(detail || err.message || err).trim());
+    const wrapped = new Error(errText(err));
     wrapped.status = err.status;
     throw wrapped;
   }
@@ -68,8 +110,8 @@ function isGitRepo() {
 }
 
 function isDnsOrNetworkError(err) {
-  const message = String(err?.message || err || '');
-  return /could not resolve host|name or service not known|temporary failure in name resolution|nodename nor servname|getaddrinfo|failed to connect|connection timed out|network is unreachable|ssl|unable to access/i.test(
+  const message = errText(err);
+  return /could not resolve host|name or service not known|temporary failure in name resolution|nodename nor servname|getaddrinfo|failed to connect|connection timed out|network is unreachable|ssl|unable to access|enotfound|eai_again/i.test(
     message
   );
 }
@@ -97,51 +139,67 @@ async function notifyAdmins(text) {
 }
 
 function formatUpdateError(err) {
-  const message = String(err?.message || err || 'неизвестная ошибка');
+  const message = errText(err);
   const lines = [escapeHtml(message)];
 
   if (/pm2|restart/i.test(message)) {
     lines.push(
       '',
       'Код на диске уже мог обновиться. Перезапустите вручную:',
-      '<code>pm2 restart max-tg max-tg-update</code>',
-      'или:',
-      '<code>cd ~/max-tg && npm run pm2</code>'
+      '<code>pm2 restart max-tg max-tg-update</code>'
     );
   } else if (isDnsOrNetworkError(err)) {
     lines.push(
       '',
-      'DNS/сеть до GitHub недоступны. Проверьте:',
-      '<code>ping -c1 github.com</code>',
-      '<code>curl -I https://github.com</code>',
-      'Если DNS сломан — добавьте в /etc/hosts IP github.com или смените DNS на 1.1.1.1 / 8.8.8.8',
+      'GitHub не резолвится на VPS. Одноразовый ремонт без git:',
+      '<code>cd ~/max-tg && node scripts/repair-update.js</code>',
       '',
-      'Затем:',
+      'Или починить DNS и обновить:',
+      '<code>echo "nameserver 1.1.1.1" | tee /etc/resolv.conf >/dev/null</code>',
       '<code>cd ~/max-tg && git pull --ff-only && npm install --omit=dev && pm2 restart max-tg max-tg-update</code>'
     );
   } else {
     lines.push(
       '',
-      'Попробуйте вручную:',
-      '<code>cd ~/max-tg && git pull --ff-only && npm install --omit=dev && pm2 restart max-tg max-tg-update</code>'
+      'Попробуйте:',
+      '<code>cd ~/max-tg && node scripts/repair-update.js</code>'
     );
   }
 
   return lines;
 }
 
-function httpsJson(url, options = {}) {
+function loadDnsCache() {
+  try {
+    if (!fs.existsSync(DNS_CACHE_FILE)) return {};
+    return JSON.parse(fs.readFileSync(DNS_CACHE_FILE, 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDnsCache(cache) {
+  try {
+    fs.mkdirSync(path.dirname(DNS_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(DNS_CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
+  } catch (err) {
+    console.warn(`auto-update: не удалось сохранить DNS cache (${err.message})`);
+  }
+}
+
+function httpsRequest(url, options = {}) {
   return new Promise((resolve, reject) => {
+    const method = options.method || 'GET';
     const req = https.request(
       url,
       {
-        method: options.method || 'GET',
+        method,
         headers: {
           'User-Agent': 'max-tg-auto-update',
-          Accept: options.accept || 'application/json',
+          Accept: options.accept || '*/*',
           ...(options.headers || {}),
         },
-        timeout: options.timeout || 20000,
+        timeout: options.timeout || 25000,
         servername: options.servername,
         lookup: options.lookup,
       },
@@ -151,170 +209,156 @@ function httpsJson(url, options = {}) {
         res.on('end', () => {
           const body = Buffer.concat(chunks);
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            httpsJson(res.headers.location, options).then(resolve, reject);
+            httpsRequest(res.headers.location, options).then(resolve, reject);
             return;
           }
-          if (res.statusCode < 200 || res.statusCode >= 300) {
-            reject(new Error(`HTTP ${res.statusCode} для ${url}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(body.toString('utf8')));
-          } catch (err) {
-            reject(err);
-          }
+          resolve({ statusCode: res.statusCode || 0, headers: res.headers, body });
         });
       }
     );
-    req.on('timeout', () => {
-      req.destroy(new Error(`timeout: ${url}`));
-    });
+    req.on('timeout', () => req.destroy(new Error(`timeout: ${url}`)));
     req.on('error', reject);
+    if (options.body) req.write(options.body);
     req.end();
   });
 }
 
-function httpsDownload(url, destPath, options = {}) {
-  return new Promise((resolve, reject) => {
-    const follow = (currentUrl, redirectsLeft) => {
-      const req = https.request(
-        currentUrl,
-        {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'max-tg-auto-update',
-            Accept: '*/*',
-            ...(options.headers || {}),
-          },
-          timeout: options.timeout || 60000,
-          servername: options.servername,
-          lookup: options.lookup,
-        },
-        (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.resume();
-            if (redirectsLeft <= 0) {
-              reject(new Error('Слишком много редиректов при скачивании архива'));
-              return;
-            }
-            follow(res.headers.location, redirectsLeft - 1);
-            return;
-          }
-          if (res.statusCode < 200 || res.statusCode >= 300) {
-            res.resume();
-            reject(new Error(`HTTP ${res.statusCode} при скачивании ${currentUrl}`));
-            return;
-          }
-
-          const out = fs.createWriteStream(destPath);
-          res.pipe(out);
-          out.on('finish', () => resolve(destPath));
-          out.on('error', reject);
-        }
-      );
-      req.on('timeout', () => {
-        req.destroy(new Error(`timeout: ${currentUrl}`));
-      });
-      req.on('error', reject);
-      req.end();
-    };
-
-    follow(url, 5);
+async function httpsJson(url, options = {}) {
+  const res = await httpsRequest(url, {
+    ...options,
+    accept: options.accept || 'application/json',
   });
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(`HTTP ${res.statusCode} для ${url}`);
+  }
+  return JSON.parse(res.body.toString('utf8'));
 }
 
-async function resolveViaDoh(hostname) {
-  const errors = [];
-
-  for (const endpoint of DOH_ENDPOINTS) {
-    try {
-      if (endpoint.includes('1.1.1.1')) {
-        const data = await httpsJson(`${endpoint}?name=${encodeURIComponent(hostname)}&type=A`, {
-          accept: 'application/dns-json',
-          servername: 'cloudflare-dns.com',
-        });
-        const answers = data?.Answer || [];
-        const ip = answers.find((a) => a.type === 1 && a.data)?.data;
-        if (ip) return ip;
-      } else {
-        const data = await httpsJson(`${endpoint}?name=${encodeURIComponent(hostname)}&type=A`, {
-          accept: 'application/json',
-          servername: 'dns.google',
-        });
-        const ip = (data?.Answer || []).find((a) => a.type === 1)?.data;
-        if (ip) return ip;
-      }
-    } catch (err) {
-      errors.push(`${endpoint}: ${err.message}`);
-    }
+async function httpsDownload(url, destPath, options = {}) {
+  const res = await httpsRequest(url, {
+    ...options,
+    timeout: options.timeout || 90000,
+    accept: '*/*',
+  });
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(`HTTP ${res.statusCode} при скачивании ${url}`);
   }
-
-  throw new Error(
-    `DoH не смог резолвить ${hostname}` + (errors.length ? `: ${errors.join('; ')}` : '')
-  );
+  fs.writeFileSync(destPath, res.body);
+  return destPath;
 }
 
 function makeIpLookup(ip) {
-  return (hostname, options, callback) => {
+  return (_hostname, options, callback) => {
     const cb = typeof options === 'function' ? options : callback;
     cb(null, ip, 4);
   };
 }
 
+async function resolveViaDoh(hostname) {
+  const cache = loadDnsCache();
+  const cached = cache[hostname];
+  if (cached?.ip && cached.expiresAt > Date.now()) {
+    return cached.ip;
+  }
+
+  const errors = [];
+  for (const provider of DOH_PROVIDERS) {
+    try {
+      const url = `https://${provider.ip}${provider.pathFor(hostname)}`;
+      const data = await httpsJson(url, {
+        accept: provider.accept,
+        servername: provider.servername,
+        headers: { Host: provider.host },
+        lookup: makeIpLookup(provider.ip),
+        timeout: 12000,
+      });
+      const ip = provider.parse(data);
+      if (ip) {
+        cache[hostname] = { ip, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+        saveDnsCache(cache);
+        return ip;
+      }
+      errors.push(`${provider.host}: empty`);
+    } catch (err) {
+      errors.push(`${provider.host}: ${err.message}`);
+    }
+  }
+
+  if (cached?.ip) {
+    console.warn(`auto-update: DoH недоступен, беру IP из cache для ${hostname}: ${cached.ip}`);
+    return cached.ip;
+  }
+
+  throw new Error(`DoH не резолвит ${hostname}: ${errors.join('; ')}`);
+}
+
 function upsertHostsEntry(hostname, ip) {
-  const hostsPath = process.platform === 'win32'
-    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
-    : '/etc/hosts';
+  const hostsPath =
+    process.platform === 'win32'
+      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
+      : '/etc/hosts';
 
   try {
     if (!fs.existsSync(hostsPath)) return false;
     const raw = fs.readFileSync(hostsPath, 'utf8');
     const lines = raw.split(/\r?\n/);
     const marker = `# max-tg-auto-update ${hostname}`;
-    const filtered = lines.filter(
-      (line) => !line.includes(marker) && !new RegExp(`\\s${hostname.replace(/\./g, '\\.')}\\s*$`).test(line.trim())
-    );
+    const hostRe = new RegExp(`(?:^|\\s)${hostname.replace(/\./g, '\\.')}(?:\\s|$)`);
+    const filtered = lines.filter((line) => !line.includes(marker) && !hostRe.test(line));
+    while (filtered.length && filtered[filtered.length - 1] === '') filtered.pop();
     filtered.push(`${ip} ${hostname} ${marker}`);
-    const next = `${filtered.filter((l, i) => !(l === '' && filtered[i - 1] === '')).join('\n').replace(/\n*$/, '\n')}`;
-
-    fs.writeFileSync(hostsPath, next, 'utf8');
-    console.log(`auto-update: /etc/hosts → ${hostname} ${ip}`);
+    fs.writeFileSync(hostsPath, `${filtered.join('\n')}\n`, 'utf8');
+    console.log(`auto-update: hosts ${hostname} → ${ip}`);
     return true;
   } catch (err) {
-    console.warn(`auto-update: не удалось обновить hosts (${err.message})`);
+    console.warn(`auto-update: hosts не записан (${err.message})`);
+    return false;
+  }
+}
+
+async function patchGithubHosts() {
+  const result = {};
+  for (const host of GITHUB_HOSTS) {
+    try {
+      const ip = await resolveViaDoh(host);
+      upsertHostsEntry(host, ip);
+      result[host] = ip;
+    } catch (err) {
+      console.warn(`auto-update: ${host} — ${err.message}`);
+    }
+  }
+  return result;
+}
+
+function gitReachable() {
+  try {
+    runQuiet('git ls-remote --heads origin', {
+      timeout: 15000,
+      env: { GIT_TERMINAL_PROMPT: '0' },
+    });
+    return true;
+  } catch {
     return false;
   }
 }
 
 async function ensureGithubDns() {
-  let systemOk = false;
-  try {
-    runQuiet('git ls-remote --heads origin', { timeout: 20000 });
-    systemOk = true;
-  } catch {
-    systemOk = false;
-  }
-  if (systemOk) return { mode: 'system' };
+  if (gitReachable()) return { mode: 'system' };
 
-  console.warn('auto-update: git не достучался до origin, пробую DoH…');
-  const githubIp = await resolveViaDoh('github.com');
-  upsertHostsEntry('github.com', githubIp);
+  console.warn('auto-update: origin недоступен, чиню DNS через DoH…');
+  const hosts = await patchGithubHosts();
 
+  if (gitReachable()) return { mode: 'hosts', hosts };
+
+  // flush dns cache, мало ли
   try {
-    const apiIp = await resolveViaDoh('api.github.com');
-    upsertHostsEntry('api.github.com', apiIp);
+    spawnSync('resolvectl', ['flush-caches'], { stdio: 'ignore' });
   } catch {
-    /* optional */
+    /* nop */
   }
 
-  try {
-    const codeloadIp = await resolveViaDoh('codeload.github.com');
-    upsertHostsEntry('codeload.github.com', codeloadIp);
-  } catch {
-    /* optional */
-  }
-
-  return { mode: 'doh', githubIp };
+  if (gitReachable()) return { mode: 'hosts-flushed', hosts };
+  return { mode: 'offline', hosts };
 }
 
 async function fetchOriginAsync(branch) {
@@ -324,39 +368,134 @@ async function fetchOriginAsync(branch) {
       runQuiet(`git fetch --prune origin ${branch}`, {
         env: {
           GIT_HTTP_LOW_SPEED_LIMIT: '1000',
-          GIT_HTTP_LOW_SPEED_TIME: '30',
+          GIT_HTTP_LOW_SPEED_TIME: '20',
           GIT_TERMINAL_PROMPT: '0',
         },
+        timeout: 60000,
       });
       return;
     } catch (err) {
       lastErr = err;
-      console.warn(`auto-update: fetch попытка ${attempt}/${FETCH_RETRIES} — ${err.message}`);
-      if (attempt < FETCH_RETRIES) await sleep(FETCH_RETRY_MS * attempt);
+      console.warn(`auto-update: fetch ${attempt}/${FETCH_RETRIES} — ${err.message}`);
+      if (attempt < FETCH_RETRIES) {
+        if (isDnsOrNetworkError(err)) await patchGithubHosts();
+        await sleep(FETCH_RETRY_MS * attempt);
+      }
     }
   }
   throw lastErr || new Error('git fetch не удался');
 }
 
 async function getRemoteShaViaApi(branch) {
-  const url = `https://api.github.com/repos/${REPO_SLUG}/commits/${encodeURIComponent(branch)}`;
-  try {
-    const data = await httpsJson(url, {
+  const apiPath = `/repos/${REPO_SLUG}/commits/${encodeURIComponent(branch)}`;
+  const attempts = [];
+
+  attempts.push(async () => {
+    const data = await httpsJson(`https://api.github.com${apiPath}`, {
       headers: { Accept: 'application/vnd.github+json' },
+      timeout: 20000,
     });
-    if (data?.sha) return String(data.sha);
-  } catch (err) {
-    console.warn(`auto-update: API github.com — ${err.message}, пробую через DoH IP…`);
+    return data?.sha;
+  });
+
+  attempts.push(async () => {
+    const ip = await resolveViaDoh('api.github.com');
+    const data = await httpsJson(`https://api.github.com${apiPath}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Host: 'api.github.com',
+      },
+      servername: 'api.github.com',
+      lookup: makeIpLookup(ip),
+      timeout: 20000,
+    });
+    return data?.sha;
+  });
+
+  // зеркала на случай если гитхаб снова отвалится
+  for (const mirror of [
+    `https://ghproxy.net/https://api.github.com${apiPath}`,
+    `https://mirror.ghproxy.com/https://api.github.com${apiPath}`,
+  ]) {
+    attempts.push(async () => {
+      const data = await httpsJson(mirror, {
+        headers: { Accept: 'application/vnd.github+json' },
+        timeout: 25000,
+      });
+      return data?.sha;
+    });
   }
 
-  const ip = await resolveViaDoh('api.github.com');
-  const data = await httpsJson(url, {
-    headers: { Accept: 'application/vnd.github+json', Host: 'api.github.com' },
-    servername: 'api.github.com',
-    lookup: makeIpLookup(ip),
-  });
-  if (!data?.sha) throw new Error('GitHub API не вернул sha');
-  return String(data.sha);
+  const errors = [];
+  for (const attempt of attempts) {
+    try {
+      const sha = await attempt();
+      if (sha) return String(sha);
+    } catch (err) {
+      errors.push(err.message);
+    }
+  }
+
+  throw new Error(`GitHub API недоступен: ${errors.slice(0, 3).join('; ')}`);
+}
+
+function archiveUrls(branch) {
+  const encoded = encodeURIComponent(branch);
+  return [
+    {
+      url: `https://codeload.github.com/${REPO_SLUG}/zip/refs/heads/${encoded}`,
+      host: 'codeload.github.com',
+    },
+    {
+      url: `https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      host: 'github.com',
+    },
+    {
+      url: `https://ghproxy.net/https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      host: null,
+    },
+    {
+      url: `https://mirror.ghproxy.com/https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      host: null,
+    },
+    {
+      url: `https://gitclone.com/github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      host: null,
+    },
+  ];
+}
+
+async function downloadArchive(branch, zipPath) {
+  const errors = [];
+
+  for (const item of archiveUrls(branch)) {
+    try {
+      console.log(`auto-update: архив ← ${item.url}`);
+      await httpsDownload(item.url, zipPath, { timeout: 120000 });
+      if (fs.statSync(zipPath).size > 1000) return item.url;
+      errors.push(`${item.url}: слишком маленький файл`);
+    } catch (err) {
+      errors.push(`${item.url}: ${err.message}`);
+    }
+
+    if (!item.host) continue;
+
+    try {
+      const ip = await resolveViaDoh(item.host);
+      console.log(`auto-update: архив через DoH IP ${item.host}=${ip}`);
+      await httpsDownload(item.url, zipPath, {
+        headers: { Host: item.host },
+        servername: item.host,
+        lookup: makeIpLookup(ip),
+        timeout: 120000,
+      });
+      if (fs.statSync(zipPath).size > 1000) return `${item.url} @ ${ip}`;
+    } catch (err) {
+      errors.push(`${item.host} DoH: ${err.message}`);
+    }
+  }
+
+  throw new Error(`Не удалось скачать архив: ${errors.slice(0, 4).join('; ')}`);
 }
 
 function copyTree(srcDir, destDir) {
@@ -380,48 +519,39 @@ function findExtractedRoot(extractDir) {
   return extractDir;
 }
 
-async function applyArchiveUpdate(branch, fromSha, toSha) {
+async function applyArchiveUpdate(branch, _fromSha, toSha) {
   const AdmZip = require('adm-zip');
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'max-tg-update-'));
   const zipPath = path.join(tmpRoot, 'update.zip');
   const extractDir = path.join(tmpRoot, 'extract');
   fs.mkdirSync(extractDir, { recursive: true });
 
-  const zipUrl = `https://codeload.github.com/${REPO_SLUG}/zip/refs/heads/${encodeURIComponent(branch)}`;
-  console.log(`auto-update: скачиваю архив ${branch} (${toSha})…`);
-
   try {
-    await httpsDownload(zipUrl, zipPath);
-  } catch (err) {
-    console.warn(`auto-update: codeload напрямую — ${err.message}, пробую через DoH IP…`);
-    const ip = await resolveViaDoh('codeload.github.com');
-    await httpsDownload(zipUrl, zipPath, {
-      headers: { Host: 'codeload.github.com' },
-      servername: 'codeload.github.com',
-      lookup: makeIpLookup(ip),
-    });
-  }
+    const source = await downloadArchive(branch, zipPath);
+    console.log(`auto-update: распаковка (${source}) → ${toSha}`);
 
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(extractDir, true);
-  const srcRoot = findExtractedRoot(extractDir);
-  copyTree(srcRoot, ROOT);
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(extractDir, true);
+    copyTree(findExtractedRoot(extractDir), ROOT);
 
-  try {
-    runQuiet(`git fetch origin ${branch}`);
-    runQuiet(`git reset --hard origin/${branch}`);
-  } catch {
     try {
-      runQuiet(`git update-ref HEAD ${toSha}`);
+      runQuiet(`git fetch origin ${branch}`, { timeout: 30000 });
+      runQuiet(`git reset --hard origin/${branch}`);
     } catch {
-      console.warn('auto-update: файлы обновлены из архива, git ref не синхронизирован');
+      try {
+        if (toSha && /^[0-9a-f]{7,40}$/i.test(toSha)) {
+          runQuiet(`git update-ref HEAD ${toSha}`);
+        }
+      } catch {
+        console.warn('auto-update: архив на месте, git ref похуй синхронизировать');
+      }
     }
-  }
-
-  try {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
-  } catch {
-    /* ignore */
+  } finally {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      /* nop */
+    }
   }
 }
 
@@ -450,8 +580,7 @@ async function applyUpdate(fromSha, toSha, notify, branch) {
   try {
     run(`git pull --ff-only origin ${branch}`);
   } catch (err) {
-    if (!isDnsOrNetworkError(err)) throw err;
-    console.warn(`auto-update: git pull не удался (${err.message}), обновляю через архив…`);
+    console.warn(`auto-update: git pull не удался (${err.message}), архив…`);
     await applyArchiveUpdate(branch, fromSha, toSha);
   }
 
@@ -465,7 +594,7 @@ async function resolveRemoteSha(branch) {
     const remote = runQuiet(`git rev-parse origin/${branch}`);
     if (remote) return { sha: remote, via: 'git' };
   } catch (err) {
-    console.warn(`auto-update: git fetch недоступен — ${err.message}`);
+    console.warn(`auto-update: git путь недоступен — ${err.message}`);
   }
 
   const sha = await getRemoteShaViaApi(branch);
@@ -531,15 +660,45 @@ async function checkForUpdates(options = {}) {
     return await applyUpdate(fromSha, toSha, notify, cfg.branch);
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
+    let finalErr = err;
+
+    // последний шанс: просто скачать zip и накатить
+    if (isDnsOrNetworkError(err) || /DoH|API|архив|fetch/i.test(err.message)) {
+      try {
+        console.warn('auto-update: всё плохо, пробую архив в лоб…');
+        const local = runQuiet('git rev-parse HEAD').slice(0, 7);
+        await patchGithubHosts();
+        const sha = await getRemoteShaViaApi(cfg.branch).catch(() => 'archive');
+        if (sha !== 'archive' && sha === runQuiet('git rev-parse HEAD')) {
+          return { status: 'up-to-date', sha: local };
+        }
+        if (!hasLocalChanges()) {
+          if (notify) {
+            await notifyAdmins(
+              buildEventMessage({
+                ...UPDATES.updating(local, String(sha).slice(0, 7)),
+                status: 'progress',
+              })
+            );
+          }
+          await applyArchiveUpdate(cfg.branch, local, String(sha).slice(0, 7));
+          return finishUpdate(local, String(sha).slice(0, 7), notify);
+        }
+      } catch (fallbackErr) {
+        console.error('auto-update: аварийный путь тоже упал —', fallbackErr.message);
+        finalErr = fallbackErr;
+      }
+    }
+
     if (notify) {
       await notifyAdmins(
         buildEventMessage({
-          ...UPDATES.fail(formatUpdateError(err).join('\n')),
+          ...UPDATES.fail(formatUpdateError(finalErr).join('\n')),
           status: 'fail',
         })
       );
     }
-    return { status: 'error', message: err.message };
+    return { status: 'error', message: finalErr.message };
   }
 }
 
@@ -574,4 +733,6 @@ function scheduleAutoUpdate() {
 module.exports = {
   checkForUpdates,
   scheduleAutoUpdate,
+  patchGithubHosts,
+  resolveViaDoh,
 };

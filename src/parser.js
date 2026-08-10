@@ -29,8 +29,7 @@ async function isLoginPage(page) {
     .catch(() => false);
   if (authFormVisible) return true;
 
-  // Веб-клиент MAX называется @Browser — это НЕ экран входа.
-  // Если открыт чат / лента сообщений, мониторинг должен продолжаться.
+  // @Browser = веб-клиент, не логин блять
   const inChat = await page
     .locator(
       [
@@ -79,7 +78,7 @@ async function isLoginPage(page) {
   if (/код из sms|sms.*code|enter.*code|введите.*код/i.test(bodyText)) return true;
   if (/не робот|not a robot|captcha/i.test(bodyText)) return true;
 
-  // QR-текст только вне открытого чата (иначе ложные срабатывания)
+  // qr-текст в чате — ложная тревога, скипаем
   if (!onChatUrl && /qr-код|qr code|scan the qr/i.test(bodyText)) return true;
 
   const hasPassword = await page
@@ -89,8 +88,7 @@ async function isLoginPage(page) {
     .catch(() => false);
 
   if (hasPassword) {
-    // Не путать @Browser (имя веб-сессии) с экраном пароля.
-    // Нужен явный контекст подтверждения входа / облачного пароля.
+    // пароль входа, не просто слово "browser" в UI
     if (
       /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|двухфактор|2fa|enter your password|password for/i.test(
         bodyText
