@@ -115,23 +115,28 @@ async function readBodyText(page) {
 }
 
 async function isBrowserPasswordPrompt(page) {
-  const passwordInput = page.locator('input[type="password"]').first();
+  const passwordInput = page
+    .locator(
+      'form.auth input[type="password"], form.auth--password input[type="password"], input[type="password"]'
+    )
+    .first();
   const hasPassword = await passwordInput
     .isVisible({ timeout: 300 })
     .catch(() => false);
   if (!hasPassword) return false;
 
-  const bodyText = await readBodyText(page);
-  if (/@browser/i.test(bodyText)) return true;
+  // Уже на форме auth — этого достаточно (веб-клиент всегда называется @Browser)
+  const onAuthForm = await page
+    .locator('form.auth--password, form.auth--qr-code, form.auth')
+    .first()
+    .isVisible({ timeout: 300 })
+    .catch(() => false);
+  if (onAuthForm) return true;
 
-  const lower = bodyText.toLowerCase();
-  return (
-    /browser/.test(lower) ||
-    /пароль/.test(lower) ||
-    /password/.test(lower) ||
-    /облачн/.test(lower) ||
-    /устройств/.test(lower) ||
-    /подтверд/.test(lower)
+  const bodyText = await readBodyText(page);
+  // Явный экран пароля / подтверждения входа — НЕ любое упоминание @Browser в UI
+  return /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|enter your password|password for|двухфактор|2fa/i.test(
+    bodyText
   );
 }
 

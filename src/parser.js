@@ -29,14 +29,28 @@ async function isLoginPage(page) {
     .catch(() => false);
   if (authFormVisible) return true;
 
+  // Веб-клиент MAX называется @Browser — это НЕ экран входа.
+  // Если открыт чат / лента сообщений, мониторинг должен продолжаться.
   const inChat = await page
     .locator(
-      '.messageWrapper, .openedChat, main[name*="Chat window" i], main[name*="чат" i]'
+      [
+        '.messageWrapper',
+        '.openedChat',
+        'main[name*="Chat window" i]',
+        'main[name*="чат" i]',
+        '[class*="chatContent"]',
+        '[class*="messagesList"]',
+        '[class*="MessageList"]',
+        '[data-testid*="chat" i]',
+      ].join(', ')
     )
     .first()
     .isVisible({ timeout: 1500 })
     .catch(() => false);
   if (inChat) return false;
+
+  const url = String(page.url() || '');
+  const onChatUrl = /web\.max\.ru\/-?\d+/i.test(url);
 
   const captchaIframe = await page
     .locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]')
@@ -46,40 +60,47 @@ async function isLoginPage(page) {
   if (captchaIframe) return true;
 
   const qrVisible = await page
-    .locator('canvas')
+    .locator('form.auth--qr-code canvas, form.auth canvas, form.auth--qr-code img[src*="qr"]')
     .first()
-    .or(page.locator('img[src*="qr"], img[alt*="QR" i], img[alt*="qr" i]').first())
-    .isVisible({ timeout: 1000 })
+    .or(page.locator('img[alt*="QR" i], img[alt*="qr" i]').first())
+    .isVisible({ timeout: 800 })
     .catch(() => false);
   if (qrVisible) return true;
 
-  const bodyText = await page.locator('body').innerText();
+  let bodyText = '';
+  try {
+    bodyText = await page.locator('body').innerText({ timeout: 2000 });
+  } catch {
+    bodyText = '';
+  }
+
   if (/войдите в max|sign in to max/i.test(bodyText)) return true;
-  if (/qr-код|qr code|scan the qr/i.test(bodyText)) return true;
   if (/войти по номеру телефона|phone number do you want/i.test(bodyText)) return true;
   if (/код из sms|sms.*code|enter.*code|введите.*код/i.test(bodyText)) return true;
-  if (/@browser/i.test(bodyText)) return true;
   if (/не робот|not a robot|captcha/i.test(bodyText)) return true;
 
+  // QR-текст только вне открытого чата (иначе ложные срабатывания)
+  if (!onChatUrl && /qr-код|qr code|scan the qr/i.test(bodyText)) return true;
+
   const hasPassword = await page
-    .locator('input[type="password"]')
+    .locator('form.auth input[type="password"], form.auth--password input[type="password"], input[type="password"]')
     .first()
     .isVisible({ timeout: 400 })
     .catch(() => false);
+
   if (hasPassword) {
-    const lower = bodyText.toLowerCase();
+    // Не путать @Browser (имя веб-сессии) с экраном пароля.
+    // Нужен явный контекст подтверждения входа / облачного пароля.
     if (
-      /browser/.test(lower) ||
-      /пароль/.test(lower) ||
-      /password/.test(lower) ||
-      /облачн/.test(lower) ||
-      /устройств/.test(lower)
+      /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|двухфактор|2fa|enter your password|password for/i.test(
+        bodyText
+      )
     ) {
       return true;
     }
   }
 
-  return /войдите в max/i.test(bodyText) && /qr-код/i.test(bodyText);
+  return false;
 }
 
 async function openChatWhenReady(page, chatUrl, maxAttempts = 3) {
@@ -371,16 +392,18 @@ async function parseMessages(page) {
       });
     }, { wrapperSelector: MESSAGE_WRAPPER_SELECTOR })
     .then((messages) =>
-      messages.map((msg) => {
-        const body = bodyWithMedia(msg.body, msg.media);
-        const normalized = {
-          ...msg,
-          body,
-          reply: msg.reply || null,
-          isOwn: msg.isOwn || isOwnByAuthor(msg.author),
-        };
-        return { ...normalized, key: buildMessageKey(normalized) };
-      })
+      messages
+        .map((msg) => {
+          const body = bodyWithMedia(msg.body, msg.media);
+          const normalized = {
+            ...msg,
+            body,
+            reply: msg.reply || null,
+            isOwn: msg.isOwn || isOwnByAuthor(msg.author),
+          };
+          return { ...normalized, key: buildMessageKey(normalized) };
+        })
+        .filter((msg) => Boolean(msg.body) || (msg.media && msg.media.length > 0))
     );
 }
 
