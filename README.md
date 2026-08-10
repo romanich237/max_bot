@@ -23,26 +23,54 @@ DE-PROMO
 
 ## Установка (VPS)
 
-Скрипт **сразу спросит в консоли** Telegram bot token и chat ID:
+Рекомендуемый способ — один скрипт (сам ставит Node, чинит DNS к GitHub, клонит/zip-fallback, setup):
 
 ```bash
-apt-get update
-apt-get install -y git curl
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-
-node -v
-npm -v
-
-git clone --depth 1 https://github.com/romanich237/max_bot.git ~/max-tg
-cd ~/max-tg
-TG_TOKEN="токен бота из @BotFather" TG_CHAT_ID="ваш айди" npm run setup
+apt-get update && apt-get install -y curl ca-certificates
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+export NODE_OPTIONS=--dns-result-order=ipv4first
+TG_TOKEN="токен из @BotFather" TG_CHAT_ID="ваш chat id" \
+  bash <(curl -fsSL https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
 ```
 
-Или переустановите с нуля после обновления скрипта:
+Если `raw.githubusercontent.com` / `github.com` не резолвятся — сначала hosts, потом снова install:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
+apt-get update && apt-get install -y curl ca-certificates
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+for h in github.com raw.githubusercontent.com codeload.github.com api.github.com; do
+  ip=$(curl -fsS -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$h&type=A" \
+    | grep -oE '"data":"[0-9.]+"' | head -1 | cut -d'"' -f4)
+  [ -n "$ip" ] || continue
+  grep -qE "[[:space:]]$h([[:space:]]|$)" /etc/hosts || echo "$ip $h" >> /etc/hosts
+done
+export NODE_OPTIONS=--dns-result-order=ipv4first
+TG_TOKEN="токен из @BotFather" TG_CHAT_ID="ваш chat id" \
+  bash <(curl -fsSL https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
+```
+
+Ручная установка (если скрипт недоступен):
+
+```bash
+apt-get update && apt-get install -y git curl ca-certificates
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+export NODE_OPTIONS=--dns-result-order=ipv4first
+
+git clone --depth 1 https://github.com/romanich237/max_bot.git ~/max-tg \
+  || { curl -fsSL https://codeload.github.com/romanich237/max_bot/zip/refs/heads/main -o /tmp/max.zip \
+       && apt-get install -y unzip && unzip -qo /tmp/max.zip -d /tmp && mv /tmp/max_bot-main ~/max-tg; }
+
+cd ~/max-tg
+TG_TOKEN="токен из @BotFather" TG_CHAT_ID="ваш chat id" npm run setup
+```
+
+Переустановка / обновление скрипта:
+
+```bash
+export NODE_OPTIONS=--dns-result-order=ipv4first
+TG_TOKEN="..." TG_CHAT_ID="..." bash <(curl -fsSL https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
 ```
 
 ## Команды в Telegram
