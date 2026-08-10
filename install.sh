@@ -363,6 +363,123 @@ open_portal_port() {
   echo "Откройте порт ${port}/tcp в панели хостинга (Security Groups / Firewall)"
 }
 
+# DNS на VPS часто лежит — чиним до git/curl
+doh_a() {
+  local host="$1"
+  local json=""
+  local ip=""
+  json="$(curl -fsS --connect-timeout 5 -H 'accept: application/dns-json' \
+    "https://1.1.1.1/dns-query?name=${host}&type=A" 2>/dev/null || true)"
+  ip="$(printf '%s' "$json" | grep -oE '"data":"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4)"
+  if [ -z "$ip" ]; then
+    json="$(curl -fsS --connect-timeout 5 \
+      "https://8.8.8.8/resolve?name=${host}&type=A" 2>/dev/null || true)"
+    ip="$(printf '%s' "$json" | grep -oE '"data":"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4)"
+  fi
+  printf '%s' "$ip"
+}
+
+hosts_upsert() {
+  local host="$1"
+  local ip="$2"
+  local marker="# max-tg-install ${host}"
+  [ -n "$ip" ] || return 1
+  if [ -w /etc/hosts ]; then
+    grep -v "$marker" /etc/hosts | grep -vE "[[:space:]]${host}([[:space:]]|$)" > /tmp/max-hosts.$$ || true
+    printf '%s %s %s\n' "$ip" "$host" "$marker" >> /tmp/max-hosts.$$
+    cat /tmp/max-hosts.$$ > /etc/hosts
+    rm -f /tmp/max-hosts.$$
+  elif can_sudo; then
+    run_root bash -c "grep -v '$marker' /etc/hosts | grep -vE '[[:space:]]${host}([[:space:]]|\$)' > /tmp/max-hosts.\$\$; printf '%s %s %s\n' '$ip' '$host' '$marker' >> /tmp/max-hosts.\$\$; cat /tmp/max-hosts.\$\$ > /etc/hosts; rm -f /tmp/max-hosts.\$\$"
+  else
+    return 1
+  fi
+  echo "hosts: $host -> $ip"
+}
+
+ensure_github_dns() {
+  if curl -fsSI --connect-timeout 5 https://github.com >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "github.com не резолвится — чиню DNS…"
+
+  # 1) публичные DNS
+  if [ "$(id -u)" -eq 0 ] || can_sudo; then
+    if [ -f /etc/resolv.conf ] && ! grep -qE 'nameserver 1\.1\.1\.1|nameserver 8\.8\.8\.8' /etc/resolv.conf 2>/dev/null; then
+      echo "nameserver 1.1.1.1" | run_root tee /etc/resolv.conf >/dev/null || true
+      echo "nameserver 8.8.8.8" | run_root tee -a /etc/resolv.conf >/dev/null || true
+      echo "resolv.conf -> 1.1.1.1 / 8.8.8.8"
+    fi
+    command -v resolvectl >/dev/null 2>&1 && run_root resolvectl flush-caches 2>/dev/null || true
+  fi
+
+  if curl -fsSI --connect-timeout 5 https://github.com >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # 2) DoH по IP -> /etc/hosts
+  local host ip
+  for host in github.com api.github.com codeload.github.com raw.githubusercontent.com objects.githubusercontent.com; do
+    ip="$(doh_a "$host")"
+    if [ -n "$ip" ]; then
+      hosts_upsert "$host" "$ip" || true
+    fi
+  done
+
+  if curl -fsSI --connect-timeout 8 https://github.com >/dev/null 2>&1; then
+    echo "DNS ок"
+    return 0
+  fi
+
+  echo "Внимание: github.com всё ещё недоступен. Пробую зеркала / zip…"
+  return 0
+}
+
+clone_or_update_repo() {
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo "Обновление: $INSTALL_DIR"
+    if git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"; then
+      return 0
+    fi
+    echo "git pull отвалился — качаю zip…"
+  elif [ -d "$INSTALL_DIR" ]; then
+    echo "Ошибка: $INSTALL_DIR уже есть, но это не git"
+    echo "Удалите или: INSTALL_DIR=/path bash ..."
+    exit 1
+  fi
+
+  echo "Клонирование в $INSTALL_DIR"
+  if git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
+    return 0
+  fi
+
+  echo "git clone в топку — ставлю из zip…"
+  local tmp zip_url
+  tmp="$(mktemp -d)"
+  zip_url="https://codeload.github.com/romanich237/max_bot/zip/refs/heads/${BRANCH}"
+  if ! curl -fsSL --connect-timeout 20 "$zip_url" -o "$tmp/repo.zip"; then
+    zip_url="https://ghproxy.net/https://github.com/romanich237/max_bot/archive/refs/heads/${BRANCH}.zip"
+    curl -fsSL --connect-timeout 30 "$zip_url" -o "$tmp/repo.zip"
+  fi
+  mkdir -p "$INSTALL_DIR"
+  unzip -qo "$tmp/repo.zip" -d "$tmp/extract"
+  local src
+  src="$(find "$tmp/extract" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  cp -a "$src"/. "$INSTALL_DIR"/
+  rm -rf "$tmp"
+  # чтобы потом auto-update мог жить как git
+  if [ ! -d "$INSTALL_DIR/.git" ]; then
+    git -C "$INSTALL_DIR" init
+    git -C "$INSTALL_DIR" remote add origin "$REPO_URL" 2>/dev/null || true
+    git -C "$INSTALL_DIR" checkout -B "$BRANCH" 2>/dev/null || true
+  fi
+}
+
+echo "Проверка curl…"
+ensure_curl || true
+echo "Проверка DNS / GitHub…"
+ensure_github_dns
 echo "Проверка git..."
 ensure_git
 echo "Проверка Node.js..."
@@ -380,17 +497,14 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "Обновление: $INSTALL_DIR"
-  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
-elif [ -d "$INSTALL_DIR" ]; then
-  echo "Ошибка: $INSTALL_DIR уже существует, но это не git-репозиторий"
-  echo "Удалите папку или задайте другой путь: INSTALL_DIR=/path bash ..."
-  exit 1
-else
-  echo "Клонирование в $INSTALL_DIR"
-  git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+# unzip может понадобиться для zip-fallback
+if ! command -v unzip >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1 && can_sudo; then
+    ensure_apt_packages unzip || true
+  fi
 fi
+
+clone_or_update_repo
 
 cd "$INSTALL_DIR"
 refresh_path

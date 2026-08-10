@@ -1,3 +1,4 @@
+require('../src/force-ipv4');
 require('./ensure-deps');
 
 const { startMonitor } = require('../src/monitor');

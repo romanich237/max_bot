@@ -1,3 +1,4 @@
+require('../src/force-ipv4');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -185,6 +186,7 @@ async function main() {
   ensureDirs();
 
   run('npm install --omit=dev');
+  require('../src/force-ipv4');
 
   await ensureTelegramCredentials();
 
@@ -228,9 +230,10 @@ async function main() {
 
 main().catch((err) => {
   console.error('\nОшибка установки:', err.message);
-  if (/api\.telegram\.org|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(err.message)) {
+  if (/api\.telegram\.org|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|ipv6/i.test(err.message)) {
     console.error(
-      '\nСеть: curl -I https://api.telegram.org\n' +
+      '\nСеть: curl -4 -I https://api.telegram.org\n' +
+        'Если ENETUNREACH/IPv6 — уже форсим IPv4 в коде; проверь DNS/файрвол.\n' +
         'Прокси: export HTTPS_PROXY=http://host:port && npm run setup'
     );
   }

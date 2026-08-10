@@ -202,6 +202,7 @@ function httpsRequest(url, options = {}) {
         timeout: options.timeout || 25000,
         servername: options.servername,
         lookup: options.lookup,
+        family: options.lookup ? undefined : 4,
       },
       (res) => {
         const chunks = [];

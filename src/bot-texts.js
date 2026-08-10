@@ -441,7 +441,9 @@ const UPDATES = {
 };
 
 const ERRORS = {
-  noAccess: 'Нет доступа. Добавьте свой chat ID в <code>telegram.chatIds</code>.',
+  noAccess:
+    'Чтобы понять что происходит в этом боте — почитайте репозиторий:\n' +
+    'https://github.com/romanich237/max_bot',
   cancelled: 'Действие отменено.',
   notRecognized: 'Не удалось распознать. ',
   cityNotRecognized: 'Город не распознан. ',

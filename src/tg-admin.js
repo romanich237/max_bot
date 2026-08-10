@@ -1172,6 +1172,9 @@ async function handleCallback(query) {
   const chatId = query.message?.chat?.id;
   if (!chatId || !isAdmin(chatId)) {
     await answerCallback(query.id, 'Нет доступа');
+    if (chatId) {
+      await sendMessage(chatId, ERRORS.noAccess).catch(() => {});
+    }
     return;
   }
 

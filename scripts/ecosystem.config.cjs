@@ -20,6 +20,7 @@ module.exports = {
       kill_timeout: 10000,
       env: {
         NODE_ENV: 'production',
+        NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
       error_file: './logs/err.log',
       out_file: './logs/out.log',
@@ -38,6 +39,7 @@ module.exports = {
       restart_delay: 10000,
       env: {
         NODE_ENV: 'production',
+        NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
       error_file: './logs/update-err.log',
       out_file: './logs/update-out.log',

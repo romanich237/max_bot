@@ -2,12 +2,20 @@ const { File } = require('node:buffer');
 const { getTelegram } = require('./config');
 
 let proxyDispatcher = null;
+let ipv4Dispatcher = null;
 
 function getProxyAgent() {
   if (proxyDispatcher) return proxyDispatcher;
   const { ProxyAgent } = require('undici');
   proxyDispatcher = new ProxyAgent(process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
   return proxyDispatcher;
+}
+
+function getIpv4Agent() {
+  if (ipv4Dispatcher) return ipv4Dispatcher;
+  const { Agent } = require('undici');
+  ipv4Dispatcher = new Agent({ connect: { family: 4 } });
+  return ipv4Dispatcher;
 }
 
 function resolveToken(tokenOverride) {
@@ -19,8 +27,8 @@ function resolveToken(tokenOverride) {
 function getFetchInit(baseInit = {}) {
   const init = { ...baseInit };
   const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (proxy && !init.dispatcher) {
-    init.dispatcher = getProxyAgent();
+  if (!init.dispatcher) {
+    init.dispatcher = proxy ? getProxyAgent() : getIpv4Agent();
   }
   return init;
 }
