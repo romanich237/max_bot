@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 /**
- * Одноразовый ремонт обновления, когда на VPS не резолвится github.com.
- *
- *   cd ~/max-tg
- *   node scripts/repair-update.js
- *
- * Что делает:
- * 1) резолвит github.com / api / codeload через DoH (1.1.1.1 / 8.8.8.8)
- * 2) пишет IP в /etc/hosts
- * 3) тянет свежий код (git pull или zip-архив)
- * 4) npm install + pm2 restart
+ * DNS сдох → чиним hosts + тянем апдейт.
+ * cd ~/max-tg && node scripts/repair-update.js
  */
 
 const path = require('path');
@@ -26,11 +18,11 @@ async function main() {
     patchGithubHosts,
   } = require('../src/auto-update');
 
-  console.log('1/3 DNS через DoH → /etc/hosts…');
+  console.log('1/3 DoH → hosts…');
   const hosts = await patchGithubHosts();
   console.log('hosts:', hosts);
 
-  console.log('2/3 проверка и установка обновления…');
+  console.log('2/3 качаю апдейт…');
   const result = await checkForUpdates({ notify: false, performUpdate: true });
   console.log('результат:', result);
 
@@ -39,8 +31,7 @@ async function main() {
     return;
   }
 
-  console.log('3/3 готово. Если PM2 не перезапустился сам:');
-  console.log('  pm2 restart max-tg max-tg-update');
+  console.log('3/3 ок. если pm2 не сам: pm2 restart max-tg max-tg-update');
 }
 
 main().catch((err) => {

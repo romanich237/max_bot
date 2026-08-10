@@ -183,7 +183,7 @@ function saveDnsCache(cache) {
     fs.mkdirSync(path.dirname(DNS_CACHE_FILE), { recursive: true });
     fs.writeFileSync(DNS_CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
   } catch (err) {
-    console.warn(`auto-update: не удалось сохранить DNS cache (${err.message})`);
+    console.warn(`auto-update: DNS cache не сохранился (${err.message})`);
   }
 }
 
@@ -285,7 +285,7 @@ async function resolveViaDoh(hostname) {
   }
 
   if (cached?.ip) {
-    console.warn(`auto-update: DoH недоступен, беру IP из cache для ${hostname}: ${cached.ip}`);
+    console.warn(`auto-update: DoH лёг, беру cache для ${hostname}: ${cached.ip}`);
     return cached.ip;
   }
 
@@ -311,7 +311,7 @@ function upsertHostsEntry(hostname, ip) {
     console.log(`auto-update: hosts ${hostname} → ${ip}`);
     return true;
   } catch (err) {
-    console.warn(`auto-update: hosts не записан (${err.message})`);
+    console.warn(`auto-update: hosts не записался, похуй (${err.message})`);
     return false;
   }
 }
@@ -345,7 +345,7 @@ function gitReachable() {
 async function ensureGithubDns() {
   if (gitReachable()) return { mode: 'system' };
 
-  console.warn('auto-update: origin недоступен, чиню DNS через DoH…');
+  console.warn('auto-update: origin мёртв, чиню DNS через DoH…');
   const hosts = await patchGithubHosts();
 
   if (gitReachable()) return { mode: 'hosts', hosts };
@@ -580,7 +580,7 @@ async function applyUpdate(fromSha, toSha, notify, branch) {
   try {
     run(`git pull --ff-only origin ${branch}`);
   } catch (err) {
-    console.warn(`auto-update: git pull не удался (${err.message}), архив…`);
+    console.warn(`auto-update: git pull отвалился (${err.message}), беру архив…`);
     await applyArchiveUpdate(branch, fromSha, toSha);
   }
 
@@ -594,7 +594,7 @@ async function resolveRemoteSha(branch) {
     const remote = runQuiet(`git rev-parse origin/${branch}`);
     if (remote) return { sha: remote, via: 'git' };
   } catch (err) {
-    console.warn(`auto-update: git путь недоступен — ${err.message}`);
+    console.warn(`auto-update: git путь в топку — ${err.message}`);
   }
 
   const sha = await getRemoteShaViaApi(branch);
@@ -685,7 +685,7 @@ async function checkForUpdates(options = {}) {
           return finishUpdate(local, String(sha).slice(0, 7), notify);
         }
       } catch (fallbackErr) {
-        console.error('auto-update: аварийный путь тоже упал —', fallbackErr.message);
+        console.error('auto-update: архивный путь тоже сдох —', fallbackErr.message);
         finalErr = fallbackErr;
       }
     }
