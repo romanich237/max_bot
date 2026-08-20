@@ -8,3 +8,4 @@ config.json
 logs/
 data/
 .cursor/
+.cursor/rules
