@@ -71,6 +71,7 @@ const {
   buildNotifyChatKeyboard,
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
+  unbindNotificationChat,
   setDmOnlyNotifications,
   refreshTelegramChat,
   refreshNotificationChatStatuses,
@@ -767,20 +768,30 @@ async function handleMyChatMember(memberUpdate) {
   }
 
   if (!neu.user.is_bot) return;
+  if (chat.type === 'private' || chat.type === 'channel') return;
 
   const { getBotUserId } = require('./tg-api');
   const botId = await getBotUserId();
   if (botId && neu.user.id !== botId) return;
 
+  const actorId = String(memberUpdate.from?.id || '');
+  const ourAdmin = getAdminChatIds().map(String).includes(actorId);
+
   const becameAdmin = isBotAdminStatus(neu) && !isBotAdminStatus(old);
-  const joinedWithoutAdmin =
-    !isBotAdminStatus(neu) &&
-    ['member', 'restricted'].includes(neu.status) &&
+  const joined =
+    ['member', 'restricted', 'administrator', 'creator'].includes(neu.status) &&
     ['left', 'kicked', 'unknown', ''].includes(old?.status || '');
+  const joinedWithoutAdmin =
+    joined && !isBotAdminStatus(neu);
+
+  if (!ourAdmin) return;
+
+  if (joined || becameAdmin) {
+    bindNotificationChat(chat.id, actorId);
+  }
 
   const known = (await refreshTelegramChat(chat.id)) || getKnownChat(chat.id);
   const title = known?.title || chat.title || String(chat.id);
-  const notifyIds = getNotificationChatIds().map(String);
 
   if (joinedWithoutAdmin) {
     for (const adminId of getAdminChatIds()) {
@@ -794,7 +805,6 @@ async function handleMyChatMember(memberUpdate) {
   }
 
   if (!becameAdmin) return;
-  if (!notifyIds.includes(String(chat.id))) return;
 
   for (const adminId of getAdminChatIds()) {
     try {
@@ -804,7 +814,7 @@ async function handleMyChatMember(memberUpdate) {
           title: 'Группа подключена',
           status: 'done',
           lines: [
-            'Бот стал администратором.',
+            'Бот добавлен в группу администратором.',
             `Группа: <b>${escapeHtml(title)}</b>`,
             `ID: <code>${chat.id}</code>`,
           ],
@@ -1126,10 +1136,13 @@ async function handleChatShared(adminChatId, shared) {
   });
 
   if (shared.request_id === NOTIFY_GROUP_REQUEST_ID) {
-    const { chatIds: boundChatIds } = bindNotificationChat(targetChatId, adminChatId);
+    bindNotificationChat(targetChatId, adminChatId);
     await refreshTelegramChat(targetChatId);
     const statuses = await refreshNotificationChatStatuses();
     const known = getKnownChat(targetChatId);
+    await sendMessage(adminChatId, 'Группа добавлена.', {
+      reply_markup: { remove_keyboard: true },
+    });
     await sendMessage(
       adminChatId,
       buildEventMessage({
@@ -1715,6 +1728,18 @@ async function handleCallback(query) {
     if (!status.admin) {
       await sendMissingAdminNotice(chatId, targetId);
     }
+    await showNotifyChats(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data.startsWith('notify:remove:')) {
+    const targetId = data.slice('notify:remove:'.length);
+    const result = unbindNotificationChat(targetId);
+    if (result.error) {
+      await answerCallback(query.id, result.error);
+      return;
+    }
+    await answerCallback(query.id, 'Группа убрана из списка');
     await showNotifyChats(chatId, query.message.message_id);
     return;
   }

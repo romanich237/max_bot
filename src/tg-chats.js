@@ -169,6 +169,46 @@ function adminMark(isAdmin) {
 const DOCS_URL = 'https://github.com/romanich237/max_bot';
 const BOT_ADMIN_RIGHTS = ['post_messages', 'edit_messages', 'delete_messages'];
 
+function telegramGroupAdminRights(options = {}) {
+  return {
+    is_anonymous: false,
+    can_manage_chat: false,
+    can_delete_messages: true,
+    can_manage_video_chats: false,
+    can_restrict_members: false,
+    can_promote_members: Boolean(options.promote),
+    can_change_info: false,
+    can_invite_users: true,
+    can_pin_messages: false,
+  };
+}
+
+function listBoundGroupIds() {
+  return getNotificationChatIds().filter((id) => !isPrivateChatId(id));
+}
+
+function listKnownGroupChats() {
+  const bound = new Set(listBoundGroupIds().map(String));
+  const seen = new Set();
+  const groups = [];
+
+  for (const id of listBoundGroupIds()) {
+    const known = getKnownChat(id) || { id: String(id), title: 'Без названия' };
+    seen.add(String(id));
+    groups.push({ ...known, id: String(id), bound: true });
+  }
+
+  for (const chat of listKnownChats()) {
+    const id = String(chat.id);
+    if (isPrivateChatId(id) || seen.has(id)) continue;
+    if (chat.type === 'private' || chat.type === 'channel') continue;
+    seen.add(id);
+    groups.push({ ...chat, bound: bound.has(id) });
+  }
+
+  return groups;
+}
+
 async function buildBotAdminInviteUrl() {
   const { getBotUsername } = require('./tg-api');
   const username = await getBotUsername();
@@ -249,19 +289,28 @@ function isBotAdminStatus(member) {
 function buildNotifyChatText(adminByChat = {}) {
   const chatIds = getNotificationChatIds();
   const lines = [`<b>${CHATS.notifyHeader}</b>`, ''];
+  const groups = listKnownGroupChats();
+  const dmIds = chatIds.filter(isPrivateChatId);
 
-  if (!chatIds.length) {
+  if (!chatIds.length && !groups.length) {
     lines.push(CHATS.notifyEmpty);
   } else {
-    const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
+    const hasGroup = groups.some((chat) => chat.bound);
     lines.push(hasGroup ? CHATS.notifyDualMode : CHATS.notifyDmMode, '');
 
-    for (const id of chatIds) {
+    for (const id of dmIds) {
       const known = getKnownChat(id);
       const title = known?.title || 'Без названия';
-      const kind = isPrivateChatId(id) ? 'ЛС' : 'группа';
-      const mark = isPrivateChatId(id) ? '' : ` ${adminMark(Boolean(adminByChat[id]?.admin))}`;
-      lines.push(`${kind}: <b>${escapeHtml(title)}</b> (<code>${id}</code>)${mark}`);
+      lines.push(`ЛС: <b>${escapeHtml(title)}</b> (<code>${id}</code>)`);
+    }
+
+    if (groups.length) {
+      lines.push('', `<b>Группы (${groups.filter((chat) => chat.bound).length})</b>`);
+      for (const chat of groups) {
+        const title = chat.title || 'Без названия';
+        const mark = chat.bound ? ` ${adminMark(Boolean(adminByChat[chat.id]?.admin))}` : ' — не привязана';
+        lines.push(`• <b>${escapeHtml(title)}</b> (<code>${chat.id}</code>)${mark}`);
+      }
     }
   }
 
@@ -270,21 +319,29 @@ function buildNotifyChatText(adminByChat = {}) {
 }
 
 async function buildNotifyChatKeyboard(adminByChat = {}) {
-  const chatIds = getNotificationChatIds();
-  const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
+  const groups = listKnownGroupChats();
+  const hasGroup = groups.some((chat) => chat.bound);
   const rows = [];
 
-  for (const id of chatIds) {
-    if (isPrivateChatId(id)) continue;
-    const known = getKnownChat(id);
-    const title = known?.title || 'Без названия';
-    const mark = adminMark(Boolean(adminByChat[id]?.admin));
-    rows.push([
-      {
-        text: truncateButtonLabel(`${title} ${mark}`),
-        callback_data: `notify:chat:${id}`,
-      },
-    ]);
+  for (const chat of groups) {
+    const title = chat.title || 'Без названия';
+    if (chat.bound) {
+      const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
+      rows.push([
+        {
+          text: truncateButtonLabel(`${title} ${mark}`),
+          callback_data: `notify:chat:${chat.id}`,
+        },
+        { text: '🗑', callback_data: `notify:remove:${chat.id}` },
+      ]);
+    } else {
+      rows.push([
+        {
+          text: truncateButtonLabel(`${title} · привязать`),
+          callback_data: `bindchat:${chat.id}`,
+        },
+      ]);
+    }
   }
 
   rows.push([{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }]);
@@ -293,7 +350,7 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
     rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
   }
 
-  const missingAdmin = chatIds.some((id) => !isPrivateChatId(id) && !adminByChat[id]?.admin);
+  const missingAdmin = groups.some((chat) => chat.bound && !adminByChat[chat.id]?.admin);
   if (missingAdmin) {
     const inviteUrl = await buildBotAdminInviteUrl();
     if (inviteUrl) {
@@ -319,6 +376,9 @@ function buildBindGroupReplyKeyboard() {
           request_chat: {
             request_id: NOTIFY_GROUP_REQUEST_ID,
             chat_is_channel: false,
+            request_title: true,
+            bot_administrator_rights: telegramGroupAdminRights(),
+            user_administrator_rights: telegramGroupAdminRights({ promote: true }),
           },
         },
       ],
@@ -344,20 +404,37 @@ function bindNotificationChat(targetChatId, adminChatId) {
   const adminIds = new Set(getAdminChatIds().map(String));
   adminIds.add(adminId);
 
-  let privateId = isPrivateChatId(adminId) ? adminId : [...adminIds].find(isPrivateChatId);
-  if (!privateId) privateId = adminId;
+  const existing = (store.getPath(['telegram', 'chatIds']) || []).map(String);
+  const chatIds = [...existing];
 
-  let chatIds;
-  if (isPrivateChatId(targetId)) {
-    chatIds = [targetId];
-  } else {
-    chatIds = [privateId, targetId];
+  if (!isPrivateChatId(targetId)) {
+    const privateId = isPrivateChatId(adminId) ? adminId : [...adminIds].find(isPrivateChatId);
+    if (privateId && !chatIds.some(isPrivateChatId)) {
+      chatIds.unshift(privateId);
+    }
   }
 
-  chatIds = [...new Set(chatIds)];
-  store.setPath(['telegram', 'chatIds'], chatIds);
+  if (!chatIds.includes(targetId)) {
+    chatIds.push(targetId);
+  }
+
+  const unique = [...new Set(chatIds)];
+  store.setPath(['telegram', 'chatIds'], unique);
   store.setPath(['telegram', 'adminChatIds'], [...adminIds]);
-  return { targetId, chatIds };
+  return { targetId, chatIds: unique, added: !existing.includes(targetId) };
+}
+
+function unbindNotificationChat(targetChatId) {
+  const targetId = String(targetChatId);
+  if (isPrivateChatId(targetId)) {
+    return { error: 'Личные сообщения из списка убрать нельзя.' };
+  }
+
+  const chatIds = (store.getPath(['telegram', 'chatIds']) || [])
+    .map(String)
+    .filter((id) => id !== targetId);
+  store.setPath(['telegram', 'chatIds'], chatIds);
+  return { ok: true, chatIds };
 }
 
 function escapeHtml(text) {
@@ -386,6 +463,8 @@ module.exports = {
   buildBotAdminInviteUrl,
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
+  unbindNotificationChat,
+  listKnownGroupChats,
   setDmOnlyNotifications,
   refreshTelegramChat,
   refreshNotificationChatStatuses,
