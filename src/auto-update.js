@@ -105,8 +105,50 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
-function isGitRepo() {
-  return fs.existsSync(path.join(ROOT, '.git'));
+function formatAppVersion(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('v') ? raw : `v${raw}`;
+}
+
+function readLocalPackageVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    return formatAppVersion(pkg.version);
+  } catch {
+    return '';
+  }
+}
+
+function readGitPackageVersion(ref) {
+  try {
+    const pkg = JSON.parse(runQuiet(`git show ${ref}:package.json`));
+    return formatAppVersion(pkg.version);
+  } catch {
+    return '';
+  }
+}
+
+async function getRemotePackageVersion(branch) {
+  const fromGit = readGitPackageVersion(`origin/${branch}`);
+  if (fromGit) return fromGit;
+
+  const urls = [
+    `https://raw.githubusercontent.com/${REPO_SLUG}/${encodeURIComponent(branch)}/package.json`,
+    `https://cdn.jsdelivr.net/gh/${REPO_SLUG}@${encodeURIComponent(branch)}/package.json`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const data = await httpsJson(url, { timeout: 15000 });
+      const version = formatAppVersion(data?.version);
+      if (version) return version;
+    } catch {
+      /* next */
+    }
+  }
+
+  return '';
 }
 
 function isDnsOrNetworkError(err) {
@@ -556,7 +598,7 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
   }
 }
 
-async function finishUpdate(fromSha, toSha, notify) {
+async function finishUpdate(fromSha, toSha, notify, fromVersion) {
   run('npm install --omit=dev --ignore-scripts');
 
   schedulePm2Restarts([APP_NAME, UPDATE_APP_NAME], {
@@ -564,20 +606,22 @@ async function finishUpdate(fromSha, toSha, notify) {
     staggerMs: 5000,
   });
 
+  const toVersion = readLocalPackageVersion();
+
   if (notify) {
     await notifyAdmins(
       buildEventMessage({
-        ...UPDATES.done(fromSha, toSha),
+        ...UPDATES.done(fromVersion, toVersion),
         status: 'done',
       })
     );
   }
 
   console.log('auto-update: код обновлён, перезапуск PM2 запланирован');
-  return { status: 'updated', fromSha, toSha };
+  return { status: 'updated', fromSha, toSha, fromVersion, toVersion };
 }
 
-async function applyUpdate(fromSha, toSha, notify, branch) {
+async function applyUpdate(fromSha, toSha, notify, branch, fromVersion) {
   try {
     run(`git pull --ff-only origin ${branch}`);
   } catch (err) {
@@ -585,7 +629,7 @@ async function applyUpdate(fromSha, toSha, notify, branch) {
     await applyArchiveUpdate(branch, fromSha, toSha);
   }
 
-  return finishUpdate(fromSha, toSha, notify);
+  return finishUpdate(fromSha, toSha, notify, fromVersion);
 }
 
 async function resolveRemoteSha(branch) {
@@ -623,8 +667,9 @@ async function checkForUpdates(options = {}) {
     }
 
     if (local === remote) {
-      console.log(`auto-update: актуально (${local.slice(0, 7)}) via ${remoteInfo.via}`);
-      return { status: 'up-to-date', sha: local.slice(0, 7) };
+      const version = readLocalPackageVersion();
+      console.log(`auto-update: актуально ${version || local.slice(0, 7)} via ${remoteInfo.via}`);
+      return { status: 'up-to-date', sha: local.slice(0, 7), version };
     }
 
     if (hasLocalChanges()) {
@@ -637,17 +682,19 @@ async function checkForUpdates(options = {}) {
 
     const fromSha = local.slice(0, 7);
     const toSha = remote.slice(0, 7);
+    const fromVersion = readLocalPackageVersion();
+    const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
 
     if (!performUpdate) {
-      return { status: 'available', fromSha, toSha };
+      return { status: 'available', fromSha, toSha, fromVersion, toVersion };
     }
 
-    console.log(`auto-update: обновление ${fromSha} → ${toSha} (via ${remoteInfo.via})`);
+    console.log(`auto-update: обновление ${fromVersion || fromSha} → ${toVersion || toSha} (via ${remoteInfo.via})`);
 
     if (notify) {
       await notifyAdmins(
         buildEventMessage({
-          ...UPDATES.updating(fromSha, toSha),
+          ...UPDATES.updating(fromVersion, toVersion),
           status: 'progress',
         })
       );
@@ -655,10 +702,10 @@ async function checkForUpdates(options = {}) {
 
     if (remoteInfo.via === 'api') {
       await applyArchiveUpdate(cfg.branch, fromSha, toSha);
-      return finishUpdate(fromSha, toSha, notify);
+      return finishUpdate(fromSha, toSha, notify, fromVersion);
     }
 
-    return await applyUpdate(fromSha, toSha, notify, cfg.branch);
+    return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion);
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
     let finalErr = err;
@@ -668,22 +715,24 @@ async function checkForUpdates(options = {}) {
       try {
         console.warn('auto-update: всё плохо, пробую архив в лоб…');
         const local = runQuiet('git rev-parse HEAD').slice(0, 7);
+        const fromVersion = readLocalPackageVersion();
         await patchGithubHosts();
         const sha = await getRemoteShaViaApi(cfg.branch).catch(() => 'archive');
         if (sha !== 'archive' && sha === runQuiet('git rev-parse HEAD')) {
-          return { status: 'up-to-date', sha: local };
+          return { status: 'up-to-date', sha: local, version: fromVersion };
         }
         if (!hasLocalChanges()) {
+          const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
           if (notify) {
             await notifyAdmins(
               buildEventMessage({
-                ...UPDATES.updating(local, String(sha).slice(0, 7)),
+                ...UPDATES.updating(fromVersion, toVersion),
                 status: 'progress',
               })
             );
           }
           await applyArchiveUpdate(cfg.branch, local, String(sha).slice(0, 7));
-          return finishUpdate(local, String(sha).slice(0, 7), notify);
+          return finishUpdate(local, String(sha).slice(0, 7), notify, fromVersion);
         }
       } catch (fallbackErr) {
         console.error('auto-update: архивный путь тоже сдох —', fallbackErr.message);

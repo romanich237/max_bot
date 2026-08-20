@@ -1119,7 +1119,7 @@ async function handleManualUpdateCheck(chatId) {
     const preview = await checkForUpdates({ notify: false, performUpdate: false });
 
     if (preview.status === 'up-to-date') {
-      await sendMessage(chatId, buildEventMessage({ ...UPDATES.none, status: 'done' }));
+      await sendMessage(chatId, buildEventMessage({ ...UPDATES.none(preview.version), status: 'done' }));
       return;
     }
 
@@ -1127,7 +1127,7 @@ async function handleManualUpdateCheck(chatId) {
       await sendMessage(
         chatId,
         buildEventMessage({
-          ...UPDATES.updating(preview.fromSha, preview.toSha),
+          ...UPDATES.updating(preview.fromVersion, preview.toVersion),
           status: 'progress',
         })
       );
@@ -1136,7 +1136,7 @@ async function handleManualUpdateCheck(chatId) {
         await sendMessage(
           chatId,
           buildEventMessage({
-            ...UPDATES.done(result.fromSha, result.toSha),
+            ...UPDATES.done(result.fromVersion, result.toVersion),
             status: 'done',
           })
         );

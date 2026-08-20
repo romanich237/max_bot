@@ -421,22 +421,30 @@ const SAVED = {
 };
 
 const UPDATES = {
-  none: {
+  none: (version) => ({
     title: 'Обновления',
-    lines: ['Обновлений нет.'],
-  },
-  updating: (fromSha, toSha) => ({
+    lines: ['Обновлений нет.', version ? `Текущая версия: <code>${version}</code>` : null].filter(Boolean),
+  }),
+  updating: (fromVer, toVer) => ({
     title: 'Обновление',
     lines: [
       'Вышла новая версия, обновляю…',
-      fromSha && toSha ? `Версия: <code>${fromSha}</code> → <code>${toSha}</code>` : null,
+      fromVer && toVer && fromVer !== toVer
+        ? `Версия: <code>${fromVer}</code> → <code>${toVer}</code>`
+        : fromVer || toVer
+          ? `Версия: <code>${toVer || fromVer}</code>`
+          : null,
     ].filter(Boolean),
   }),
-  done: (fromSha, toSha) => ({
+  done: (fromVer, toVer) => ({
     title: 'Готово',
     lines: [
       'Код обновлён. Бот перезапускается через несколько секунд.',
-      fromSha && toSha ? `Версия: <code>${fromSha}</code> → <code>${toSha}</code>` : null,
+      fromVer && toVer && fromVer !== toVer
+        ? `Версия: <code>${fromVer}</code> → <code>${toVer}</code>`
+        : fromVer || toVer
+          ? `Версия: <code>${toVer || fromVer}</code>`
+          : null,
     ].filter(Boolean),
   }),
   skipped: {
