@@ -19,6 +19,7 @@ const {
   buildMaxChatsText,
   buildMaxChatsKeyboard,
   buildMaxChatPickKeyboard,
+  buildMaxChatPickWhereKeyboard,
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
   isRequiredChatUrl,
@@ -40,6 +41,7 @@ const {
   getChat,
   pollUpdates,
   sendPhotoBuffer,
+  editMessageCaption,
 } = require('./tg-api');
 const {
   TOGGLES,
@@ -860,6 +862,7 @@ async function showMaxChatView(chatId, messageId, index) {
   lines.push('');
   lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
   const target = getNotifyTarget(url);
+  lines.push('Куда слать в Telegram — выберите кнопками ниже.');
   lines.push(
     target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth
   );
@@ -934,24 +937,125 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
     return false;
   }
 
-  const result = addMonitorChatUrl(resolved.url, { title: resolved.title });
+  waitingInput.set(String(chatId), 'maxchat:add');
+  await deleteMessageQuiet(chatId, userMessageId);
+  await showMaxChatWherePrompt(chatId, { url: resolved.url, title: resolved.title });
+  return true;
+}
 
-  if (result.error) {
-    await deleteMessageQuiet(chatId, userMessageId);
-    await sendInputPrompt(chatId, result.error);
-    return false;
+async function showMaxChatWherePrompt(chatId, pending) {
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key) || {};
+  const url = String(pending?.url || '').trim();
+  const title = String(pending?.title || chatLabelFromUrl(url) || '').trim();
+  maxChatAddCache.set(key, {
+    ...cache,
+    pending: { url, title },
+  });
+
+  const text = [
+    '<b>Куда слать в Telegram</b>',
+    '',
+    title ? `Чат: <b>${escapeHtml(title)}</b>` : null,
+    url ? `<code>${escapeHtml(url)}</code>` : null,
+    '',
+    'Выберите направление для сообщений из этого чата.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const extra = { reply_markup: buildMaxChatPickWhereKeyboard() };
+  const latest = maxChatAddCache.get(key) || {};
+
+  if (latest.photoMessageId) {
+    try {
+      await editMessageCaption(chatId, latest.photoMessageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('maxchat where caption:', err.message);
+    }
   }
 
-  waitingInput.delete(String(chatId));
-  await clearMaxChatAddPrompt(chatId, userMessageId);
+  if (latest.whereMessageId) {
+    try {
+      await editMessageText(chatId, latest.whereMessageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('maxchat where edit:', err.message);
+    }
+  }
 
+  const sent = await sendMessage(chatId, text, extra);
+  maxChatAddCache.set(key, {
+    ...maxChatAddCache.get(key),
+    whereMessageId: sent?.result?.message_id || null,
+  });
+}
+
+async function restoreMaxChatPickPrompt(chatId) {
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key);
+  if (!cache) {
+    waitingInput.delete(key);
+    await showMaxChats(chatId);
+    return;
+  }
+
+  const next = { ...cache };
+  delete next.pending;
+  maxChatAddCache.set(key, next);
+
+  const chats = cache.chats || [];
+  const keyboard = buildMaxChatPickKeyboard(chats);
+  const text = chats.length ? buildMaxChatAddCaption() : CHATS.addPromptNoScreenshot;
+
+  if (cache.photoMessageId) {
+    try {
+      await editMessageCaption(chatId, cache.photoMessageId, text, { reply_markup: keyboard });
+      return;
+    } catch (err) {
+      console.warn('maxchat pickback caption:', err.message);
+    }
+  }
+
+  if (cache.whereMessageId) {
+    try {
+      await editMessageText(chatId, cache.whereMessageId, text, { reply_markup: keyboard });
+      return;
+    } catch (err) {
+      console.warn('maxchat pickback edit:', err.message);
+    }
+  }
+
+  await sendInputPrompt(chatId, text, { reply_markup: keyboard });
+}
+
+async function finishMaxChatAddWithTarget(chatId, target) {
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key);
+  const pending = cache?.pending;
+  if (!pending?.url) {
+    return { error: 'Сначала выберите чат' };
+  }
+
+  const result = addMonitorChatUrl(pending.url, {
+    title: pending.title,
+    notifyTarget: target,
+  });
+  if (result.error) return result;
+
+  waitingInput.delete(key);
+  await clearMaxChatAddPrompt(chatId);
+
+  const where =
+    target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth;
   const lines = [
     result.duplicate
       ? CHATS.duplicate.lines[0]
-      : resolved.title
-        ? `Чат добавлен: <b>${escapeHtml(resolved.title)}</b>`
-        : `Чат добавлен: <code>${escapeHtml(result.url)}</code>`,
-    resolved.title ? `<code>${escapeHtml(result.url)}</code>` : null,
+      : pending.title
+        ? `Чат: <b>${escapeHtml(pending.title)}</b>`
+        : `Чат: <code>${escapeHtml(result.url)}</code>`,
+    pending.title ? `<code>${escapeHtml(result.url)}</code>` : null,
+    where,
     '',
     buildMaxChatsText(),
   ].filter(Boolean);
@@ -959,13 +1063,13 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
   await sendMessage(
     chatId,
     buildEventMessage({
-      title: result.duplicate ? CHATS.duplicate.title : CHATS.added.title,
+      title: result.duplicate ? CHATS.destinationSaved.title : CHATS.added.title,
       status: 'done',
       lines,
     }),
     { reply_markup: buildMaxChatsKeyboard() }
   );
-  return true;
+  return result;
 }
 
 async function handleMaxChatPick(chatId, chat) {
@@ -983,7 +1087,9 @@ async function handleMaxChatPick(chatId, chat) {
 
   if (url) {
     if (title) setChatTitle(url, title);
-    return handleMaxChatUrlInput(chatId, url);
+    waitingInput.set(String(chatId), 'maxchat:add');
+    await showMaxChatWherePrompt(chatId, { url, title });
+    return true;
   }
 
   if (title) {
@@ -1682,8 +1788,35 @@ async function handleCallback(query) {
     }
 
     waitingInput.set(String(chatId), 'maxchat:add');
-    await answerCallback(query.id, chat.title || 'Добавляю…');
+    await answerCallback(query.id, chat.title || 'Куда слать?');
     await handleMaxChatPick(chatId, chat);
+    return;
+  }
+
+  if (data === 'maxchat:pickback') {
+    waitingInput.set(String(chatId), 'maxchat:add');
+    await answerCallback(query.id, 'Выберите чат');
+    await restoreMaxChatPickPrompt(chatId);
+    return;
+  }
+
+  if (data.startsWith('maxchat:addwhere:')) {
+    const target = data.slice('maxchat:addwhere:'.length);
+    if (!['dm', 'group', 'both'].includes(target)) {
+      await answerCallback(query.id, 'Ошибка');
+      return;
+    }
+    const labels = {
+      dm: 'Только в ЛС',
+      group: 'Только в группу',
+      both: 'В ЛС и группу',
+    };
+    const result = await finishMaxChatAddWithTarget(chatId, target);
+    if (result.error) {
+      await answerCallback(query.id, result.error);
+      return;
+    }
+    await answerCallback(query.id, labels[target] || 'Сохранено');
     return;
   }
 

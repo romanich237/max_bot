@@ -346,6 +346,8 @@ function addMonitorChatUrl(url, options = {}) {
 
   const urls = getMonitorChatUrls();
   if (urls.includes(normalized)) {
+    if (options.title) setChatTitle(normalized, options.title);
+    if (options.notifyTarget) setNotifyTarget(normalized, options.notifyTarget);
     return { ok: true, url: normalized, duplicate: true };
   }
 
@@ -362,6 +364,10 @@ function addMonitorChatUrl(url, options = {}) {
 
   if (options.title) {
     setChatTitle(normalized, options.title);
+  }
+
+  if (options.notifyTarget) {
+    setNotifyTarget(normalized, options.notifyTarget);
   }
 
   return { ok: true, url: normalized };
@@ -413,6 +419,7 @@ function buildMaxChatsText() {
   }
 
   lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
+  lines.push('Куда слать (ЛС / группа) выбирается при добавлении чата или в его карточке.', '');
 
   for (const url of urls) {
     const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
@@ -440,12 +447,6 @@ function cycleNotifyTarget(url) {
   return setNotifyTarget(url, next);
 }
 
-function notifyTargetCycleLabel(target) {
-  if (target === 'dm') return '💬 ЛС';
-  if (target === 'group') return '📣 Группа';
-  return '💬📣';
-}
-
 function buildNotifyTargetButtons(url, index) {
   const current = getNotifyTarget(url);
   const options = [
@@ -465,8 +466,7 @@ function buildNotifyTargetButtons(url, index) {
   });
 }
 
-function buildMaxChatActionButtons(url, index, urls, options = {}) {
-  const compact = options.compact !== false;
+function buildMaxChatActionButtons(url, index, urls) {
   const actions = [];
   const forwardOn = isChatForwardEnabled(url);
 
@@ -475,13 +475,6 @@ function buildMaxChatActionButtons(url, index, urls, options = {}) {
     callback_data: `maxchat:forward:${index}`,
     style: forwardOn ? 'success' : 'danger',
   });
-
-  if (compact) {
-    actions.push({
-      text: notifyTargetCycleLabel(getNotifyTarget(url)),
-      callback_data: `maxchat:where:${index}`,
-    });
-  }
 
   if (!isRequiredChatUrl(url) && urls.length > 1) {
     actions.push({ text: '🗑', callback_data: `maxchat:remove:${index}` });
@@ -553,13 +546,26 @@ function buildMaxChatPickKeyboard(chats = []) {
   return { inline_keyboard: rows };
 }
 
+function buildMaxChatPickWhereKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '💬 ЛС', callback_data: 'maxchat:addwhere:dm' },
+        { text: '📣 Группа', callback_data: 'maxchat:addwhere:group' },
+        { text: '💬📣 Оба', callback_data: 'maxchat:addwhere:both' },
+      ],
+      [{ text: '« Назад', callback_data: 'maxchat:pickback' }],
+    ],
+  };
+}
+
 function buildMaxChatViewKeyboard(index) {
   const urls = getMonitorChatUrls();
   const url = urls[index];
   const rows = [];
-  const actions = url ? buildMaxChatActionButtons(url, index, urls, { compact: false }) : [];
-  if (actions.length) rows.push(actions);
   if (url) rows.push(buildNotifyTargetButtons(url, index));
+  const actions = url ? buildMaxChatActionButtons(url, index, urls) : [];
+  if (actions.length) rows.push(actions);
   rows.push([{ text: '« К списку', callback_data: 'maxchat:list' }]);
   return { inline_keyboard: rows };
 }
@@ -599,5 +605,6 @@ module.exports = {
   buildMaxChatsText,
   buildMaxChatsKeyboard,
   buildMaxChatPickKeyboard,
+  buildMaxChatPickWhereKeyboard,
   buildMaxChatViewKeyboard,
 };
