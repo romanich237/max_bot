@@ -115,9 +115,8 @@ function mergeChatTitles(entries = []) {
 function chatMenuLabel(url, defaultUrl = getDefaultChatUrl()) {
   const star = url === defaultUrl ? '⭐ ' : '';
   const pin = isRequiredChatUrl(url) ? '📌 ' : '';
-  const muted = isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? '🔕 ' : '';
   const title = getChatTitle(url) || truncateUrl(url, 28);
-  return `${star}${pin}${muted}${title}`;
+  return `${star}${pin}${title}`;
 }
 
 function truncateUrl(url, max = 36) {
@@ -164,7 +163,7 @@ function isRequiredChatUrl(url) {
   );
 }
 
-function getDisabledRequiredChatUrls() {
+function getDisabledForwardChatUrls() {
   return (store.getPath(['max', 'disabledRequiredChats']) || [])
     .map(normalizeMaxChatUrl)
     .filter(Boolean);
@@ -172,17 +171,14 @@ function getDisabledRequiredChatUrls() {
 
 function isChatForwardEnabled(url) {
   const normalized = normalizeMaxChatUrl(url);
-  if (!isRequiredChatUrl(normalized)) return true;
-  return !getDisabledRequiredChatUrls().includes(normalized);
+  return !getDisabledForwardChatUrls().includes(normalized);
 }
 
-function setRequiredChatForwardEnabled(url, enabled) {
+function setChatForwardEnabled(url, enabled) {
   const normalized = normalizeMaxChatUrl(url);
-  if (!isRequiredChatUrl(normalized)) {
-    return { error: 'Этот чат нельзя настроить как обязательный.' };
-  }
+  if (!normalized) return { error: 'Чат не найден.' };
 
-  let disabled = getDisabledRequiredChatUrls();
+  let disabled = getDisabledForwardChatUrls();
   if (enabled) {
     disabled = disabled.filter((item) => item !== normalized);
   } else if (!disabled.includes(normalized)) {
@@ -191,6 +187,10 @@ function setRequiredChatForwardEnabled(url, enabled) {
 
   store.setPath(['max', 'disabledRequiredChats'], disabled);
   return { ok: true, url: normalized, forwardEnabled: enabled };
+}
+
+function setRequiredChatForwardEnabled(url, enabled) {
+  return setChatForwardEnabled(url, enabled);
 }
 
 function ensureRequiredChats() {
@@ -332,7 +332,7 @@ function removeMonitorChatUrl(url) {
 
   if (isRequiredChatUrl(normalized)) {
     return {
-      error: 'Этот чат обязателен. Отключите пересылку в карточке чата, если не нужны уведомления.',
+      error: 'Этот чат обязателен. Выключите пересылку, если не нужны уведомления.',
     };
   }
 
@@ -352,6 +352,10 @@ function removeMonitorChatUrl(url) {
   }
 
   store.setPath(['max', 'monitorChatUrls'], extras);
+  store.setPath(
+    ['max', 'disabledRequiredChats'],
+    getDisabledForwardChatUrls().filter((item) => item !== normalized)
+  );
   removeChatTitle(normalized);
   return { ok: true, url: normalized };
 }
@@ -359,59 +363,50 @@ function removeMonitorChatUrl(url) {
 function buildMaxChatsText() {
   const urls = getMonitorChatUrls();
   const defaultUrl = getDefaultChatUrl();
-  const lines = ['<b>Чаты MAX для уведомлений</b>', ''];
+  const lines = ['<b>Чаты MAX</b>', ''];
 
   if (!urls.length) {
-    lines.push('Список пуст. Добавьте чат MAX по названию или ссылке.');
+    lines.push('Список пуст. Нажмите «Добавить чат» — по названию или ссылке.');
     return lines.join('\n');
   }
 
+  lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
+
   for (const url of urls) {
-    const star = url === defaultUrl ? '⭐ ' : '• ';
-    const pin = isRequiredChatUrl(url) ? '📌 ' : '';
+    const marks = [];
+    if (url === defaultUrl) marks.push('⭐');
+    if (isRequiredChatUrl(url)) marks.push('📌');
+    const prefix = marks.length ? `${marks.join(' ')} ` : '• ';
     const title = escapeHtml(chatLabelFromUrl(url));
-    const forwardNote =
-      isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? ' · <i>пересылка выкл.</i>' : '';
-    lines.push(`${star}${pin}<b>${title}</b>${forwardNote}`);
-    lines.push(`   <code>${url}</code>`);
+    const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
+    lines.push(`${prefix}<b>${title}</b> — ${forward}`);
   }
 
+  lines.push('');
   if (isMonitorAllChatsEnabled()) {
-    lines.push(
-      '',
-      '🌐 <b>Режим «все чаты» включён</b> — пересылаются сообщения из всех чатов в списке MAX.',
-      'Список ниже — для основного чата и ручного добавления; при отключении режима используется только он.'
-    );
+    lines.push('Сейчас бот читает <b>все чаты в MAX</b>, не только список.');
+  } else {
+    lines.push('Сейчас: только чаты из списка.');
   }
-
-  lines.push(
-    '',
-    'Кнопки под каждым чатом: сделать основным, пересылка, удалить.',
-    'Название чата открывает карточку.',
-    '',
-    '⭐ — основной чат (по умолчанию).',
-    '📌 — обязательный чат (нельзя удалить, пересылку можно выключить).',
-    isMonitorAllChatsEnabled()
-      ? 'Уведомления приходят из всех чатов MAX (кроме с выключенной пересылкой).'
-      : 'Уведомления приходят из всех чатов с включённой пересылкой.'
-  );
+  lines.push('⭐ основной · 📌 удалить нельзя');
   return lines.join('\n');
 }
 
 function buildMaxChatActionButtons(url, index, urls, defaultUrl) {
   const actions = [];
+  const forwardOn = isChatForwardEnabled(url);
 
   if (url !== defaultUrl) {
-    actions.push({ text: '⭐ Основной', callback_data: `maxchat:default:${index}` });
+    actions.push({ text: 'Сделать основным', callback_data: `maxchat:default:${index}` });
   }
 
-  if (isRequiredChatUrl(url)) {
-    const enabled = isChatForwardEnabled(url);
-    actions.push({
-        text: enabled ? '🔕 Не слать этот чат' : '🔔 Слать этот чат',
-      callback_data: `maxchat:toggleRequired:${index}`,
-    });
-  } else if (urls.length > 1) {
+  actions.push({
+    text: forwardOn ? 'Пересылка: ✅' : 'Пересылка: ❌',
+    callback_data: `maxchat:forward:${index}`,
+    style: forwardOn ? 'success' : 'danger',
+  });
+
+  if (!isRequiredChatUrl(url) && urls.length > 1) {
     actions.push({ text: '🗑 Удалить', callback_data: `maxchat:remove:${index}` });
   }
 
@@ -421,12 +416,13 @@ function buildMaxChatActionButtons(url, index, urls, defaultUrl) {
 function buildMaxChatsKeyboard() {
   const urls = getMonitorChatUrls();
   const defaultUrl = getDefaultChatUrl();
+  const all = isMonitorAllChatsEnabled();
   const rows = [
     [
       {
-        text: isMonitorAllChatsEnabled() ? '🌐 Все чаты: ✅' : '🌐 Все чаты: ❌',
+        text: all ? 'Все чаты MAX: ✅' : 'Все чаты MAX: ❌',
         callback_data: 'maxchat:toggleAll',
-        style: isMonitorAllChatsEnabled() ? 'success' : 'danger',
+        style: all ? 'success' : 'danger',
       },
     ],
   ];
@@ -512,6 +508,7 @@ module.exports = {
   setMonitorAllChatsEnabled,
   isRequiredChatUrl,
   isChatForwardEnabled,
+  setChatForwardEnabled,
   setRequiredChatForwardEnabled,
   ensureRequiredChats,
   scopedMessageKey,

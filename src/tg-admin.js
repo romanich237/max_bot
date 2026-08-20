@@ -24,7 +24,7 @@ const {
   chatLabelFromUrl,
   isRequiredChatUrl,
   isChatForwardEnabled,
-  setRequiredChatForwardEnabled,
+  setChatForwardEnabled,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
 } = require('./max-chats');
@@ -348,7 +348,9 @@ function buildStatusText() {
   lines.push('', `<b>${STATUS.chatsHeader}</b>`);
 
   if (isMonitorAllChatsEnabled()) {
-    lines.push('Режим: все чаты из списка MAX');
+    lines.push('Режим: все чаты в MAX');
+  } else {
+    lines.push('Режим: только список');
   }
 
   if (!monitorUrls.length) {
@@ -356,14 +358,12 @@ function buildStatusText() {
   } else {
     for (const url of monitorUrls) {
       const title = escapeHtml(chatLabelFromUrl(url));
-      const required = isRequiredChatUrl(url) ? ' · обязательный' : '';
-      const muted =
-        isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? ' · не слать' : '';
-      if (url === defaultUrl) {
-        lines.push(`⭐ <b>${title}</b> — основной${required}${muted}`);
-      } else {
-        lines.push(`• <b>${title}</b>${required}${muted}`);
-      }
+      const marks = [];
+      if (url === defaultUrl) marks.push('⭐');
+      if (isRequiredChatUrl(url)) marks.push('📌');
+      const prefix = marks.length ? `${marks.join(' ')} ` : '• ';
+      const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
+      lines.push(`${prefix}<b>${title}</b> — ${forward}`);
     }
   }
 
@@ -797,6 +797,16 @@ async function handleMyChatMember(memberUpdate) {
   }
 }
 
+async function refreshMaxChatPanel(chatId, query, index) {
+  const rows = query.message?.reply_markup?.inline_keyboard || [];
+  const onCard = rows.some((row) => row.some((btn) => btn.callback_data === 'maxchat:list'));
+  if (onCard) {
+    await showMaxChatView(chatId, query.message.message_id, index);
+    return;
+  }
+  await showMaxChats(chatId, query.message.message_id);
+}
+
 async function showMaxChats(chatId, messageId) {
   const text = buildMaxChatsText();
   const extra = { reply_markup: buildMaxChatsKeyboard() };
@@ -820,18 +830,21 @@ async function showMaxChatView(chatId, messageId, index) {
   }
 
   const defaultUrl = getDefaultChatUrl();
-  const lines = [
-    `<b>${escapeHtml(chatLabelFromUrl(url))}</b>`,
-    '',
-    `<code>${escapeHtml(url)}</code>`,
-    url === defaultUrl ? CHATS.primary : CHATS.secondary,
-  ];
+  const title = escapeHtml(chatLabelFromUrl(url));
+  const lines = [`<b>${title}</b>`, '', `<code>${escapeHtml(url)}</code>`, ''];
+
+  if (url === defaultUrl) {
+    lines.push(CHATS.primary);
+  } else {
+    lines.push(CHATS.secondary);
+  }
 
   if (isRequiredChatUrl(url)) {
-    lines.push('');
     lines.push(CHATS.requiredPinned);
-    lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
   }
+
+  lines.push('');
+  lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
 
   await editMessageText(chatId, messageId, lines.join('\n'), {
     reply_markup: buildMaxChatViewKeyboard(index),
@@ -1291,7 +1304,7 @@ async function handleManualUpdateCheck(chatId) {
         buildEventMessage({ ...UPDATES.none(preview.version), status: 'done' })
       );
       const posts = track(sent, 'none');
-      await pruneUpdateNotices({ keep: posts, kinds: ['none'] });
+      await pruneUpdateNotices({ keep: posts, kinds: ['none'], chatId });
       return;
     }
 
@@ -1588,7 +1601,7 @@ async function handleCallback(query) {
   if (data === 'maxchat:toggleAll') {
     const next = !isMonitorAllChatsEnabled();
     setMonitorAllChatsEnabled(next);
-    await answerCallback(query.id, next ? 'Все чаты включены' : 'Только выбранные чаты');
+    await answerCallback(query.id, next ? 'Все чаты MAX' : 'Только список');
     await showMaxChats(chatId, query.message.message_id);
     return;
   }
@@ -1653,23 +1666,25 @@ async function handleCallback(query) {
     }
 
     await answerCallback(query.id, 'Основной чат');
-    await showMaxChats(chatId, query.message.message_id);
+    const nextIndex = Math.max(0, getMonitorChatUrls().indexOf(url));
+    await refreshMaxChatPanel(chatId, query, nextIndex);
     return;
   }
 
-  if (data.startsWith('maxchat:toggleRequired:')) {
-    const index = Number.parseInt(data.slice('maxchat:toggleRequired:'.length), 10) || 0;
+  if (data.startsWith('maxchat:forward:') || data.startsWith('maxchat:toggleRequired:')) {
+    const index =
+      Number.parseInt(data.replace(/^maxchat:(?:forward|toggleRequired):/, ''), 10) || 0;
     const urls = getMonitorChatUrls();
     const url = urls[index];
-    if (!url || !isRequiredChatUrl(url)) {
+    if (!url) {
       await answerCallback(query.id, 'Чат не найден');
       return;
     }
 
     const next = !isChatForwardEnabled(url);
-    setRequiredChatForwardEnabled(url, next);
-    await answerCallback(query.id, next ? 'Этот чат снова шлётся в Telegram' : 'Этот чат больше не шлётся в Telegram');
-    await showMaxChats(chatId, query.message.message_id);
+    setChatForwardEnabled(url, next);
+    await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
+    await refreshMaxChatPanel(chatId, query, index);
     return;
   }
 

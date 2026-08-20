@@ -284,8 +284,7 @@ function noticeKey(item) {
 
 function rememberUpdateNotices(posts, kind = 'notice') {
   if (!posts?.length) return;
-  const existing = loadUpdateNotices();
-  const seen = new Set(existing.map(noticeKey));
+  const byKey = new Map(loadUpdateNotices().map((item) => [noticeKey(item), item]));
   for (const post of posts) {
     if (!post?.chatId || !post?.messageId) continue;
     const item = {
@@ -293,20 +292,28 @@ function rememberUpdateNotices(posts, kind = 'notice') {
       messageId: Number(post.messageId),
       kind,
     };
-    const key = noticeKey(item);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    existing.push(item);
+    byKey.set(noticeKey(item), item);
   }
-  saveUpdateNotices(existing);
+  saveUpdateNotices([...byKey.values()]);
 }
 
-async function pruneUpdateNotices({ keep = [], kinds = null } = {}) {
+function isGoneTelegramMessage(data, err) {
+  return /not found|message to delete not found|can't be deleted|message can't be deleted|message identifier is not specified/i.test(
+    `${data?.description || ''} ${err?.message || ''}`
+  );
+}
+
+async function pruneUpdateNotices({ keep = [], kinds = null, chatId = null } = {}) {
   const keepKeys = new Set((keep || []).filter((item) => item?.chatId && item?.messageId).map(noticeKey));
+  const chatFilter = chatId != null ? String(chatId) : null;
   const leftover = [];
 
   for (const item of loadUpdateNotices()) {
     if (keepKeys.has(noticeKey(item))) {
+      leftover.push(item);
+      continue;
+    }
+    if (chatFilter && String(item.chatId) !== chatFilter) {
       leftover.push(item);
       continue;
     }
@@ -317,12 +324,12 @@ async function pruneUpdateNotices({ keep = [], kinds = null } = {}) {
 
     try {
       const data = await deleteMessage(item.chatId, item.messageId);
-      const gone = /not found|message to delete not found|can't be deleted|message can't be deleted/i.test(
-        data?.description || ''
-      );
-      if (!data?.ok && !gone) leftover.push(item);
+      if (!data?.ok && !isGoneTelegramMessage(data)) leftover.push(item);
     } catch (err) {
-      console.warn(`auto-update: не удалил сообщение ${noticeKey(item)}: ${err.message}`);
+      if (!isGoneTelegramMessage(null, err)) {
+        leftover.push(item);
+        console.warn(`auto-update: не удалил сообщение ${noticeKey(item)}: ${err.message}`);
+      }
     }
   }
 
@@ -342,7 +349,7 @@ async function editAdminPosts(posts, text) {
       try {
         const data = await sendMessage(chatId, text);
         if (data?.ok && data.result?.message_id) {
-          rememberUpdateNotices([{ chatId, messageId: data.result.message_id }], 'notice');
+          rememberUpdateNotices([{ chatId, messageId: data.result.message_id }], 'done');
         }
       } catch (sendErr) {
         console.error(`auto-update: не удалось уведомить ${chatId}:`, sendErr.message);
@@ -885,6 +892,10 @@ async function checkForUpdates(options = {}) {
       );
     }
 
+    if (progressPosts.length) {
+      await pruneUpdateNotices({ keep: progressPosts });
+    }
+
     if (!isGitRepo() || remoteInfo.via === 'api' || !remote) {
       await applyArchiveUpdate(cfg.branch, fromSha, remote || toSha);
       return finishUpdate(fromSha, remote || toSha, notify, fromVersion, progressPosts);
@@ -914,7 +925,7 @@ async function checkForUpdates(options = {}) {
             if (progressPosts.length) {
               await editAdminPosts(progressPosts, updatingText);
             } else {
-              progressPosts = await notifyAdmins(updatingText);
+              progressPosts = await notifyAdmins(updatingText, 'progress');
             }
           }
           await applyArchiveUpdate(cfg.branch, local, String(sha));
