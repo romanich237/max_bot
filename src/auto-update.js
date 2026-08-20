@@ -4,7 +4,7 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('./config');
-const { sendMessage, editMessageText } = require('./tg-api');
+const { sendMessage, editMessageText, deleteMessage } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { UPDATES } = require('./bot-texts');
 const {
@@ -18,6 +18,7 @@ const FETCH_RETRIES = 2;
 const FETCH_RETRY_MS = 1500;
 const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
 const UPDATE_SHA_FILE = path.join(ROOT, 'data', '.update-sha');
+const UPDATE_NOTICES_FILE = path.join(ROOT, 'data', '.update-notices.json');
 
 // DoH по IP — когда DNS в ахуе и github.com не резолвится
 const DOH_PROVIDERS = [
@@ -240,7 +241,7 @@ function hasLocalChanges() {
   }
 }
 
-async function notifyAdmins(text) {
+async function notifyAdmins(text, kind = 'notice') {
   const chatIds = getAdminChatIds();
   const posts = [];
   if (!chatIds.length) return posts;
@@ -255,7 +256,77 @@ async function notifyAdmins(text) {
       console.error(`auto-update: не удалось уведомить ${chatId}:`, err.message);
     }
   }
+  rememberUpdateNotices(posts, kind);
   return posts;
+}
+
+function loadUpdateNotices() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(UPDATE_NOTICES_FILE, 'utf8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUpdateNotices(notices) {
+  try {
+    fs.mkdirSync(path.dirname(UPDATE_NOTICES_FILE), { recursive: true });
+    fs.writeFileSync(UPDATE_NOTICES_FILE, `${JSON.stringify(notices.slice(-80), null, 2)}\n`);
+  } catch (err) {
+    console.warn(`auto-update: notices не сохранились (${err.message})`);
+  }
+}
+
+function noticeKey(item) {
+  return `${String(item.chatId)}:${Number(item.messageId)}`;
+}
+
+function rememberUpdateNotices(posts, kind = 'notice') {
+  if (!posts?.length) return;
+  const existing = loadUpdateNotices();
+  const seen = new Set(existing.map(noticeKey));
+  for (const post of posts) {
+    if (!post?.chatId || !post?.messageId) continue;
+    const item = {
+      chatId: String(post.chatId),
+      messageId: Number(post.messageId),
+      kind,
+    };
+    const key = noticeKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    existing.push(item);
+  }
+  saveUpdateNotices(existing);
+}
+
+async function pruneUpdateNotices({ keep = [], kinds = null } = {}) {
+  const keepKeys = new Set((keep || []).filter((item) => item?.chatId && item?.messageId).map(noticeKey));
+  const leftover = [];
+
+  for (const item of loadUpdateNotices()) {
+    if (keepKeys.has(noticeKey(item))) {
+      leftover.push(item);
+      continue;
+    }
+    if (kinds && !kinds.includes(item.kind)) {
+      leftover.push(item);
+      continue;
+    }
+
+    try {
+      const data = await deleteMessage(item.chatId, item.messageId);
+      const gone = /not found|message to delete not found|can't be deleted|message can't be deleted/i.test(
+        data?.description || ''
+      );
+      if (!data?.ok && !gone) leftover.push(item);
+    } catch (err) {
+      console.warn(`auto-update: не удалил сообщение ${noticeKey(item)}: ${err.message}`);
+    }
+  }
+
+  saveUpdateNotices(leftover);
 }
 
 async function editAdminPosts(posts, text) {
@@ -269,7 +340,10 @@ async function editAdminPosts(posts, text) {
     } catch (err) {
       console.warn(`auto-update: не удалось править сообщение ${chatId}: ${err.message}`);
       try {
-        await sendMessage(chatId, text);
+        const data = await sendMessage(chatId, text);
+        if (data?.ok && data.result?.message_id) {
+          rememberUpdateNotices([{ chatId, messageId: data.result.message_id }], 'notice');
+        }
       } catch (sendErr) {
         console.error(`auto-update: не удалось уведомить ${chatId}:`, sendErr.message);
       }
@@ -705,14 +779,19 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) 
   const toVersion = readLocalPackageVersion();
   writeStoredSha(toSha);
 
+  await pruneUpdateNotices({ keep: progressPosts || [] });
+
   if (notify) {
-    await editAdminPosts(
+    const posts = await editAdminPosts(
       progressPosts,
       buildEventMessage({
         ...UPDATES.done(fromVersion, toVersion),
         status: 'done',
       })
     );
+    rememberUpdateNotices(posts || progressPosts || [], 'done');
+  } else {
+    rememberUpdateNotices(progressPosts || [], 'done');
   }
 
   console.log('auto-update: код обновлён, перезапуск PM2 запланирован');
@@ -753,7 +832,7 @@ async function checkForUpdates(options = {}) {
   store.reload();
   const cfg = getAutoUpdate();
   const fromVersion = readLocalPackageVersion();
-  let progressPosts = [];
+  let progressPosts = Array.isArray(options.progressPosts) ? [...options.progressPosts] : [];
   console.log(`auto-update: репо ${getRepoSlug()} ветка ${cfg.branch}`);
 
   try {
@@ -801,7 +880,8 @@ async function checkForUpdates(options = {}) {
         buildEventMessage({
           ...UPDATES.updating(fromVersion),
           status: 'progress',
-        })
+        }),
+        'progress'
       );
     }
 
@@ -890,6 +970,6 @@ function scheduleAutoUpdate() {
 module.exports = {
   checkForUpdates,
   scheduleAutoUpdate,
-  patchGithubHosts,
-  resolveViaDoh,
+  rememberUpdateNotices,
+  pruneUpdateNotices,
 };

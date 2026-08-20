@@ -80,19 +80,19 @@ const START = {
 
 const STATUS = {
   header: `<b>${BRAND}</b>`,
-  monitoring: 'Работа бота',
+  monitoring: 'Следит за MAX',
   alwaysOnline: 'Всегда в сети',
-  profileRotate: 'Смена имени',
-  profileBio: 'Смена описания',
-  namesUnset: 'Имена: не заданы',
-  cityUnset: 'Город: не задан',
-  nameAuto: 'Имя в MAX: определяется автоматически',
-  chatsHeader: 'Отслеживаемые чаты MAX',
-  chatsUnset: 'Чаты не заданы',
-  notifyUnset: 'Уведомления: не настроены',
-  forwarding: 'Сообщения в Telegram',
-  on: 'включён',
-  off: 'выключен',
+  profileRotate: 'Менять имя',
+  profileBio: 'Менять описание',
+  namesUnset: 'Имена для смены не заданы',
+  cityUnset: 'Город не задан',
+  nameAuto: 'Имя в MAX пока не считано',
+  chatsHeader: 'Чаты MAX',
+  chatsUnset: 'Чаты MAX не выбраны',
+  notifyUnset: 'Куда слать в Telegram — не настроено',
+  forwarding: 'Слать в Telegram',
+  on: 'да',
+  off: 'нет',
 };
 
 const AUTH = {

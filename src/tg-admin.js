@@ -10,6 +10,7 @@ const {
   getDefaultChatUrl,
   getMonitorChatUrls,
   getNotificationChatIds,
+  isPrivateChatId,
 } = require('./config');
 const {
   setDefaultChatUrl,
@@ -282,13 +283,36 @@ function onFlag(value) {
   return value ? `✅ ${STATUS.on}` : `❌ ${STATUS.off}`;
 }
 
+function formatInterval(ms) {
+  const sec = Math.max(1, Math.round(Number(ms || 0) / 1000));
+  if (sec < 60) return `каждые ${sec} сек`;
+  const min = Math.round(sec / 60);
+  if (min === 1) return 'каждую минуту';
+  if (min < 60) return `каждые ${min} мин`;
+  const hours = Math.round(min / 60);
+  if (hours === 1) return 'каждый час';
+  return `каждые ${hours} ч`;
+}
+
+function formatNotifyTarget(id) {
+  const known = getKnownChat(id);
+  const title = String(known?.title || '').trim();
+  const unnamed = !title || title === 'Без названия';
+  if (isPrivateChatId(id)) {
+    return unnamed
+      ? `Личка <code>${escapeHtml(id)}</code>`
+      : `Личка: <b>${escapeHtml(title)}</b>`;
+  }
+  return unnamed
+    ? `Группа без названия <code>${escapeHtml(id)}</code>`
+    : `Группа: <b>${escapeHtml(title)}</b> <code>${escapeHtml(id)}</code>`;
+}
+
 function buildStatusText() {
   const profile = getProfileRotate();
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
-
   const maxName = getMaxDisplayName();
-
   const defaultUrl = getDefaultChatUrl();
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
@@ -296,43 +320,63 @@ function buildStatusText() {
   const lines = [
     STATUS.header,
     '',
-    `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}`,
+    '<b>Бот</b>',
+    `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}${isMonitoringEnabled() ? '' : ' · на паузе'}`,
     `${STATUS.forwarding}: ${onFlag(getMax().forwardingEnabled !== false)}`,
-    `${STATUS.alwaysOnline}: ${onFlag(online.enabled)} · ${online.intervalMs / 1000} с`,
-    `${STATUS.profileRotate}: ${onFlag(profile.enabled)} · ${profile.intervalMs / 1000} с`,
-    profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : STATUS.namesUnset,
-    `${STATUS.profileBio}: ${onFlag(profileBio.enabled)} · ${profileBio.intervalMs / 1000} с`,
-    profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : STATUS.cityUnset,
-    `Шаблон: <code>${escapeHtml(profileBio.template)}</code>`,
-    maxName
-      ? `Имя в MAX: <code>${escapeHtml(maxName)}</code>`
-      : STATUS.nameAuto,
+    `${STATUS.alwaysOnline}: ${onFlag(online.enabled)}${online.enabled ? ` · ${formatInterval(online.intervalMs)}` : ''}`,
     '',
-    `<b>${STATUS.chatsHeader}</b>`,
-    isMonitorAllChatsEnabled() ? '🌐 Режим «все чаты»: ✅' : null,
-    monitorUrls.length
-      ? monitorUrls
-          .map((url) => {
-            const star = url === defaultUrl ? '⭐ ' : '• ';
-            return `${star}<b>${escapeHtml(chatLabelFromUrl(url))}</b>`;
-          })
-          .join('\n')
-      : STATUS.chatsUnset,
-    notifyIds.length
-      ? (() => {
-          const effective = getNotificationChatIds();
-          const hasGroup = effective.some((id) => Number(id) < 0);
-          const mode = hasGroup ? 'ЛС + группа' : 'только ЛС';
-          const titles = effective.map((id) => {
-            const known = getKnownChat(id);
-            return known?.title || id;
-          });
-          return `Уведомления (${mode}): ${titles.map((t) => `<b>${escapeHtml(t)}</b>`).join(', ')}`;
-        })()
-      : STATUS.notifyUnset,
+    '<b>Профиль MAX</b>',
+    `${STATUS.profileRotate}: ${onFlag(profile.enabled)}${profile.enabled ? ` · ${formatInterval(profile.intervalMs)}` : ''}`,
   ];
 
-  return lines.filter(Boolean).join('\n');
+  if (profile.enabled) {
+    lines.push(
+      profile.names?.length ? `Имена: ${profile.names.map(escapeHtml).join(' → ')}` : STATUS.namesUnset
+    );
+  }
+
+  lines.push(
+    `${STATUS.profileBio}: ${onFlag(profileBio.enabled)}${profileBio.enabled ? ` · ${formatInterval(profileBio.intervalMs)}` : ''}`
+  );
+
+  if (profileBio.enabled) {
+    lines.push(profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : STATUS.cityUnset);
+    lines.push(`Шаблон: <code>${escapeHtml(profileBio.template)}</code>`);
+  }
+
+  lines.push(maxName ? `Сейчас имя: <code>${escapeHtml(maxName)}</code>` : STATUS.nameAuto);
+  lines.push('', `<b>${STATUS.chatsHeader}</b>`);
+
+  if (isMonitorAllChatsEnabled()) {
+    lines.push('Режим: все чаты из списка MAX');
+  }
+
+  if (!monitorUrls.length) {
+    lines.push(STATUS.chatsUnset);
+  } else {
+    for (const url of monitorUrls) {
+      const title = escapeHtml(chatLabelFromUrl(url));
+      const required = isRequiredChatUrl(url) ? ' · обязательный' : '';
+      const muted =
+        isRequiredChatUrl(url) && !isChatForwardEnabled(url) ? ' · не слать' : '';
+      if (url === defaultUrl) {
+        lines.push(`⭐ <b>${title}</b> — основной${required}${muted}`);
+      } else {
+        lines.push(`• <b>${title}</b>${required}${muted}`);
+      }
+    }
+  }
+
+  lines.push('', '<b>Куда слать в Telegram</b>');
+  if (!notifyIds.length) {
+    lines.push(STATUS.notifyUnset);
+  } else {
+    for (const id of notifyIds) {
+      lines.push(formatNotifyTarget(id));
+    }
+  }
+
+  return lines.filter((line) => line != null).join('\n');
 }
 
 const DISCOVER_ID_BUTTON = BUTTONS.discoverId;
@@ -1228,13 +1272,26 @@ async function handleMessage(message) {
 }
 
 async function handleManualUpdateCheck(chatId) {
-  const { checkForUpdates } = require('./auto-update');
+  const { checkForUpdates, rememberUpdateNotices, pruneUpdateNotices } = require('./auto-update');
+
+  const track = (sent, kind) => {
+    const messageId = sent?.ok ? sent.result?.message_id : null;
+    if (!messageId) return [];
+    const posts = [{ chatId, messageId }];
+    rememberUpdateNotices(posts, kind);
+    return posts;
+  };
 
   try {
     const preview = await checkForUpdates({ notify: false, performUpdate: false });
 
     if (preview.status === 'up-to-date') {
-      await sendMessage(chatId, buildEventMessage({ ...UPDATES.none(preview.version), status: 'done' }));
+      const sent = await sendMessage(
+        chatId,
+        buildEventMessage({ ...UPDATES.none(preview.version), status: 'done' })
+      );
+      const posts = track(sent, 'none');
+      await pruneUpdateNotices({ keep: posts, kinds: ['none'] });
       return;
     }
 
@@ -1246,7 +1303,12 @@ async function handleManualUpdateCheck(chatId) {
           status: 'progress',
         })
       );
-      const result = await checkForUpdates({ notify: false, performUpdate: true });
+      const progressPosts = track(sent, 'progress');
+      const result = await checkForUpdates({
+        notify: false,
+        performUpdate: true,
+        progressPosts,
+      });
       const doneText =
         result.status === 'updated'
           ? buildEventMessage({
@@ -1262,36 +1324,45 @@ async function handleManualUpdateCheck(chatId) {
       if (messageId) {
         try {
           await editMessageText(chatId, messageId, doneText);
+          rememberUpdateNotices([{ chatId, messageId }], 'done');
           return;
         } catch (err) {
           console.warn('update message edit:', err.message);
         }
       }
-      await sendMessage(chatId, doneText);
+      const fallback = await sendMessage(chatId, doneText);
+      track(fallback, result.status === 'updated' ? 'done' : 'fail');
       return;
     }
 
     if (preview.status === 'skipped') {
-      await sendMessage(chatId, buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
+      const sent = await sendMessage(chatId, buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
+      track(sent, 'fail');
       return;
     }
 
     if (preview.status === 'unavailable') {
-      await sendMessage(chatId, buildEventMessage({ ...UPDATES.unavailable, status: 'info' }));
+      const sent = await sendMessage(
+        chatId,
+        buildEventMessage({ ...UPDATES.unavailable, status: 'info' })
+      );
+      track(sent, 'notice');
       return;
     }
 
     if (preview.status === 'error') {
-      await sendMessage(
+      const sent = await sendMessage(
         chatId,
         buildEventMessage({ ...UPDATES.fail(preview.message), status: 'fail' })
       );
+      track(sent, 'fail');
     }
   } catch (err) {
-    await sendMessage(
+    const sent = await sendMessage(
       chatId,
       buildEventMessage({ ...UPDATES.fail(err.message), status: 'fail' })
     );
+    track(sent, 'fail');
   }
 }
 
