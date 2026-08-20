@@ -81,15 +81,7 @@ async function ensureTelegramCredentials() {
     return;
   }
 
-  console.log('\n--- Telegram ---\n');
-  const token = process.env.TG_TOKEN || (await ask('Telegram bot token: '));
-  const chatId = process.env.TG_CHAT_ID || (await ask('Ваш Telegram chat ID: '));
-
-  if (!token?.trim() || !chatId?.trim()) {
-    throw new Error('Token и chat ID обязательны (или задайте TG_TOKEN и TG_CHAT_ID)');
-  }
-
-  await applyTelegramCredentials(config, token, chatId);
+  throw new Error('Задайте TG_TOKEN и TG_CHAT_ID в окружении. Ввод в терминале отключён.');
 }
 
 async function runTerminalSetup() {
@@ -113,7 +105,7 @@ async function runTerminalSetup() {
 
   console.log('\n--- Установка базы данных ---\n');
   const dbCredentials = await provisionDatabase(store, {
-    driver: process.env.DB_DRIVER,
+    driver: process.env.DB_DRIVER || 'sqlite',
     ask,
   });
   const adminChatIds = store.getPath(['telegram', 'chatIds']) || [];

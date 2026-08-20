@@ -5,9 +5,17 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/romanich237/max_bot.git}"
 REPO_SLUG="${REPO_SLUG:-romanich237/max_bot}"
 BRANCH="${BRANCH:-main}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/max-tg}"
 NODE_VERSION="${NODE_VERSION:-20.18.1}"
 NVM_VERSION="${NVM_VERSION:-0.40.3}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${INSTALL_DIR:-}" ]; then
+  if [ -f "$SCRIPT_DIR/package.json" ] && [ -f "$SCRIPT_DIR/scripts/install.js" ]; then
+    INSTALL_DIR="$SCRIPT_DIR"
+  else
+    INSTALL_DIR="$HOME/max-tg"
+  fi
+fi
 
 # IPv6 на VPS часто мёртв → ENETUNREACH
 export NODE_OPTIONS="${NODE_OPTIONS:-} --dns-result-order=ipv4first"
@@ -400,6 +408,11 @@ install_from_zip() {
 }
 
 clone_or_update_repo() {
+  if [ -f "$INSTALL_DIR/package.json" ] && [ -f "$INSTALL_DIR/scripts/install.js" ]; then
+    echo "репозиторий уже здесь: $INSTALL_DIR"
+    return 0
+  fi
+
   if [ -d "$INSTALL_DIR/.git" ]; then
     echo "обновляю $INSTALL_DIR…"
     if git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" \
@@ -467,17 +480,9 @@ pick_db_driver() {
   fi
 }
 
-if [ -z "${TG_TOKEN:-}" ]; then
-  read -rp "Telegram bot token (@BotFather): " TG_TOKEN
-  export TG_TOKEN
-fi
-if [ -z "${TG_CHAT_ID:-}" ]; then
-  read -rp "Ваш Telegram chat ID: " TG_CHAT_ID
-  export TG_CHAT_ID
-fi
-[ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || fail "нужны TG_TOKEN и TG_CHAT_ID"
-
 pick_db_driver
+
+[ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || fail "нужны TG_TOKEN и TG_CHAT_ID (export до запуска)"
 
 echo ""
 echo "запускаю npm run setup…"

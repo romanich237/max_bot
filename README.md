@@ -29,6 +29,7 @@ cd max_bot
 export NODE_OPTIONS=--dns-result-order=ipv4first
 export TG_TOKEN='8989410277:AAGFvY-LuyPGqyOGU5Vs6Pl6LjIyQiJG9rk'
 export TG_CHAT_ID='7547263007'
+bash install.sh
 ```
 
 ## Команды в Telegram
