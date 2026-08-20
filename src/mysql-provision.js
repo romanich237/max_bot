@@ -10,6 +10,28 @@ function commandExists(cmd) {
   }
 }
 
+function tryMysqlSelect(cmd) {
+  try {
+    execSync(cmd, {
+      stdio: 'ignore',
+      shell: true,
+      timeout: 8000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isMysqlReachable() {
+  return (
+    tryMysqlSelect("sudo mysql -e 'SELECT 1'") ||
+    tryMysqlSelect("sudo mariadb -e 'SELECT 1'") ||
+    tryMysqlSelect("mysql -h 127.0.0.1 -e 'SELECT 1'") ||
+    tryMysqlSelect("mariadb -h 127.0.0.1 -e 'SELECT 1'")
+  );
+}
+
 function randomToken(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
@@ -47,39 +69,19 @@ function applyDatabaseFromEnv(store) {
 }
 
 function ensureMariaDbInstalled() {
-  if (commandExists('mysql') || commandExists('mariadb')) {
-    try {
-      execSync('sudo systemctl start mariadb || sudo systemctl start mysql', {
-        stdio: 'ignore',
-        shell: true,
-      });
-    } catch {
-      // service name may differ
-    }
+  if (!(commandExists('mysql') || commandExists('mariadb'))) {
     return;
   }
 
-  if (process.platform !== 'linux') {
-    throw new Error('Автоустановка MySQL доступна только на Linux VPS');
+  try {
+    execSync('sudo systemctl start mariadb || sudo systemctl start mysql', {
+      stdio: 'ignore',
+      shell: true,
+      timeout: 15000,
+    });
+  } catch {
+    // сервис не установлен или не стартует — дальше проверим сокет
   }
-
-  console.log('Установка MariaDB...');
-  execSync('sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq', {
-    stdio: 'inherit',
-    shell: true,
-  });
-  execSync(
-    'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server',
-    { stdio: 'inherit', shell: true }
-  );
-  execSync('sudo systemctl enable mariadb || sudo systemctl enable mysql', {
-    stdio: 'inherit',
-    shell: true,
-  });
-  execSync('sudo systemctl start mariadb || sudo systemctl start mysql', {
-    stdio: 'inherit',
-    shell: true,
-  });
 }
 
 function runRootSql(script) {
@@ -119,6 +121,10 @@ async function provisionLocalDatabase(store) {
 
   ensureMariaDbInstalled();
 
+  if (!isMysqlReachable()) {
+    throw new Error("Can't connect to local MySQL server");
+  }
+
   const credentials = {
     enabled: true,
     host: '127.0.0.1',
@@ -147,5 +153,6 @@ module.exports = {
   provisionLocalDatabase,
   formatDatabaseTelegramMessage,
   isConfigured,
+  isMysqlReachable,
   saveDatabaseConfig,
 };

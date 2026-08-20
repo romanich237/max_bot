@@ -32,9 +32,10 @@ function getDbDriver() {
     const d = cfg.database || {};
     if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
     if (d.file) return 'sqlite';
-    return 'mysql';
+    if (d.host && d.user && d.database) return 'mysql';
+    return 'sqlite';
   } catch {
-    return 'mysql';
+    return 'sqlite';
   }
 }
 

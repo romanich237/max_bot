@@ -4,6 +4,7 @@ const { ROOT } = require('./config');
 const {
   provisionLocalDatabase,
   isConfigured: isMysqlConfigured,
+  isMysqlReachable,
 } = require('./mysql-provision');
 
 const SQLITE_DEFAULT_FILE = './data/max.db';
@@ -104,8 +105,16 @@ async function provisionDatabase(store, options = {}) {
     return provisionSqliteDatabase(store);
   }
 
-  const credentials = await provisionLocalDatabase(store);
-  return { ...credentials, driver: 'mysql' };
+  try {
+    if (!isMysqlReachable()) {
+      throw new Error("Can't connect to local MySQL server");
+    }
+    const credentials = await provisionLocalDatabase(store);
+    return { ...credentials, driver: 'mysql' };
+  } catch (err) {
+    console.warn(`MySQL недоступна (${err.message}), использую SQLite`);
+    return provisionSqliteDatabase(store);
+  }
 }
 
 module.exports = {

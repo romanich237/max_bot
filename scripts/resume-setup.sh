@@ -80,8 +80,10 @@ if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
 fi
 
 if [ -z "${DB_DRIVER:-}" ]; then
-  if command -v mysql >/dev/null 2>&1 || command -v mariadb >/dev/null 2>&1 \
-    || dpkg -s mariadb-server >/dev/null 2>&1 || dpkg -s mysql-server >/dev/null 2>&1; then
+  if sudo mysql -e 'SELECT 1' >/dev/null 2>&1 \
+    || sudo mariadb -e 'SELECT 1' >/dev/null 2>&1 \
+    || mysql -h 127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1 \
+    || mariadb -h 127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1; then
     export DB_DRIVER=mysql
   else
     export DB_DRIVER=sqlite

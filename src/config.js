@@ -109,7 +109,7 @@ function resolveDatabaseDriver(d) {
   if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
   if (d.file) return 'sqlite';
   if (d.host && d.user && d.database) return 'mysql';
-  return 'mysql';
+  return 'sqlite';
 }
 
 function getDatabase() {

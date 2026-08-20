@@ -52,7 +52,7 @@
   },
   "database": {
     "enabled": true,
-    "driver": "mysql",
+    "driver": "sqlite",
     "file": "./data/max.db",
     "host": "",
     "port": 3306,

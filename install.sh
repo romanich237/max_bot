@@ -470,13 +470,15 @@ pick_db_driver() {
     echo "DB_DRIVER=$DB_DRIVER"
     return 0
   fi
-  if command -v mysql >/dev/null 2>&1 || command -v mariadb >/dev/null 2>&1 \
-    || dpkg -s mariadb-server >/dev/null 2>&1 || dpkg -s mysql-server >/dev/null 2>&1; then
+  if sudo mysql -e 'SELECT 1' >/dev/null 2>&1 \
+    || sudo mariadb -e 'SELECT 1' >/dev/null 2>&1 \
+    || mysql -h 127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1 \
+    || mariadb -h 127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1; then
     export DB_DRIVER=mysql
-    echo "DB_DRIVER=mysql (нашли MySQL/MariaDB)"
+    echo "DB_DRIVER=mysql (сервер отвечает)"
   else
     export DB_DRIVER=sqlite
-    echo "DB_DRIVER=sqlite (авто, без лишних вопросов)"
+    echo "DB_DRIVER=sqlite (MySQL недоступна)"
   fi
 }
 

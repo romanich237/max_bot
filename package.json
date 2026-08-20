@@ -1,6 +1,6 @@
 {
   "name": "max-to-tg-bot",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Пересылка уведомлений из мессенджера MAX в Telegram",
   "scripts": {
     "auth": "node scripts/auth.js",
