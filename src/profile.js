@@ -380,7 +380,12 @@ async function closeProfileEditor(page) {
     const btn = chats.nth(i);
     if (!(await btn.isVisible().catch(() => false))) continue;
     const isChatRow = await btn.evaluate((el) =>
-      /web\.max\.ru\/-?\d{5,}/.test([el.getAttribute('href') || '', el.outerHTML || ''].join(' '))
+      Boolean(
+        el.closest('.scrollListContent, .scrollListScrollable') ||
+          el.querySelector('h3.title') ||
+          el.matches('button.cell, h3.title') ||
+          el.classList.contains('cell')
+      )
     );
     if (isChatRow) continue;
     await btn.click();

@@ -54,18 +54,30 @@ function chatUrlFromId(chatId) {
   return chatUrlFromChatId(chatId);
 }
 
+function isChatListRowEl(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.querySelector?.('h3.title')) return true;
+  if (el.matches?.('h3.title, button.cell')) return true;
+  if (el.closest?.('button.cell')) return true;
+  return Boolean(el.closest?.('.scrollListContent') && el.closest?.('div.item'));
+}
+
 async function openChatsTab(page) {
   const navTab = page.getByRole('tab', { name: /^(чаты|chats)$/i }).first();
   if (await navTab.isVisible({ timeout: 800 }).catch(() => false)) {
-    await navTab.click();
-    await page.waitForTimeout(600);
-    return true;
+    const isChatRow = await navTab.evaluate(isChatListRowEl);
+    if (!isChatRow) {
+      await navTab.click();
+      await page.waitForTimeout(600);
+      return true;
+    }
   }
 
   const navButton = page
     .locator(
-      'nav button, aside button, [role="tablist"] button, [class*="tabbar" i] button, [class*="navbar" i] button, [class*="sidebar" i] button, [class*="dock" i] button'
+      'nav button, [role="tablist"] button, [class*="tabbar" i] button, [class*="navbar" i] button, [class*="dock" i] button, aside button'
     )
+    .filter({ hasNot: page.locator('h3.title') })
     .filter({ hasText: /^(чаты|chats)$/i })
     .first();
   if (await navButton.isVisible({ timeout: 800 }).catch(() => false)) {
@@ -79,10 +91,7 @@ async function openChatsTab(page) {
   for (let i = 0; i < count; i++) {
     const btn = buttons.nth(i);
     if (!(await btn.isVisible().catch(() => false))) continue;
-    const isChatRow = await btn.evaluate((el) => {
-      const blob = [el.getAttribute('href') || '', el.outerHTML || ''].join(' ');
-      return /web\.max\.ru\/-?\d{5,}|(?:href|src)=["']\/-?\d{5,}/i.test(blob);
-    });
+    const isChatRow = await btn.evaluate(isChatListRowEl);
     if (isChatRow) continue;
     await btn.click();
     await page.waitForTimeout(600);
@@ -126,24 +135,20 @@ async function waitForChatListDom(page) {
   await page
     .waitForFunction(
       () => {
+        if (document.querySelector('.scrollListContent h3.title, button.cell > h3.title, button.cell h3.title')) {
+          return true;
+        }
+
         const CHAT_ID = /-\d{5,}/;
         const hasChatId = (value) => CHAT_ID.test(String(value || ''));
 
-        for (const el of document.querySelectorAll('[href], a, button, [role="listitem"], [class*="cell" i]')) {
+        for (const el of document.querySelectorAll('[href], a, button.cell, [role="listitem"]')) {
           const href = el.getAttribute('href') || '';
           if (hasChatId(href)) return true;
 
           for (const attr of el.attributes || []) {
             if (hasChatId(attr.value)) return true;
           }
-
-          const text = el.innerText || '';
-          if (hasChatId(text)) return true;
-        }
-
-        for (const h3 of document.querySelectorAll('h3')) {
-          const title = (h3.innerText || '').trim();
-          if (title && !/^(chats|чаты)$/i.test(title)) return true;
         }
 
         return hasChatId(document.body?.innerHTML || '');
@@ -183,15 +188,21 @@ async function extractMaxChatsFromPage(page) {
     function pickTitle(container) {
       if (!container) return '';
 
+      const titleNode =
+        (container.matches?.('h3.title') ? container : null) ||
+        container.querySelector?.('h3.title');
+      const fromTitle = (titleNode?.innerText || '').trim().split('\n')[0].trim();
+      if (fromTitle) return fromTitle;
+
       const fromAria = container.getAttribute('aria-label') || '';
       if (fromAria.trim()) {
         return fromAria.trim().split(',')[0].trim();
       }
 
-      const titleNode = container.querySelector?.(
+      const fallbackNode = container.querySelector?.(
         '[class*="title" i], [class*="name" i], [class*="header" i], [class*="peer" i] span, h3, h4'
       );
-      const fromNode = titleNode?.innerText || '';
+      const fromNode = fallbackNode?.innerText || '';
       if (fromNode.trim()) {
         return fromNode.trim().split('\n')[0].trim();
       }
@@ -233,7 +244,7 @@ async function extractMaxChatsFromPage(page) {
             el.innerText || '',
           ].join(' ');
           if (new RegExp(escaped).test(blob)) {
-            return el.closest('li, [role="listitem"], button, [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i]') || el;
+            return el.closest('button.cell, div.item, li, [role="listitem"]') || el;
           }
         }
       }
@@ -252,7 +263,13 @@ async function extractMaxChatsFromPage(page) {
       const key = cleanTitle.toLowerCase();
 
       if (!url) {
-        if (/^(chats|чаты)$/i.test(cleanTitle)) return;
+        const fromList = Boolean(
+          container &&
+            (container.matches?.('h3.title, button.cell, div.item') ||
+              container.querySelector?.('h3.title') ||
+              container.closest?.('.scrollListContent, .scrollListScrollable, button.cell, div.item'))
+        );
+        if (/^(chats|чаты)$/i.test(cleanTitle) && !fromList) return;
         if (seenTitles.has(key)) return;
         seenTitles.add(key);
         chats.push({ title: cleanTitle, url: null });
@@ -281,29 +298,26 @@ async function extractMaxChatsFromPage(page) {
 
     function addFromRow(row) {
       if (!row) return;
-      const heading = row.querySelector?.('h3.title, h3, [class*="title" i]');
+      const heading = row.querySelector?.('h3.title') || (row.matches?.('h3.title') ? row : null);
       const title = (heading?.innerText || pickTitle(row) || '').trim().split('\n')[0].trim();
       const blob = [nodeBlob(row), nodeBlob(row.parentElement), nodeBlob(heading)].join(' ');
       addChat(title, chatUrlFromId(chatIdFromBlob(blob)) || null, row);
     }
 
-    const SKIP_HEADINGS = /^(chats|чаты)$/i;
-
-    for (const item of document.querySelectorAll('div.item, .scrollListContent .item')) {
-      const cell = item.querySelector('button.cell, button[class*="cell"]') || item;
+    for (const item of document.querySelectorAll(
+      '.scrollListContent div.item, .scrollListScrollable div.item, aside div.item'
+    )) {
+      const cell = item.querySelector('button.cell') || item;
       addFromRow(cell);
     }
 
-    for (const h3 of document.querySelectorAll('h3')) {
+    for (const h3 of document.querySelectorAll('button.cell > h3.title, button.cell h3.title, h3.title')) {
       const title = (h3.innerText || '').trim().split('\n')[0].trim();
       if (!title) continue;
 
       const row =
-        h3.closest('button.cell, button[class*="cell"], div.item') ||
-        h3.parentElement?.closest?.('button.cell, button[class*="cell"], div.item');
-      const blob = nodeBlob(row || h3);
-      if (SKIP_HEADINGS.test(title) && !chatIdFromBlob(blob)) continue;
-
+        h3.closest('button.cell, div.item') ||
+        h3.parentElement?.closest?.('button.cell, div.item');
       addFromRow(row || h3);
     }
 
@@ -497,10 +511,15 @@ async function resolveChatUrlByTitle(page, title) {
 
   await ensureChatListVisible(page);
 
-  const titleLocator = page.locator('h3.title, h3').filter({ hasText: query }).first();
   const cell = page
-    .locator('button.cell, button[class*="cell"]')
-    .filter({ has: page.locator('h3.title, h3').filter({ hasText: query }) })
+    .locator('button.cell')
+    .filter({
+      has: page.locator('h3.title').filter({ hasText: new RegExp(`^${escapeRegExp(query)}$`, 'i') }),
+    })
+    .first();
+  const titleLocator = page
+    .locator('button.cell > h3.title, button.cell h3.title')
+    .filter({ hasText: new RegExp(`^${escapeRegExp(query)}$`, 'i') })
     .first();
 
   if (await cell.isVisible({ timeout: 2500 }).catch(() => false)) {
@@ -566,12 +585,17 @@ async function debugChatListState(page) {
     const links = [...document.querySelectorAll('a[href], [href]')].filter((el) =>
       CHAT_ID.test(el.getAttribute('href') || '')
     );
-    const buttons = document.querySelectorAll('button, [role="listitem"], [class*="cell" i]').length;
+    const buttons = document.querySelectorAll('button.cell, [role="listitem"]').length;
+    const titles = [...document.querySelectorAll('button.cell h3.title, h3.title')].map((el) =>
+      (el.innerText || '').trim().split('\n')[0].trim()
+    );
     const htmlMatches = (document.body?.innerHTML || '').match(/\/-\d{5,}/g) || [];
     return {
       url: location.href,
       chatLinks: links.length,
       buttons,
+      titles: titles.slice(0, 20),
+      titleCount: titles.length,
       htmlChatIds: [...new Set(htmlMatches)].slice(0, 5),
     };
   });
@@ -765,19 +789,18 @@ async function readUnreadCounts(page) {
       let chats = 0;
       let messages = 0;
 
-      const nodes = document.querySelectorAll(
-        'a[href], [href], button.cell, button[class*="cell"], [role="listitem"], div.item, [class*="dialog" i], [class*="peer" i], [class*="conversation" i]'
-      );
+      const cells = document.querySelectorAll('button.cell');
+      for (const cell of cells) {
+        const heading = cell.querySelector('h3.title');
+        if (!heading) continue;
 
-      for (const el of nodes) {
-        const id = chatIdFromEl(el);
+        const item = cell.closest('div.item') || cell;
+        const title = (heading.innerText || '').trim().split('\n')[0].trim();
+        const id = chatIdFromEl(item) || chatIdFromEl(cell) || (title ? `title:${title.toLowerCase()}` : '');
         if (!id || seen.has(id)) continue;
         seen.add(id);
-        const row =
-          el.closest(
-            'li, [role="listitem"], button.cell, button[class*="cell"], div.item, [class*="dialog" i], [class*="peer" i]'
-          ) || el;
-        const count = unreadFromRow(row);
+
+        const count = unreadFromRow(item);
         if (count > 0) {
           chats += 1;
           messages += count;
@@ -786,11 +809,11 @@ async function readUnreadCounts(page) {
 
       let tabCount = 0;
       for (const btn of document.querySelectorAll(
-        'nav button, aside button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, [class*="sidebar" i] button'
+        'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
       )) {
+        if (btn.querySelector('h3.title') || btn.closest('.scrollListContent, .scrollListScrollable')) continue;
         const label = (btn.innerText || '').trim().split('\n')[0].trim();
         if (!/^(чаты|chats)$/i.test(label)) continue;
-        if (chatIdFromEl(btn)) continue;
         tabCount = unreadFromRow(btn);
         break;
       }
