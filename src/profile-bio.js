@@ -35,7 +35,26 @@ function applyTemplate(template, values) {
     .replace(/\{минута\}/gi, values.minute)
     .replace(/\{день\}/gi, values.day)
     .replace(/\{месяц\}/gi, values.month)
-    .replace(/\{погода\}/gi, values.weather);
+    .replace(/\{погода\}/gi, values.weather)
+    .replace(/\{непрочитанные_чаты\}/gi, values.unreadChats)
+    .replace(/\{непрочитанные_сообщения\}/gi, values.unreadMessages)
+    .replace(/\{чаты\}/gi, values.unreadChats)
+    .replace(/\{сообщения\}/gi, values.unreadMessages);
+}
+
+function templateNeedsUnread(template) {
+  return /\{непрочитанные_чаты\}|\{непрочитанные_сообщения\}|\{чаты\}|\{сообщения\}/i.test(
+    String(template || '')
+  );
+}
+
+function unreadValues(options = {}) {
+  const chats = options.unreadChats;
+  const messages = options.unreadMessages;
+  return {
+    unreadChats: chats == null || chats === '' ? '0' : String(chats),
+    unreadMessages: messages == null || messages === '' ? '0' : String(messages),
+  };
 }
 
 async function renderBioDescription(options = {}) {
@@ -53,7 +72,19 @@ async function renderBioDescription(options = {}) {
   const { resolveCity } = require('./weather');
   const geo = await resolveCity(city, apiKey);
   const parts = getDateParts(new Date(), geo.timezone);
-  let text = applyTemplate(template, { ...parts, weather });
+
+  let unread = unreadValues(options);
+  if (options.page && templateNeedsUnread(template)) {
+    try {
+      const { readUnreadCounts } = require('./max-chat-picker');
+      const counts = await readUnreadCounts(options.page);
+      unread = unreadValues(counts);
+    } catch (err) {
+      console.warn('описание: непрочитанные не считаются —', err.message);
+    }
+  }
+
+  let text = applyTemplate(template, { ...parts, weather, ...unread });
 
   if (text.length > MAX_BIO_LENGTH) {
     text = text.slice(0, MAX_BIO_LENGTH);
@@ -67,6 +98,8 @@ function previewBioTemplate(template, city, timezone = 'Europe/Moscow') {
   let text = applyTemplate(template || DEFAULT_BIO_TEMPLATE, {
     ...parts,
     weather: '+5°C, облачно',
+    unreadChats: '2',
+    unreadMessages: '7',
   });
 
   if (text.length > MAX_BIO_LENGTH) {

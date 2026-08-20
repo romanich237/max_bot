@@ -48,6 +48,8 @@ const HINTS = {
     '',
     'Переменные:',
     '<code>{час}</code> <code>{минута}</code> <code>{день}</code> <code>{месяц}</code> <code>{погода}</code>',
+    '<code>{непрочитанные_чаты}</code> <code>{непрочитанные_сообщения}</code>',
+    'Коротко: <code>{чаты}</code> <code>{сообщения}</code>',
     '',
     `По умолчанию: <code>${DEFAULT_BIO_TEMPLATE}</code>`,
   ].join('\n'),

@@ -347,7 +347,7 @@ async function saveProfileBio(page, bioText) {
 async function rotateProfileBio(page, chatUrl, options = {}) {
   return withProfileEdit(async () => {
     const { renderBioDescription } = require('./profile-bio');
-    const bioText = await renderBioDescription(options);
+    const bioText = await renderBioDescription({ ...options, page });
     const preview = bioText.length > 80 ? `${bioText.slice(0, 80)}…` : bioText;
     console.log(`Обновление описания MAX (${bioText.length} симв.): «${preview}»`);
 

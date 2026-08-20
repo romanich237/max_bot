@@ -661,12 +661,111 @@ async function discoverMaxChatsForMonitor(page) {
   return { chats, urls };
 }
 
+async function readUnreadCounts(page) {
+  if (!page || page.isClosed()) {
+    return { chats: 0, messages: 0 };
+  }
+
+  try {
+    await ensureChatListVisible(page);
+    await page.waitForTimeout(600);
+
+    return await page.evaluate(() => {
+      function parseCount(text) {
+        const raw = String(text || '')
+          .trim()
+          .replace(/\s+/g, '');
+        if (!raw || /^\d{1,2}:\d{2}/.test(raw)) return 0;
+        const plus = raw.match(/^(\d{1,4})\+$/);
+        if (plus) return Number(plus[1]);
+        if (/^\d{1,5}$/.test(raw)) return Number(raw);
+        return 0;
+      }
+
+      function unreadFromRow(row) {
+        if (!row) return 0;
+
+        const marked = row.querySelector(
+          '[class*="counter" i], [class*="badge" i], [class*="unread" i], [class*="count" i], [class*="notif" i]'
+        );
+        const fromClass = parseCount(marked?.innerText || marked?.textContent || '');
+        if (fromClass > 0) return fromClass;
+
+        const attr =
+          row.getAttribute('data-unread') ||
+          row.getAttribute('data-count') ||
+          marked?.getAttribute('data-count') ||
+          '';
+        const fromAttr = parseCount(attr);
+        if (fromAttr > 0) return fromAttr;
+
+        const lines = String(row.innerText || '')
+          .split('\n')
+          .map((line) => line.replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const n = parseCount(lines[i]);
+          if (n > 0) return n;
+        }
+
+        if (
+          row.querySelector(
+            '[class*="unread" i], [class*="dot" i], [class*="indicator" i], [class*="mention" i]'
+          )
+        ) {
+          return 1;
+        }
+
+        return 0;
+      }
+
+      const rows = document.querySelectorAll(
+        'div.item, .scrollListContent .item, button.cell, button[class*="cell"]'
+      );
+      const seen = new Set();
+      let chats = 0;
+      let messages = 0;
+
+      for (const row of rows) {
+        const heading = row.querySelector('h3.title, h3');
+        const title = (heading?.innerText || '').trim().split('\n')[0].trim();
+        if (!title || /^(chats|чаты)$/i.test(title)) continue;
+        const key = title.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const count = unreadFromRow(row.querySelector('button.cell, button[class*="cell"]') || row);
+        if (count > 0) {
+          chats += 1;
+          messages += count;
+        }
+      }
+
+      const tabButtons = document.querySelectorAll('button, [role="tab"], [role="button"]');
+      for (const btn of tabButtons) {
+        const label = (btn.innerText || '').trim().split('\n')[0].trim();
+        if (!/^(чаты|chats)$/i.test(label)) continue;
+        const tabCount = unreadFromRow(btn);
+        if (tabCount > messages) messages = tabCount;
+        if (tabCount > 0 && chats === 0) chats = 1;
+        break;
+      }
+
+      return { chats, messages };
+    });
+  } catch (err) {
+    console.warn('непрочитанные MAX:', err.message);
+    return { chats: 0, messages: 0 };
+  }
+}
+
 module.exports = {
   MAX_HOME_URL,
   listMaxChats,
   ensureChatListVisible,
   extractMaxChatsFromPage,
   captureMaxChatListScreenshot,
+  readUnreadCounts,
   readOpenChatTitle,
   ensureChatTitleFromPage,
   resolveChatUrlByTitle,
