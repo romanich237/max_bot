@@ -417,6 +417,34 @@ function buildMaxChatsKeyboard() {
   return { inline_keyboard: rows };
 }
 
+const TG_BUTTON_TEXT_MAX = 64;
+const MAX_CHAT_PICK_BUTTONS = 40;
+
+function truncateButtonText(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  if (value.length <= TG_BUTTON_TEXT_MAX) return value;
+  return `${value.slice(0, TG_BUTTON_TEXT_MAX - 1)}…`;
+}
+
+function buildMaxChatPickKeyboard(chats = []) {
+  const rows = [];
+  const seen = new Set();
+
+  for (let i = 0; i < chats.length; i++) {
+    const title = truncateButtonText(chats[i]?.title);
+    if (!title) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push([{ text: title, callback_data: `maxchat:pick:${i}` }]);
+    if (rows.length >= MAX_CHAT_PICK_BUTTONS) break;
+  }
+
+  rows.push([{ text: '« Отмена', callback_data: 'maxchat:canceladd' }]);
+  return { inline_keyboard: rows };
+}
+
 function buildMaxChatViewKeyboard(index) {
   const urls = getMonitorChatUrls();
   const url = urls[index];
@@ -474,5 +502,6 @@ module.exports = {
   removeMonitorChatUrl,
   buildMaxChatsText,
   buildMaxChatsKeyboard,
+  buildMaxChatPickKeyboard,
   buildMaxChatViewKeyboard,
 };

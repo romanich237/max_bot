@@ -17,6 +17,7 @@ const {
   removeMonitorChatUrl,
   buildMaxChatsText,
   buildMaxChatsKeyboard,
+  buildMaxChatPickKeyboard,
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
   isRequiredChatUrl,
@@ -207,13 +208,16 @@ async function beginMaxChatAdd(chatId) {
 
   try {
     const { chats, screenshot } = await maxChatPickerHandler();
-    const result = await sendPhotoBuffer(chatId, screenshot, buildMaxChatAddCaption());
+    const keyboard = buildMaxChatPickKeyboard(chats);
+    const result = await sendPhotoBuffer(chatId, screenshot, buildMaxChatAddCaption(), undefined, {
+      reply_markup: keyboard,
+    });
     maxChatAddCache.set(key, {
       chats,
       photoMessageId: result?.result?.message_id || null,
     });
     if (!result?.ok) {
-      await sendInputPrompt(chatId, CHATS.addPromptNoScreenshot);
+      await sendInputPrompt(chatId, CHATS.addPromptNoScreenshot, { reply_markup: keyboard });
       maxChatAddCache.set(key, { chats, photoMessageId: null });
     }
   } catch (err) {
@@ -1395,6 +1399,29 @@ async function handleCallback(query) {
     waitingInput.set(String(chatId), 'maxchat:add');
     await answerCallback(query.id, 'Готовлю список…');
     void beginMaxChatAdd(chatId);
+    return;
+  }
+
+  if (data === 'maxchat:canceladd') {
+    waitingInput.delete(String(chatId));
+    await answerCallback(query.id, 'Отменено');
+    await clearMaxChatAddPrompt(chatId, query.message?.message_id);
+    await sendMessage(chatId, buildMaxChatsText(), { reply_markup: buildMaxChatsKeyboard() });
+    return;
+  }
+
+  if (data.startsWith('maxchat:pick:')) {
+    const index = Number.parseInt(data.slice('maxchat:pick:'.length), 10);
+    const cache = maxChatAddCache.get(String(chatId));
+    const chat = cache?.chats?.[index];
+    if (!chat) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+
+    waitingInput.set(String(chatId), 'maxchat:add');
+    await answerCallback(query.id, chat.title || 'Добавляю…');
+    await handleMaxChatUrlInput(chatId, chat.url || chat.title);
     return;
   }
 
