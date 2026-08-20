@@ -166,6 +166,34 @@ function adminMark(isAdmin) {
   return isAdmin ? '✅' : '❌';
 }
 
+const DOCS_URL = 'https://github.com/romanich237/max_bot';
+const BOT_ADMIN_RIGHTS = ['post_messages', 'edit_messages', 'delete_messages'];
+
+async function buildBotAdminInviteUrl() {
+  const { getBotUsername } = require('./tg-api');
+  const username = await getBotUsername();
+  if (!username) return '';
+  return `https://t.me/${encodeURIComponent(username)}?startgroup=true&admin=${BOT_ADMIN_RIGHTS.join('+')}`;
+}
+
+function buildMissingAdminText(groupTitle) {
+  return [
+    `<b>${CHATS.notAdmin.title}</b>`,
+    '',
+    ...CHATS.notAdmin.lines(groupTitle ? escapeHtml(groupTitle) : ''),
+  ].join('\n');
+}
+
+async function buildMissingAdminKeyboard() {
+  const inviteUrl = await buildBotAdminInviteUrl();
+  const rows = [];
+  if (inviteUrl) {
+    rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+  }
+  rows.push([{ text: BUTTONS.docs, url: DOCS_URL }]);
+  return { inline_keyboard: rows };
+}
+
 async function refreshTelegramChat(chatId) {
   const { getChat } = require('./tg-api');
   try {
@@ -241,7 +269,7 @@ function buildNotifyChatText(adminByChat = {}) {
   return lines.join('\n');
 }
 
-function buildNotifyChatKeyboard(adminByChat = {}) {
+async function buildNotifyChatKeyboard(adminByChat = {}) {
   const chatIds = getNotificationChatIds();
   const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
   const rows = [];
@@ -263,6 +291,15 @@ function buildNotifyChatKeyboard(adminByChat = {}) {
 
   if (hasGroup) {
     rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
+  }
+
+  const missingAdmin = chatIds.some((id) => !isPrivateChatId(id) && !adminByChat[id]?.admin);
+  if (missingAdmin) {
+    const inviteUrl = await buildBotAdminInviteUrl();
+    if (inviteUrl) {
+      rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+    }
+    rows.push([{ text: BUTTONS.docs, url: DOCS_URL }]);
   }
 
   rows.push(
@@ -344,6 +381,9 @@ module.exports = {
   buildChatInfoKeyboard,
   buildNotifyChatText,
   buildNotifyChatKeyboard,
+  buildMissingAdminText,
+  buildMissingAdminKeyboard,
+  buildBotAdminInviteUrl,
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
   setDmOnlyNotifications,

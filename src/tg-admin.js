@@ -25,6 +25,8 @@ const {
   isRequiredChatUrl,
   isChatForwardEnabled,
   setChatForwardEnabled,
+  getNotifyTarget,
+  setNotifyTarget,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
 } = require('./max-chats');
@@ -72,6 +74,7 @@ const {
   refreshNotificationChatStatuses,
   getBotAdminStatus,
   isBotAdminStatus,
+  buildMissingAdminKeyboard,
   NOTIFY_GROUP_REQUEST_ID,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
@@ -363,7 +366,9 @@ function buildStatusText() {
       if (isRequiredChatUrl(url)) marks.push('📌');
       const prefix = marks.length ? `${marks.join(' ')} ` : '• ';
       const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
-      lines.push(`${prefix}<b>${title}</b> — ${forward}`);
+      const where =
+        getNotifyTarget(url) === 'dm' ? 'ЛС' : getNotifyTarget(url) === 'group' ? 'группа' : 'ЛС+группа';
+      lines.push(`${prefix}<b>${title}</b> — ${forward} · ${where}`);
     }
   }
 
@@ -741,7 +746,7 @@ async function replyChatInfo(adminChatId, targetChatId, hintTitle, chatType) {
 async function showNotifyChats(chatId, messageId) {
   const statuses = await refreshNotificationChatStatuses();
   const text = buildNotifyChatText(statuses);
-  const extra = { reply_markup: buildNotifyChatKeyboard(statuses) };
+  const extra = { reply_markup: await buildNotifyChatKeyboard(statuses) };
   if (messageId) {
     try {
       await editMessageText(chatId, messageId, text, extra);
@@ -770,11 +775,27 @@ async function handleMyChatMember(memberUpdate) {
   if (botId && neu.user.id !== botId) return;
 
   const becameAdmin = isBotAdminStatus(neu) && !isBotAdminStatus(old);
-  if (!becameAdmin) return;
+  const joinedWithoutAdmin =
+    !isBotAdminStatus(neu) &&
+    ['member', 'restricted'].includes(neu.status) &&
+    ['left', 'kicked', 'unknown', ''].includes(old?.status || '');
 
   const known = (await refreshTelegramChat(chat.id)) || getKnownChat(chat.id);
   const title = known?.title || chat.title || String(chat.id);
   const notifyIds = getNotificationChatIds().map(String);
+
+  if (joinedWithoutAdmin) {
+    for (const adminId of getAdminChatIds()) {
+      try {
+        await sendMissingAdminNotice(adminId, chat.id);
+      } catch (err) {
+        console.warn('notify admin missing rights:', err.message);
+      }
+    }
+    return;
+  }
+
+  if (!becameAdmin) return;
   if (!notifyIds.includes(String(chat.id))) return;
 
   for (const adminId of getAdminChatIds()) {
@@ -845,6 +866,18 @@ async function showMaxChatView(chatId, messageId, index) {
 
   lines.push('');
   lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
+  const target = getNotifyTarget(url);
+  lines.push(
+    target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth
+  );
+  const destIds = getNotificationChatIds().filter((id) => {
+    if (target === 'dm') return isPrivateChatId(id);
+    if (target === 'group') return !isPrivateChatId(id);
+    return true;
+  });
+  if (isChatForwardEnabled(url) && !destIds.length) {
+    lines.push('Сейчас некуда слать — настройте ЛС или группу в «Куда слать в Telegram».');
+  }
 
   await editMessageText(chatId, messageId, lines.join('\n'), {
     reply_markup: buildMaxChatViewKeyboard(index),
@@ -968,6 +1001,21 @@ async function handleMaxChatPick(chatId, chat) {
   return false;
 }
 
+async function sendMissingAdminNotice(adminChatId, groupChatId) {
+  if (!groupChatId || isPrivateChatId(groupChatId)) return false;
+  const status = await getBotAdminStatus(groupChatId);
+  if (status.admin) return false;
+
+  const known = getKnownChat(groupChatId);
+  const title = known?.title && known.title !== 'Без названия' ? known.title : '';
+  await sendMessage(adminChatId, buildEventMessage({
+    title: CHATS.notAdmin.title,
+    status: 'fail',
+    lines: CHATS.notAdmin.lines(title ? escapeHtml(title) : ''),
+  }), { reply_markup: await buildMissingAdminKeyboard() });
+  return true;
+}
+
 async function handleChatShared(adminChatId, shared) {
   const targetChatId = String(shared.chat_id);
   const title = shared.title || null;
@@ -991,15 +1039,16 @@ async function handleChatShared(adminChatId, shared) {
         lines: [
           known?.title && known.title !== 'Без названия'
             ? `Группа: <b>${escapeHtml(known.title)}</b>`
-            : 'Группа привязана. Выдайте боту права администратора — название подтянется само.',
+            : 'Группа привязана.',
           `ID: <code>${targetChatId}</code>`,
           CHATS.bound.lines(true)[0],
           '',
           buildNotifyChatText(statuses),
         ].filter(Boolean),
       }),
-      { reply_markup: buildNotifyChatKeyboard(statuses) }
+      { reply_markup: await buildNotifyChatKeyboard(statuses) }
     );
+    await sendMissingAdminNotice(adminChatId, targetChatId);
     return;
   }
 
@@ -1562,8 +1611,11 @@ async function handleCallback(query) {
     const status = await getBotAdminStatus(targetId);
     await answerCallback(
       query.id,
-      status.admin ? 'Бот админ в группе' : 'Нет прав админа — выдайте боту администратора'
+      status.admin ? 'Бот админ в группе' : 'Нет прав админа'
     );
+    if (!status.admin) {
+      await sendMissingAdminNotice(chatId, targetId);
+    }
     await showNotifyChats(chatId, query.message.message_id);
     return;
   }
@@ -1593,7 +1645,7 @@ async function handleCallback(query) {
           buildNotifyChatText(statuses),
         ],
       }),
-      { reply_markup: buildNotifyChatKeyboard(statuses) }
+      { reply_markup: await buildNotifyChatKeyboard(statuses) }
     );
     return;
   }
@@ -1688,6 +1740,33 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data.startsWith('maxchat:where:')) {
+    const parts = data.split(':');
+    const index = Number.parseInt(parts[2], 10) || 0;
+    const target = parts[3];
+    const urls = getMonitorChatUrls();
+    const url = urls[index];
+    if (!url) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+
+    const result = setNotifyTarget(url, target);
+    if (result.error) {
+      await answerCallback(query.id, 'Ошибка');
+      return;
+    }
+
+    const labels = {
+      dm: 'Только в ЛС',
+      group: 'Только в группу',
+      both: 'В ЛС и группу',
+    };
+    await answerCallback(query.id, labels[result.target] || 'Сохранено');
+    await refreshMaxChatPanel(chatId, query, index);
+    return;
+  }
+
   if (data.startsWith('maxchat:remove:')) {
     const index = Number.parseInt(data.slice('maxchat:remove:'.length), 10) || 0;
     const urls = getMonitorChatUrls();
@@ -1758,12 +1837,10 @@ async function handleCallback(query) {
           buildNotifyChatText(statuses),
         ].filter(Boolean),
       }),
-      { reply_markup: buildNotifyChatKeyboard(statuses) }
+      { reply_markup: await buildNotifyChatKeyboard(statuses) }
     );
+    await sendMissingAdminNotice(chatId, targetChatId);
     return;
-  }
-
-  if (data === 'status') {
     await answerCallback(query.id, 'Обновлено');
     await editMessageText(chatId, query.message.message_id, buildStatusText(), {
       reply_markup: buildMenuKeyboard(),

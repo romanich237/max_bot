@@ -12,6 +12,7 @@
     "monitorChatUrls": [],
     "chatTitles": {},
     "disabledRequiredChats": [],
+    "notifyTargets": {},
     "skipOwnMessages": true,
     "ownAuthorNames": [],
     "currentDisplayName": "",

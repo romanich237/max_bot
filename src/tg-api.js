@@ -231,6 +231,11 @@ async function getBotUserId(tokenOverride) {
   return data.ok ? data.result.id : null;
 }
 
+async function getBotUsername(tokenOverride) {
+  const data = await getMe(tokenOverride);
+  return String(data?.result?.username || '').replace(/^@/, '');
+}
+
 async function getChatMember(chatId, userId, tokenOverride) {
   return api('getChatMember', { chat_id: chatId, user_id: userId }, tokenOverride);
 }
@@ -255,6 +260,7 @@ module.exports = {
   getChat,
   getMe,
   getBotUserId,
+  getBotUsername,
   getChatMember,
   pollUpdates,
 };

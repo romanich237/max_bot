@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram, getNotificationChatIds, getMaxDisplayName } = require('./config');
+const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName } = require('./config');
 const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
@@ -90,9 +90,13 @@ function replyMarkupForChat(chatId, replyMarkup) {
   return replyMarkup || null;
 }
 
+function notifyChatIds(sendContext = {}) {
+  return getNotificationChatIdsForMaxChat(sendContext.maxChatUrl);
+}
+
 function prepareForward(message, maxChatUrl, isCatchUp) {
   const storeId = replyStore.put(message, maxChatUrl);
-  const chatIds = getNotificationChatIds();
+  const chatIds = getNotificationChatIdsForMaxChat(maxChatUrl);
   const replyToByChat = replyStore.resolveReplyToByChat(maxChatUrl, message.reply, chatIds);
   const useNativeReply = Boolean(message.reply && Object.keys(replyToByChat).length);
   const replyMarkup = isCatchUp
@@ -102,7 +106,7 @@ function prepareForward(message, maxChatUrl, isCatchUp) {
         inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${storeId}` }]],
       };
 
-  return { storeId, replyToByChat, useNativeReply, replyMarkup };
+  return { storeId, replyToByChat, useNativeReply, replyMarkup, maxChatUrl };
 }
 
 function buildReplyMarkup(message, maxChatUrl) {
@@ -169,7 +173,7 @@ function recordSendResult(chatId, data, sendContext, messageIdExtractor) {
 
 async function callTelegram(method, fields, files = {}, sendContext = {}) {
   const { token } = getTelegram();
-  const chatIds = getNotificationChatIds();
+  const chatIds = notifyChatIds(sendContext);
   const url = `https://api.telegram.org/bot${token}/${method}`;
   let success = true;
   const baseFields = { ...fields };
@@ -230,7 +234,7 @@ function endpointForMedia(type) {
 
 async function sendPhotoGroup(message, photoFiles, isCatchUp, sendContext, meta = {}) {
   const { token } = getTelegram();
-  const chatIds = getNotificationChatIds();
+  const chatIds = notifyChatIds(sendContext);
   const caption = buildMessageText(message, isCatchUp, meta, sendContext);
 
   await Promise.all(
@@ -326,7 +330,7 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, sendConte
 
   if (sendContext.replyMarkup && method === 'sendVoice') {
     const { token } = getTelegram();
-    const chatIds = getNotificationChatIds();
+    const chatIds = notifyChatIds(sendContext);
     await Promise.all(
       chatIds.map((chatId) => sendReplyPrompt(chatId, message, sendContext.replyMarkup, token))
     );
@@ -363,7 +367,7 @@ async function sendToTelegram(message, options = {}) {
       await sendVoiceWithContext(message, media, !captionUsed, isCatchUp, sendContext, meta);
       if (!captionUsed && sendContext.replyMarkup) {
         const { token } = getTelegram();
-        const chatIds = getNotificationChatIds();
+        const chatIds = notifyChatIds(sendContext);
         await Promise.all(
           chatIds.map((chatId) => sendReplyPrompt(chatId, message, sendContext.replyMarkup, token))
         );
