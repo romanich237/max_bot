@@ -27,6 +27,7 @@ const {
   setChatForwardEnabled,
   getNotifyTarget,
   setNotifyTarget,
+  cycleNotifyTarget,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
 } = require('./max-chats');
@@ -1751,7 +1752,7 @@ async function handleCallback(query) {
       return;
     }
 
-    const result = setNotifyTarget(url, target);
+    const result = target ? setNotifyTarget(url, target) : cycleNotifyTarget(url);
     if (result.error) {
       await answerCallback(query.id, 'Ошибка');
       return;

@@ -158,8 +158,8 @@ function removeNotifyTarget(url) {
 function chatMenuLabel(url, defaultUrl = getDefaultChatUrl()) {
   const star = url === defaultUrl ? '⭐ ' : '';
   const pin = isRequiredChatUrl(url) ? '📌 ' : '';
-  const title = getChatTitle(url) || truncateUrl(url, 28);
-  return `${star}${pin}${title}`;
+  const title = getChatTitle(url) || truncateUrl(url, 22);
+  return truncateButtonText(`${star}${pin}${title}`, 40);
 }
 
 function truncateUrl(url, max = 36) {
@@ -434,8 +434,21 @@ function buildMaxChatsText() {
     lines.push('Сейчас: только чаты из списка.');
   }
   lines.push('⭐ основной · 📌 удалить нельзя');
-  lines.push('Куда слать: ЛС, группа или оба — кнопки под чатом.');
   return lines.join('\n');
+}
+
+function cycleNotifyTarget(url) {
+  const order = ['dm', 'group', 'both'];
+  const current = getNotifyTarget(url);
+  const i = order.indexOf(current);
+  const next = order[i < 0 ? 0 : (i + 1) % order.length];
+  return setNotifyTarget(url, next);
+}
+
+function notifyTargetCycleLabel(target) {
+  if (target === 'dm') return '💬 ЛС';
+  if (target === 'group') return '📣 Группа';
+  return '💬📣';
 }
 
 function buildNotifyTargetButtons(url, index) {
@@ -443,7 +456,7 @@ function buildNotifyTargetButtons(url, index) {
   const options = [
     { id: 'dm', text: 'ЛС' },
     { id: 'group', text: 'Группа' },
-    { id: 'both', text: 'ЛС+группа' },
+    { id: 'both', text: 'Оба' },
   ];
 
   return options.map((item) => {
@@ -457,22 +470,30 @@ function buildNotifyTargetButtons(url, index) {
   });
 }
 
-function buildMaxChatActionButtons(url, index, urls, defaultUrl) {
+function buildMaxChatActionButtons(url, index, urls, defaultUrl, options = {}) {
+  const compact = options.compact !== false;
   const actions = [];
   const forwardOn = isChatForwardEnabled(url);
 
-  if (url !== defaultUrl) {
-    actions.push({ text: 'Сделать основным', callback_data: `maxchat:default:${index}` });
-  }
-
   actions.push({
-    text: forwardOn ? 'Пересылка: ✅' : 'Пересылка: ❌',
+    text: forwardOn ? 'Слать ✅' : 'Слать ❌',
     callback_data: `maxchat:forward:${index}`,
     style: forwardOn ? 'success' : 'danger',
   });
 
+  if (compact) {
+    actions.push({
+      text: notifyTargetCycleLabel(getNotifyTarget(url)),
+      callback_data: `maxchat:where:${index}`,
+    });
+  }
+
+  if (url !== defaultUrl) {
+    actions.push({ text: '⭐', callback_data: `maxchat:default:${index}` });
+  }
+
   if (!isRequiredChatUrl(url) && urls.length > 1) {
-    actions.push({ text: '🗑 Удалить', callback_data: `maxchat:remove:${index}` });
+    actions.push({ text: '🗑', callback_data: `maxchat:remove:${index}` });
   }
 
   return actions;
@@ -485,7 +506,7 @@ function buildMaxChatsKeyboard() {
   const rows = [
     [
       {
-        text: all ? 'Все чаты MAX: ✅' : 'Все чаты MAX: ❌',
+        text: all ? 'Все чаты ✅' : 'Все чаты ❌',
         callback_data: 'maxchat:toggleAll',
         style: all ? 'success' : 'danger',
       },
@@ -499,24 +520,24 @@ function buildMaxChatsKeyboard() {
         callback_data: `maxchat:view:${index}`,
       },
     ]);
-    const actions = buildMaxChatActionButtons(url, index, urls, defaultUrl);
-    if (actions.length) rows.push(actions);
-    rows.push(buildNotifyTargetButtons(url, index));
+    rows.push(buildMaxChatActionButtons(url, index, urls, defaultUrl));
   });
 
-  rows.push([{ text: '➕ Добавить чат', callback_data: 'maxchat:add' }]);
-  rows.push([{ text: '« В меню', callback_data: 'discover:menu' }]);
+  rows.push([
+    { text: '➕ Добавить', callback_data: 'maxchat:add' },
+    { text: '« Меню', callback_data: 'discover:menu' },
+  ]);
   return { inline_keyboard: rows };
 }
 
 const TG_BUTTON_TEXT_MAX = 64;
 const MAX_CHAT_PICK_BUTTONS = 40;
 
-function truncateButtonText(text) {
+function truncateButtonText(text, max = TG_BUTTON_TEXT_MAX) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   if (!value) return '';
-  if (value.length <= TG_BUTTON_TEXT_MAX) return value;
-  return `${value.slice(0, TG_BUTTON_TEXT_MAX - 1)}…`;
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1)}…`;
 }
 
 function buildMaxChatPickKeyboard(chats = []) {
@@ -547,7 +568,7 @@ function buildMaxChatViewKeyboard(index) {
   const url = urls[index];
   const defaultUrl = getDefaultChatUrl();
   const rows = [];
-  const actions = url ? buildMaxChatActionButtons(url, index, urls, defaultUrl) : [];
+  const actions = url ? buildMaxChatActionButtons(url, index, urls, defaultUrl, { compact: false }) : [];
   if (actions.length) rows.push(actions);
   if (url) rows.push(buildNotifyTargetButtons(url, index));
   rows.push([{ text: '« К списку', callback_data: 'maxchat:list' }]);
@@ -579,6 +600,7 @@ module.exports = {
   setRequiredChatForwardEnabled,
   getNotifyTarget,
   setNotifyTarget,
+  cycleNotifyTarget,
   notifyTargetLabel,
   ensureRequiredChats,
   scopedMessageKey,
