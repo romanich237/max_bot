@@ -1,9 +1,18 @@
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
+const { ensurePackageJsonVersion } = require('../src/app-version');
 
 const root = path.join(__dirname, '..');
 const output = path.join(root, 'max-deploy.zip');
+const pkgFile = path.join(root, 'package.json');
+
+const fixed = ensurePackageJsonVersion(pkgFile);
+if (fixed.changed) {
+  console.log(`Версия исправлена: ${fixed.from} → ${fixed.to} (после x.y.10 сразу x.(y+1).0, без .11/.12)`);
+} else {
+  console.log(`Версия: ${fixed.version}`);
+}
 
 const include = [
   'config.json',

@@ -7,6 +7,7 @@ const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('./config');
 const { sendMessage, editMessageText, deleteMessage } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { UPDATES } = require('./bot-texts');
+const { formatAppVersion, ensurePackageJsonVersion } = require('./app-version');
 const {
   schedulePm2Restarts,
   APP_NAME,
@@ -133,12 +134,6 @@ function escapeHtml(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-}
-
-function formatAppVersion(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  return raw.startsWith('v') ? raw : `v${raw}`;
 }
 
 function isGitSha(value) {
@@ -802,6 +797,10 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
     const zip = new AdmZip(zipPath);
     zip.extractAllTo(extractDir, true);
     copyTree(findExtractedRoot(extractDir), ROOT);
+    const fixed = ensurePackageJsonVersion(path.join(ROOT, 'package.json'));
+    if (fixed.changed) {
+      console.log(`auto-update: версия ${fixed.from} → ${fixed.to} (patch после 10 запрещён)`);
+    }
 
     if (isGitRepo()) {
       try {
@@ -827,6 +826,11 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
 }
 
 async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) {
+  const fixed = ensurePackageJsonVersion(path.join(ROOT, 'package.json'));
+  if (fixed.changed) {
+    console.log(`auto-update: версия ${fixed.from} → ${fixed.to} (patch после 10 запрещён)`);
+  }
+
   run('npm install --omit=dev --ignore-scripts');
 
   const toVersion = readLocalPackageVersion();
