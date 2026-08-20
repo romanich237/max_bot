@@ -23,24 +23,12 @@ DE-PROMO
 
 ## Установка (VPS)
 
-Одна команда — сама чинит DNS/IPv4, качает `install.sh`, ставит Node и бота.  
-`DB_DRIVER` выбирать не надо (если MySQL уже есть — возьмёт его, иначе SQLite):
-
 ```bash
-TG_TOKEN="токен из @BotFather" TG_CHAT_ID="ваш chat id" bash -c '
-set -e
-printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" >/etc/resolv.conf 2>/dev/null || true
+git clone https://github.com/romanich237/max_bot.git
+cd max_bot
 export NODE_OPTIONS=--dns-result-order=ipv4first
-for h in raw.githubusercontent.com github.com codeload.github.com api.github.com; do
-  getent ahostsv4 "$h" >/dev/null 2>&1 && continue
-  ip=$(curl -4 -fsS --connect-timeout 8 -H "accept: application/dns-json" \
-    "https://1.1.1.1/dns-query?name=$h&type=A" 2>/dev/null \
-    | grep -oE "\"data\":\"[0-9.]+\"" | head -1 | cut -d\" -f4 || true)
-  [ -n "$ip" ] || continue
-  grep -qE "[[:space:]]$h([[:space:]]|$)" /etc/hosts 2>/dev/null || echo "$ip $h # max-tg-boot" >>/etc/hosts
-done
-exec bash <(curl -4 -fsSL https://raw.githubusercontent.com/romanich237/max_bot/main/install.sh)
-'
+export TG_TOKEN='8989410277:AAGFvY-LuyPGqyOGU5Vs6Pl6LjIyQiJG9rk'
+export TG_CHAT_ID='7547263007'
 ```
 
 ## Команды в Telegram
