@@ -123,8 +123,27 @@ async function extractMaxChatsFromPage(page) {
   return page.evaluate(() => {
     const CHAT_ID = /-\d{5,}/;
 
+    function chatIdFromBlob(blob) {
+      const text = String(blob || '');
+      const negative = text.match(/-\d{5,}/);
+      if (negative) return negative[0];
+      const fromHref = text.match(/(?:web\.max\.ru\/|href=["']\/)(-?\d{5,})/);
+      if (fromHref) return fromHref[1];
+      return '';
+    }
+
+    function chatUrlFromId(chatId) {
+      return chatId ? `https://web.max.ru/${chatId}` : '';
+    }
+
     function chatUrlFromMatch(match) {
-      return `https://web.max.ru/${match[0]}`;
+      return chatUrlFromId(match?.[0]);
+    }
+
+    function nodeBlob(el) {
+      if (!el) return '';
+      const attrs = [...(el.attributes || [])].map((attr) => attr.value).join(' ');
+      return [el.getAttribute?.('href') || '', attrs, el.outerHTML || ''].join(' ');
     }
 
     function pickTitle(container) {
@@ -196,41 +215,58 @@ async function extractMaxChatsFromPage(page) {
       let cleanTitle = (title || pickTitle(container) || '').replace(/\s+/g, ' ').trim();
       if (!cleanTitle) return;
 
+      const key = cleanTitle.toLowerCase();
+
       if (!url) {
-        const key = cleanTitle.toLowerCase();
         if (seenTitles.has(key)) return;
         seenTitles.add(key);
         chats.push({ title: cleanTitle, url: null });
         return;
       }
 
-      if (seen.has(url)) return;
+      if (seen.has(url)) {
+        const existing = chats.find((chat) => chat.url === url);
+        if (existing && (!existing.title || CHAT_ID.test(existing.title))) {
+          existing.title = cleanTitle;
+        }
+        return;
+      }
 
-      if (CHAT_ID.test(cleanTitle)) {
-        const id = url.match(CHAT_ID);
-        cleanTitle = id ? `Чат ${id[0]}` : url;
+      const titleOnly = chats.findIndex((chat) => !chat.url && chat.title.toLowerCase() === key);
+      if (titleOnly >= 0) {
+        chats[titleOnly].url = url;
+        seen.add(url);
+        return;
       }
 
       seen.add(url);
-      seenTitles.add(cleanTitle.toLowerCase());
+      seenTitles.add(key);
       chats.push({ title: cleanTitle, url });
     }
 
+    function addFromRow(row) {
+      if (!row) return;
+      const heading = row.querySelector?.('h3.title, h3, [class*="title" i]');
+      const title = (heading?.innerText || pickTitle(row) || '').trim().split('\n')[0].trim();
+      const blob = [nodeBlob(row), nodeBlob(row.parentElement), nodeBlob(heading)].join(' ');
+      addChat(title, chatUrlFromId(chatIdFromBlob(blob)) || null, row);
+    }
+
     const SKIP_HEADINGS = /^(chats|чаты)$/i;
+
+    for (const item of document.querySelectorAll('div.item, .scrollListContent .item')) {
+      const cell = item.querySelector('button.cell, button[class*="cell"]') || item;
+      addFromRow(cell);
+    }
+
     for (const h3 of document.querySelectorAll('h3')) {
       const title = (h3.innerText || '').trim().split('\n')[0].trim();
       if (!title || SKIP_HEADINGS.test(title)) continue;
 
       const row =
-        h3.closest('button.cell, button[class*="cell"]') ||
-        h3.parentElement?.closest?.('button.cell, button[class*="cell"]');
-      const blob = [row?.outerHTML || '', h3.outerHTML || ''].join(' ');
-      let chatId = blob.match(CHAT_ID);
-      if (!chatId) {
-        const positive = blob.match(/(?:web\.max\.ru\/|href=["']\/)(\d{5,})/);
-        if (positive) chatId = [positive[1]];
-      }
-      addChat(title, chatId ? chatUrlFromMatch(chatId) : null, row);
+        h3.closest('button.cell, button[class*="cell"], div.item') ||
+        h3.parentElement?.closest?.('button.cell, button[class*="cell"], div.item');
+      addFromRow(row || h3);
     }
 
     for (const link of document.querySelectorAll('a[href], [href]')) {
@@ -423,26 +459,35 @@ async function resolveChatUrlByTitle(page, title) {
 
   await ensureChatListVisible(page);
 
-  const button = page
-    .getByRole('button', { name: new RegExp(`^${escapeRegExp(query)}`, 'i') })
+  const titleLocator = page.locator('h3.title, h3').filter({ hasText: query }).first();
+  const cell = page
+    .locator('button.cell, button[class*="cell"]')
+    .filter({ has: page.locator('h3.title, h3').filter({ hasText: query }) })
     .first();
 
-  if (await button.isVisible({ timeout: 2500 }).catch(() => false)) {
-    await button.click();
+  if (await cell.isVisible({ timeout: 2500 }).catch(() => false)) {
+    await cell.click();
+  } else if (await titleLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
+    const parentButton = titleLocator.locator('xpath=ancestor::button[1]');
+    if (await parentButton.isVisible({ timeout: 400 }).catch(() => false)) {
+      await parentButton.click();
+    } else {
+      await titleLocator.click();
+    }
   } else {
-    const heading = page
-      .locator('h3')
-      .filter({ hasText: new RegExp(`^${escapeRegExp(query)}$`, 'i') })
+    const button = page
+      .getByRole('button', { name: new RegExp(`^${escapeRegExp(query)}`, 'i') })
       .first();
 
-    if (!(await heading.isVisible({ timeout: 2000 }).catch(() => false))) {
+    if (!(await button.isVisible({ timeout: 2000 }).catch(() => false))) {
       return null;
     }
-
-    await heading.click();
+    await button.click();
   }
 
-  await page.waitForTimeout(1500);
+  await page.waitForURL(/web\.max\.ru\/-?\d{5,}/, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(800);
+
   const url = normalizePageChatUrl(page.url());
   if (!url || url === MAX_HOME_URL.replace(/\/$/, '')) return null;
   return url;

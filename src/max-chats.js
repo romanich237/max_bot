@@ -429,15 +429,20 @@ function truncateButtonText(text) {
 
 function buildMaxChatPickKeyboard(chats = []) {
   const rows = [];
-  const seen = new Set();
+  const chosen = new Map();
 
   for (let i = 0; i < chats.length; i++) {
     const title = truncateButtonText(chats[i]?.title);
     if (!title) continue;
     const key = title.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push([{ text: title, callback_data: `maxchat:pick:${i}` }]);
+    const prev = chosen.get(key);
+    if (!prev || (!prev.url && chats[i].url)) {
+      chosen.set(key, { i, title, url: chats[i].url });
+    }
+  }
+
+  for (const item of chosen.values()) {
+    rows.push([{ text: item.title, callback_data: `maxchat:pick:${item.i}` }]);
     if (rows.length >= MAX_CHAT_PICK_BUTTONS) break;
   }
 

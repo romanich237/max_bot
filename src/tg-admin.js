@@ -15,6 +15,7 @@ const {
   setDefaultChatUrl,
   addMonitorChatUrl,
   removeMonitorChatUrl,
+  setChatTitle,
   buildMaxChatsText,
   buildMaxChatsKeyboard,
   buildMaxChatPickKeyboard,
@@ -754,6 +755,11 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
     }
   }
 
+  if (!resolved.error && !resolved.title && chats.length) {
+    const fromCache = chats.find((item) => item.url && item.url === resolved.url);
+    if (fromCache?.title) resolved.title = fromCache.title;
+  }
+
   if (resolved.error) {
     await deleteMessageQuiet(chatId, userMessageId);
     const hint =
@@ -798,6 +804,32 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
     { reply_markup: buildMaxChatsKeyboard() }
   );
   return true;
+}
+
+async function handleMaxChatPick(chatId, chat) {
+  let url = String(chat?.url || '').trim();
+  const title = String(chat?.title || '').trim();
+
+  if (!url && title && maxChatResolveHandler) {
+    try {
+      url = String((await maxChatResolveHandler(title)) || '').trim();
+    } catch (err) {
+      console.warn('maxchat pick:', err.message);
+      url = '';
+    }
+  }
+
+  if (url) {
+    if (title) setChatTitle(url, title);
+    return handleMaxChatUrlInput(chatId, url);
+  }
+
+  if (title) {
+    return handleMaxChatUrlInput(chatId, title);
+  }
+
+  await sendMessage(chatId, CHATS.addNotFound);
+  return false;
 }
 
 async function handleChatShared(adminChatId, shared) {
@@ -1421,7 +1453,7 @@ async function handleCallback(query) {
 
     waitingInput.set(String(chatId), 'maxchat:add');
     await answerCallback(query.id, chat.title || 'Добавляю…');
-    await handleMaxChatUrlInput(chatId, chat.url || chat.title);
+    await handleMaxChatPick(chatId, chat);
     return;
   }
 
