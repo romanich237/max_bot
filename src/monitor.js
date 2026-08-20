@@ -60,6 +60,33 @@ function logMessage(message, prefix) {
   console.log(`${prefix}: ${message.author}${replyInfo}: "${preview}"${mediaInfo}`);
 }
 
+function keysMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.endsWith(`::${b}`) || b.endsWith(`::${a}`);
+}
+
+function isMessageSeen(message, seenKeys) {
+  const messageKey = String(message.key || '');
+  if (!messageKey) return false;
+  if (seenKeys.has(messageKey)) return true;
+  for (const key of seenKeys) {
+    if (keysMatch(String(key), messageKey)) return true;
+  }
+  return false;
+}
+
+async function wasAlreadyForwarded(message, seenKeys) {
+  if (isMessageSeen(message, seenKeys)) return true;
+  if (!db.isEnabled() || typeof db.wasForwarded !== 'function') return false;
+  try {
+    return Boolean(await db.wasForwarded(message));
+  } catch (err) {
+    console.warn('проверка отправки в TG:', err.message);
+    return false;
+  }
+}
+
 async function persistMessage(message, options = {}) {
   if (!db.isEnabled()) return;
 
@@ -103,7 +130,13 @@ function createChatStates(state) {
   const chatStates = new Map();
   for (const url of urls) {
     const prefix = chatIdFromUrl(url);
-    const seenKeys = new Set([...globalSeen].filter((key) => key.startsWith(`${prefix}::`)));
+    const seenKeys = new Set(
+      [...globalSeen].filter((key) => {
+        if (!prefix) return true;
+        if (key.startsWith(`${prefix}::`)) return true;
+        return !/^-?\d{5,}::/.test(key);
+      })
+    );
     chatStates.set(url, {
       url,
       seenKeys,
@@ -183,6 +216,10 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   if (isStartup && forwardOnStart > 0) {
     const recent = scoped.filter(shouldForward).slice(-forwardOnStart);
     for (const message of recent) {
+      if (await wasAlreadyForwarded(message, chatState.seenKeys)) {
+        logMessage(message, `Старт · уже в чате TG (${chatLabelFromUrl(chatUrl)})`);
+        continue;
+      }
       logMessage(message, `Старт → TG (${chatLabelFromUrl(chatUrl)})`);
       await forwardMessage(page, message, true, chatUrl);
     }
@@ -216,6 +253,10 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     if (!shouldForward(message)) {
       logMessage(message, `Пропуск (моё) · ${chatLabelFromUrl(chatUrl)}`);
       await persistMessage(message, { forwarded: false });
+      continue;
+    }
+    if (await wasAlreadyForwarded(message, chatState.seenKeys)) {
+      logMessage(message, `Пропуск (уже в чате TG) · ${chatLabelFromUrl(chatUrl)}`);
       continue;
     }
     logMessage(message, `Новое · ${chatLabelFromUrl(chatUrl)}`);

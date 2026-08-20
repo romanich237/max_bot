@@ -30,5 +30,6 @@ module.exports = {
   saveSeenKeys: delegate('saveSeenKeys'),
   saveSnapshot: delegate('saveSnapshot'),
   saveMessage: delegate('saveMessage'),
+  wasForwarded: delegate('wasForwarded'),
   close: delegate('close'),
 };

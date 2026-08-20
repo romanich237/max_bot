@@ -67,6 +67,10 @@ const {
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
   setDmOnlyNotifications,
+  refreshTelegramChat,
+  refreshNotificationChatStatuses,
+  getBotAdminStatus,
+  isBotAdminStatus,
   NOTIFY_GROUP_REQUEST_ID,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
@@ -682,10 +686,77 @@ async function replyChatInfo(adminChatId, targetChatId, hintTitle, chatType) {
   });
 }
 
+async function showNotifyChats(chatId, messageId) {
+  const statuses = await refreshNotificationChatStatuses();
+  const text = buildNotifyChatText(statuses);
+  const extra = { reply_markup: buildNotifyChatKeyboard(statuses) };
+  if (messageId) {
+    try {
+      await editMessageText(chatId, messageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('showNotifyChats edit:', err.message);
+    }
+  }
+  await sendMessage(chatId, text, extra);
+}
+
+async function handleMyChatMember(memberUpdate) {
+  const chat = memberUpdate?.chat;
+  const neu = memberUpdate?.new_chat_member;
+  const old = memberUpdate?.old_chat_member;
+  if (!chat?.id || !neu?.user) return;
+
+  if (chat.title || chat.username) {
+    recordChat(chat);
+  }
+
+  if (!neu.user.is_bot) return;
+
+  const { getBotUserId } = require('./tg-api');
+  const botId = await getBotUserId();
+  if (botId && neu.user.id !== botId) return;
+
+  const becameAdmin = isBotAdminStatus(neu) && !isBotAdminStatus(old);
+  if (!becameAdmin) return;
+
+  const known = (await refreshTelegramChat(chat.id)) || getKnownChat(chat.id);
+  const title = known?.title || chat.title || String(chat.id);
+  const notifyIds = getNotificationChatIds().map(String);
+  if (!notifyIds.includes(String(chat.id))) return;
+
+  for (const adminId of getAdminChatIds()) {
+    try {
+      await sendMessage(
+        adminId,
+        buildEventMessage({
+          title: 'Группа подключена',
+          status: 'done',
+          lines: [
+            'Бот стал администратором.',
+            `Группа: <b>${escapeHtml(title)}</b>`,
+            `ID: <code>${chat.id}</code>`,
+          ],
+        })
+      );
+    } catch (err) {
+      console.warn('notify admin after promote:', err.message);
+    }
+  }
+}
+
 async function showMaxChats(chatId, messageId) {
-  await editMessageText(chatId, messageId, buildMaxChatsText(), {
-    reply_markup: buildMaxChatsKeyboard(),
-  });
+  const text = buildMaxChatsText();
+  const extra = { reply_markup: buildMaxChatsKeyboard() };
+  if (messageId) {
+    try {
+      await editMessageText(chatId, messageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('showMaxChats edit:', err.message);
+    }
+  }
+  await sendMessage(chatId, text, extra);
 }
 
 async function showMaxChatView(chatId, messageId, index) {
@@ -843,22 +914,26 @@ async function handleChatShared(adminChatId, shared) {
   });
 
   if (shared.request_id === NOTIFY_GROUP_REQUEST_ID) {
-    const known = getKnownChat(targetChatId);
     const { chatIds: boundChatIds } = bindNotificationChat(targetChatId, adminChatId);
+    await refreshTelegramChat(targetChatId);
+    const statuses = await refreshNotificationChatStatuses();
+    const known = getKnownChat(targetChatId);
     await sendMessage(
       adminChatId,
       buildEventMessage({
         title: CHATS.bound.title,
         status: 'done',
         lines: [
-          known?.title || title ? `Группа: <b>${escapeHtml(known?.title || title)}</b>` : null,
+          known?.title && known.title !== 'Без названия'
+            ? `Группа: <b>${escapeHtml(known.title)}</b>`
+            : 'Группа привязана. Выдайте боту права администратора — название подтянется само.',
           `ID: <code>${targetChatId}</code>`,
           CHATS.bound.lines(true)[0],
           '',
-          buildNotifyChatText(),
+          buildNotifyChatText(statuses),
         ].filter(Boolean),
       }),
-      { reply_markup: buildMenuKeyboard() }
+      { reply_markup: buildNotifyChatKeyboard(statuses) }
     );
     return;
   }
@@ -1378,9 +1453,19 @@ async function handleCallback(query) {
 
   if (data === 'action:notifyChat') {
     await answerCallback(query.id, 'Чат уведомлений');
-    await editMessageText(chatId, query.message.message_id, buildNotifyChatText(), {
-      reply_markup: buildNotifyChatKeyboard(),
-    });
+    await showNotifyChats(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data.startsWith('notify:chat:')) {
+    const targetId = data.slice('notify:chat:'.length);
+    await refreshTelegramChat(targetId);
+    const status = await getBotAdminStatus(targetId);
+    await answerCallback(
+      query.id,
+      status.admin ? 'Бот админ в группе' : 'Нет прав админа — выдайте боту администратора'
+    );
+    await showNotifyChats(chatId, query.message.message_id);
     return;
   }
 
@@ -1395,6 +1480,7 @@ async function handleCallback(query) {
   if (data === 'notify:dmOnly') {
     const { chatIds: boundChatIds } = setDmOnlyNotifications(chatId);
     await answerCallback(query.id, 'Только ЛС');
+    const statuses = await refreshNotificationChatStatuses();
     await editMessageText(
       chatId,
       query.message.message_id,
@@ -1405,10 +1491,10 @@ async function handleCallback(query) {
           CHATS.notifyDmMode,
           `Личные сообщения: <code>${boundChatIds[0]}</code>`,
           '',
-          buildNotifyChatText(),
+          buildNotifyChatText(statuses),
         ],
       }),
-      { reply_markup: buildNotifyChatKeyboard() }
+      { reply_markup: buildNotifyChatKeyboard(statuses) }
     );
     return;
   }
@@ -1481,7 +1567,7 @@ async function handleCallback(query) {
     }
 
     await answerCallback(query.id, 'Основной чат');
-    await showMaxChatView(chatId, query.message.message_id, index);
+    await showMaxChats(chatId, query.message.message_id);
     return;
   }
 
@@ -1497,7 +1583,7 @@ async function handleCallback(query) {
     const next = !isChatForwardEnabled(url);
     setRequiredChatForwardEnabled(url, next);
     await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
-    await showMaxChatView(chatId, query.message.message_id, index);
+    await showMaxChats(chatId, query.message.message_id);
     return;
   }
 
@@ -1551,8 +1637,10 @@ async function handleCallback(query) {
 
   if (data.startsWith('bindchat:')) {
     const targetChatId = data.slice('bindchat:'.length);
-    const known = getKnownChat(targetChatId);
     const { chatIds: boundChatIds } = bindNotificationChat(targetChatId, chatId);
+    await refreshTelegramChat(targetChatId);
+    const known = getKnownChat(targetChatId);
+    const statuses = await refreshNotificationChatStatuses();
     await answerCallback(query.id, 'Привязано');
     await sendMessage(
       chatId,
@@ -1565,9 +1653,11 @@ async function handleCallback(query) {
           boundChatIds.length > 1
             ? CHATS.bound.lines(true)[0]
             : CHATS.bound.lines(false)[0],
+          '',
+          buildNotifyChatText(statuses),
         ].filter(Boolean),
       }),
-      { reply_markup: buildMenuKeyboard() }
+      { reply_markup: buildNotifyChatKeyboard(statuses) }
     );
     return;
   }
@@ -1646,6 +1736,7 @@ function startTelegramAdmin() {
 
   return pollUpdates(async (update) => {
     recordChatFromUpdate(update);
+    if (update.my_chat_member) await handleMyChatMember(update.my_chat_member);
     if (update.message) await handleMessage(update.message);
     if (update.callback_query) await handleCallback(update.callback_query);
   }, {

@@ -222,12 +222,22 @@ function isDnsOrNetworkError(err) {
 }
 
 function hasLocalChanges() {
-  const status = runQuiet('git status --porcelain');
-  return status
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .some((line) => !line.endsWith('config.json') && !line.includes(' package-lock.json'));
+  if (!isGitRepo()) return false;
+  try {
+    const status = runQuiet('git status --porcelain');
+    return status
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !line.startsWith('??'))
+      .some((line) => {
+        const file = line.replace(/^[A-Z?!\s]{1,3}\s+/, '').split(' -> ').pop();
+        const name = path.basename(file || '');
+        return !PRESERVE_ON_ARCHIVE.has(name) && !name.endsWith('package-lock.json');
+      });
+  } catch {
+    return false;
+  }
 }
 
 async function notifyAdmins(text) {
@@ -746,11 +756,8 @@ async function checkForUpdates(options = {}) {
     }
 
     if (isGitRepo() && hasLocalChanges()) {
-      console.error('auto-update: есть локальные изменения, обновление пропущено');
-      if (notify) {
-        await notifyAdmins(buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
-      }
-      return { status: 'skipped', reason: 'local-changes' };
+      console.warn('auto-update: git грязный (zip/npm) — обновляю архивом, config/data не трогаю');
+      remoteInfo = { sha: remoteInfo.sha || '', via: 'api' };
     }
 
     const fromSha = String(local || fromVersion || 'local').slice(0, 7);

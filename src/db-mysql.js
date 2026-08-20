@@ -200,6 +200,34 @@ async function saveMessage(message, options = {}) {
   }
 }
 
+async function wasForwarded(message) {
+  const p = await getPool();
+  const key = String(message.key || '');
+  if (!key) return false;
+
+  const [exact] = await p.query(
+    'SELECT 1 AS ok FROM messages WHERE forwarded = 1 AND message_key = ? LIMIT 1',
+    [key]
+  );
+  if (exact.length) return true;
+
+  const [rows] = await p.query(
+    `SELECT message_key, body FROM messages
+     WHERE forwarded = 1 AND author = ? AND IFNULL(time_str, '') = ?
+     ORDER BY id DESC LIMIT 30`,
+    [message.author || '', message.time || '']
+  );
+
+  const body = message.body || '';
+  return rows.some(
+    (row) =>
+      (row.body || '') === body &&
+      (row.message_key === key ||
+        String(row.message_key).endsWith(`::${key}`) ||
+        key.endsWith(`::${row.message_key}`))
+  );
+}
+
 async function close() {
   if (pool) {
     await pool.end();
@@ -216,5 +244,6 @@ module.exports = {
   saveSeenKeys,
   saveSnapshot,
   saveMessage,
+  wasForwarded,
   close,
 };

@@ -386,6 +386,9 @@ function buildMaxChatsText() {
 
   lines.push(
     '',
+    'Кнопки под каждым чатом: сделать основным, пересылка, удалить.',
+    'Название чата открывает карточку.',
+    '',
     '⭐ — основной чат (по умолчанию).',
     '📌 — обязательный чат (нельзя удалить, пересылку можно выключить).',
     isMonitorAllChatsEnabled()
@@ -395,22 +398,48 @@ function buildMaxChatsText() {
   return lines.join('\n');
 }
 
+function buildMaxChatActionButtons(url, index, urls, defaultUrl) {
+  const actions = [];
+
+  if (url !== defaultUrl) {
+    actions.push({ text: '⭐ Основной', callback_data: `maxchat:default:${index}` });
+  }
+
+  if (isRequiredChatUrl(url)) {
+    const enabled = isChatForwardEnabled(url);
+    actions.push({
+      text: enabled ? '🔕 Пересылка' : '🔔 Пересылка',
+      callback_data: `maxchat:toggleRequired:${index}`,
+    });
+  } else if (urls.length > 1) {
+    actions.push({ text: '🗑 Удалить', callback_data: `maxchat:remove:${index}` });
+  }
+
+  return actions;
+}
+
 function buildMaxChatsKeyboard() {
   const urls = getMonitorChatUrls();
   const defaultUrl = getDefaultChatUrl();
-  const rows = urls.map((url, index) => [
-    {
-      text: chatMenuLabel(url, defaultUrl),
-      callback_data: `maxchat:view:${index}`,
-    },
-  ]);
+  const rows = [
+    [
+      {
+        text: isMonitorAllChatsEnabled() ? '🌐 Все чаты: ✅' : '🌐 Все чаты: ❌',
+        callback_data: 'maxchat:toggleAll',
+      },
+    ],
+  ];
 
-  rows.unshift([
-    {
-      text: isMonitorAllChatsEnabled() ? '🌐 Все чаты: ✅' : '🌐 Все чаты: ❌',
-      callback_data: 'maxchat:toggleAll',
-    },
-  ]);
+  urls.forEach((url, index) => {
+    rows.push([
+      {
+        text: chatMenuLabel(url, defaultUrl),
+        callback_data: `maxchat:view:${index}`,
+      },
+    ]);
+    const actions = buildMaxChatActionButtons(url, index, urls, defaultUrl);
+    if (actions.length) rows.push(actions);
+  });
 
   rows.push([{ text: '➕ Добавить чат', callback_data: 'maxchat:add' }]);
   rows.push([{ text: '« В меню', callback_data: 'discover:menu' }]);
@@ -455,25 +484,8 @@ function buildMaxChatViewKeyboard(index) {
   const url = urls[index];
   const defaultUrl = getDefaultChatUrl();
   const rows = [];
-
-  if (url && isRequiredChatUrl(url)) {
-    const enabled = isChatForwardEnabled(url);
-    rows.push([
-      {
-        text: enabled ? '🔕 Отключить пересылку' : '🔔 Включить пересылку',
-        callback_data: `maxchat:toggleRequired:${index}`,
-      },
-    ]);
-  }
-
-  if (url && url !== defaultUrl) {
-    rows.push([{ text: '⭐ Сделать основным', callback_data: `maxchat:default:${index}` }]);
-  }
-
-  if (urls.length > 1 && url && !isRequiredChatUrl(url)) {
-    rows.push([{ text: '🗑 Удалить из списка', callback_data: `maxchat:remove:${index}` }]);
-  }
-
+  const actions = url ? buildMaxChatActionButtons(url, index, urls, defaultUrl) : [];
+  if (actions.length) rows.push(actions);
   rows.push([{ text: '« К списку', callback_data: 'maxchat:list' }]);
   return { inline_keyboard: rows };
 }

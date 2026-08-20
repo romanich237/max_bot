@@ -47,11 +47,18 @@ function recordChat(chat) {
 
   const id = String(chat.id);
   const chats = loadKnownChats();
+  const prev = chats[id];
+  const nextTitle = getChatTitle(chat);
+  const keepTitle =
+    prev?.title &&
+    prev.title !== 'Без названия' &&
+    (!nextTitle || nextTitle === 'Без названия');
+
   const entry = {
     id,
-    title: getChatTitle(chat),
-    type: chat.type || 'unknown',
-    username: chat.username || null,
+    title: keepTitle ? prev.title : nextTitle,
+    type: chat.type || prev?.type || 'unknown',
+    username: chat.username || prev?.username || null,
     updatedAt: Date.now(),
   };
 
@@ -155,7 +162,63 @@ function buildDiscoverEmptyText() {
   return CHATS.discoverEmpty;
 }
 
-function buildNotifyChatText() {
+function adminMark(isAdmin) {
+  return isAdmin ? '✅' : '❌';
+}
+
+async function refreshTelegramChat(chatId) {
+  const { getChat } = require('./tg-api');
+  try {
+    const data = await getChat(chatId);
+    if (data.ok && data.result) {
+      return recordChat(data.result);
+    }
+  } catch {
+    /* бот ещё не в чате */
+  }
+  return getKnownChat(chatId);
+}
+
+async function getBotAdminStatus(chatId) {
+  if (isPrivateChatId(chatId)) {
+    return { admin: true, member: true, status: 'private' };
+  }
+
+  const { getBotUserId, getChatMember } = require('./tg-api');
+  try {
+    const botId = await getBotUserId();
+    if (!botId) return { admin: false, member: false, status: 'unknown' };
+    const data = await getChatMember(chatId, botId);
+    const status = data.ok ? data.result?.status : '';
+    return {
+      admin: status === 'administrator' || status === 'creator',
+      member: ['creator', 'administrator', 'member', 'restricted'].includes(status),
+      status: status || 'left',
+    };
+  } catch {
+    return { admin: false, member: false, status: 'left' };
+  }
+}
+
+async function refreshNotificationChatStatuses() {
+  const statuses = {};
+  for (const id of getNotificationChatIds()) {
+    if (isPrivateChatId(id)) {
+      statuses[id] = { admin: true, member: true, status: 'private' };
+      continue;
+    }
+    await refreshTelegramChat(id);
+    statuses[id] = await getBotAdminStatus(id);
+  }
+  return statuses;
+}
+
+function isBotAdminStatus(member) {
+  const status = member?.status;
+  return status === 'administrator' || status === 'creator';
+}
+
+function buildNotifyChatText(adminByChat = {}) {
   const chatIds = getNotificationChatIds();
   const lines = [`<b>${CHATS.notifyHeader}</b>`, ''];
 
@@ -169,7 +232,8 @@ function buildNotifyChatText() {
       const known = getKnownChat(id);
       const title = known?.title || 'Без названия';
       const kind = isPrivateChatId(id) ? 'ЛС' : 'группа';
-      lines.push(`${kind}: <b>${escapeHtml(title)}</b> (<code>${id}</code>)`);
+      const mark = isPrivateChatId(id) ? '' : ` ${adminMark(Boolean(adminByChat[id]?.admin))}`;
+      lines.push(`${kind}: <b>${escapeHtml(title)}</b> (<code>${id}</code>)${mark}`);
     }
   }
 
@@ -177,12 +241,25 @@ function buildNotifyChatText() {
   return lines.join('\n');
 }
 
-function buildNotifyChatKeyboard() {
+function buildNotifyChatKeyboard(adminByChat = {}) {
   const chatIds = getNotificationChatIds();
   const hasGroup = chatIds.some((id) => !isPrivateChatId(id));
-  const rows = [
-    [{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }],
-  ];
+  const rows = [];
+
+  for (const id of chatIds) {
+    if (isPrivateChatId(id)) continue;
+    const known = getKnownChat(id);
+    const title = known?.title || 'Без названия';
+    const mark = adminMark(Boolean(adminByChat[id]?.admin));
+    rows.push([
+      {
+        text: truncateButtonLabel(`${title} ${mark}`),
+        callback_data: `notify:chat:${id}`,
+      },
+    ]);
+  }
+
+  rows.push([{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }]);
 
   if (hasGroup) {
     rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
@@ -270,5 +347,9 @@ module.exports = {
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
   setDmOnlyNotifications,
+  refreshTelegramChat,
+  refreshNotificationChatStatuses,
+  getBotAdminStatus,
+  isBotAdminStatus,
   getChatTypeLabel,
 };

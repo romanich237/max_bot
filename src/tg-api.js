@@ -213,6 +213,28 @@ async function getChat(chatId, tokenOverride) {
   return api('getChat', { chat_id: chatId }, tokenOverride);
 }
 
+let cachedBotUser = null;
+
+async function getMe(tokenOverride) {
+  if (cachedBotUser && !tokenOverride) {
+    return { ok: true, result: cachedBotUser };
+  }
+  const data = await api('getMe', {}, tokenOverride);
+  if (data.ok && data.result && !tokenOverride) {
+    cachedBotUser = data.result;
+  }
+  return data;
+}
+
+async function getBotUserId(tokenOverride) {
+  const data = await getMe(tokenOverride);
+  return data.ok ? data.result.id : null;
+}
+
+async function getChatMember(chatId, userId, tokenOverride) {
+  return api('getChatMember', { chat_id: chatId, user_id: userId }, tokenOverride);
+}
+
 function pollUpdates(handler, options = {}) {
   const bus = require('./tg-update-bus');
   return bus.subscribe(handler, options);
@@ -231,5 +253,8 @@ module.exports = {
   editMessageText,
   editMessageCaption,
   getChat,
+  getMe,
+  getBotUserId,
+  getChatMember,
   pollUpdates,
 };
