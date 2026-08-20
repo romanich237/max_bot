@@ -55,6 +55,7 @@ const GITHUB_HOSTS = ['github.com', 'api.github.com', 'codeload.github.com', 'ob
 
 const PRESERVE_ON_ARCHIVE = new Set([
   '.git',
+  '.cursor',
   'node_modules',
   'max_user_data',
   'data',
@@ -65,6 +66,8 @@ const PRESERVE_ON_ARCHIVE = new Set([
   'max-deploy.zip',
   'package-lock.json',
 ]);
+
+const SKIP_ARCHIVE_DIRS = ['.git', '.cursor'];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -765,7 +768,7 @@ async function downloadArchive(branch, zipPath) {
 function copyTree(srcDir, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
-    if (PRESERVE_ON_ARCHIVE.has(entry.name)) continue;
+    if (PRESERVE_ON_ARCHIVE.has(entry.name) || SKIP_ARCHIVE_DIRS.includes(entry.name)) continue;
     const from = path.join(srcDir, entry.name);
     const to = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
@@ -774,6 +777,13 @@ function copyTree(srcDir, destDir) {
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(from, to);
     }
+  }
+}
+
+function stripSkippedDeployDirs(dir) {
+  for (const name of SKIP_ARCHIVE_DIRS) {
+    if (name === '.git') continue;
+    fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   }
 }
 
@@ -797,6 +807,7 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
     const zip = new AdmZip(zipPath);
     zip.extractAllTo(extractDir, true);
     copyTree(findExtractedRoot(extractDir), ROOT);
+    stripSkippedDeployDirs(ROOT);
     const fixed = ensurePackageJsonVersion(path.join(ROOT, 'package.json'));
     if (fixed.changed) {
       console.log(`auto-update: версия ${fixed.from} → ${fixed.to} (patch после 10 запрещён)`);
@@ -826,6 +837,7 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
 }
 
 async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) {
+  stripSkippedDeployDirs(ROOT);
   const fixed = ensurePackageJsonVersion(path.join(ROOT, 'package.json'));
   if (fixed.changed) {
     console.log(`auto-update: версия ${fixed.from} → ${fixed.to} (patch после 10 запрещён)`);

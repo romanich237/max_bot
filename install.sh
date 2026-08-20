@@ -380,6 +380,10 @@ download_repo_zip() {
   return 1
 }
 
+strip_skipped_deploy_dirs() {
+  rm -rf "${1:-$INSTALL_DIR}/.cursor"
+}
+
 install_from_zip() {
   ensure_unzip
   command -v unzip >/dev/null 2>&1 || fail "нужен unzip (apt-get install -y unzip)"
@@ -395,8 +399,9 @@ install_from_zip() {
   [ -n "$src" ] || { rm -rf "$tmp"; fail "пустой zip"; }
 
   # обновляем поверх, не снося сессию/конфиг если уже стояло
-  # не делаем git init: пустой .git ломает git pull и auto-update
-  cp -a "$src"/. "$INSTALL_DIR"/
+  # не копируем .git и .cursor: служебные папки не нужны на сервере
+  find "$src" -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.cursor' -exec cp -a {} "$INSTALL_DIR"/ \;
+  strip_skipped_deploy_dirs "$INSTALL_DIR"
   rm -rf "$tmp"
   echo "репо из zip → $INSTALL_DIR"
 }
@@ -407,6 +412,7 @@ clone_or_update_repo() {
       echo "обновляю $INSTALL_DIR…"
       if git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" \
         && git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"; then
+        strip_skipped_deploy_dirs "$INSTALL_DIR"
         return 0
       fi
       echo "git update отвалился — zip"
@@ -421,6 +427,7 @@ clone_or_update_repo() {
     echo "обновляю $INSTALL_DIR…"
     if git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" \
       && git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"; then
+      strip_skipped_deploy_dirs "$INSTALL_DIR"
       return 0
     fi
     echo "git update отвалился — zip"
@@ -439,6 +446,7 @@ clone_or_update_repo() {
 
   echo "клонирую → $INSTALL_DIR"
   if git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
+    strip_skipped_deploy_dirs "$INSTALL_DIR"
     return 0
   fi
   echo "git clone мимо — zip"

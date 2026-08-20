@@ -21,7 +21,14 @@ const include = [
   'scripts',
 ];
 
-const excludeDirs = new Set(['node_modules', 'max_user_data', 'data', 'logs', '.git']);
+const excludeDirs = new Set([
+  'node_modules',
+  'max_user_data',
+  'data',
+  'logs',
+  '.git',
+  '.cursor',
+]);
 
 function addFolder(zip, folderPath, zipPath) {
   if (!fs.existsSync(folderPath)) return;
