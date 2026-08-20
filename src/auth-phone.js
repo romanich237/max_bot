@@ -1,6 +1,6 @@
 const { sendMessage } = require('./tg-api');
 const { isLoginPage } = require('./parser');
-const { promptTelegramText, sleep } = require('./auth-prompt');
+const { promptTelegramText, sleep, buildSwitchToQrKeyboard, SwitchToQrError } = require('./auth-prompt');
 const { notifyEvent, maskPhone, buildEventMessage } = require('./tg-events');
 const {
   isBrowserPasswordPrompt,
@@ -90,6 +90,14 @@ async function fillPhoneNumber(page, phone10) {
 
 async function clickSignIn(page) {
   const btn = page.getByRole('button', { name: /^(Sign in|Войти)$/i });
+  await btn.waitFor({ state: 'visible', timeout: 15000 });
+
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    if (await btn.isEnabled().catch(() => false)) break;
+    await sleep(200);
+  }
+
   await btn.click({ timeout: 15000 });
   await page.waitForTimeout(2000);
 }
@@ -127,9 +135,10 @@ async function isSmsCodePage(page) {
   );
 }
 
-async function waitForSmsPage(page, timeoutMs = 60000) {
+async function waitForSmsPage(page, timeoutMs = 60000, options = {}) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
+    if (isAborted(options)) return false;
     if (await isSmsCodePage(page)) return true;
     if (await isAuthComplete(page)) return false;
     await sleep(800);
@@ -189,16 +198,18 @@ async function isSmsCodeRejected(page) {
   return errorHint.isVisible({ timeout: 500 }).catch(() => false);
 }
 
-async function waitForSmsCodeOutcome(page, timeoutMs = SMS_CODE_OUTCOME_MS) {
+async function waitForSmsCodeOutcome(page, timeoutMs = SMS_CODE_OUTCOME_MS, options = {}) {
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
+    if (isAborted(options)) return 'aborted';
     if (await isAuthComplete(page)) return 'complete';
     if (await isBrowserPasswordPrompt(page)) return 'password';
     if (await isSmsCodeRejected(page)) return 'rejected';
     await sleep(400);
   }
 
+  if (isAborted(options)) return 'aborted';
   if (await isAuthComplete(page)) return 'complete';
   if (await isBrowserPasswordPrompt(page)) return 'password';
   if (await isSmsCodeRejected(page)) return 'rejected';
@@ -206,17 +217,35 @@ async function waitForSmsCodeOutcome(page, timeoutMs = SMS_CODE_OUTCOME_MS) {
   return 'pending';
 }
 
-function buildSmsPromptOptions(options) {
+function isAborted(options) {
+  return Boolean(options?._abortPhone?.aborted);
+}
+
+function markAborted(options) {
+  if (options._abortPhone) options._abortPhone.aborted = true;
+}
+
+function switchToQrPromptOptions(options, extra = {}) {
   return {
     token: options.token,
     useAdminPoll: options.useAdminPoll,
     useWebPoll: options.useWebPoll,
+    allowSwitchToQr: true,
+    extra: {
+      reply_markup: buildSwitchToQrKeyboard(),
+    },
+    ...extra,
+  };
+}
+
+function buildSmsPromptOptions(options) {
+  return switchToQrPromptOptions(options, {
     field: 'sms',
     label: 'Код из SMS',
-    hint: '4–8 цифр из SMS. Можно отправить сразу, не дожидаясь капчи.',
+    hint: '4–8 цифр из SMS. Если код не приходит — переключитесь на QR.',
     validate: (text) => normalizeSmsCode(text) || false,
     invalidMessage: 'Код должен содержать 4–8 цифр. Или /cancel.',
-  };
+  });
 }
 
 async function promptSmsCode(chatIds, options, smsPromptOptions, lines) {
@@ -240,7 +269,11 @@ async function submitSmsCodeWithRetry(page, chatIds, options, initialCode, smsPr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await fillSmsCode(page, code);
 
-    const outcome = await waitForSmsCodeOutcome(page);
+    const outcome = await waitForSmsCodeOutcome(page, SMS_CODE_OUTCOME_MS, options);
+
+    if (outcome === 'aborted') {
+      throw new SwitchToQrError();
+    }
 
     if (outcome === 'complete' || outcome === 'password') {
       await notifyAuthDone(chatIds, options, {
@@ -304,6 +337,7 @@ async function waitForSmsOrCaptcha(page, chatIds, options, timeoutMs = 120000) {
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
+    if (isAborted(options)) return 'aborted';
     if (await isSmsCodePage(page)) return 'sms';
     if (await isBrowserPasswordPrompt(page)) return 'password';
     if (await isAuthComplete(page)) return 'done';
@@ -319,7 +353,10 @@ async function ensureCaptchaPassed(page, chatIds, options) {
   const ok = await waitForCaptchaResolved(page, {
     chatIds,
     token: options.token,
+    isAborted: () => isAborted(options),
   });
+
+  if (isAborted(options)) return;
 
   if (!ok) {
     throw new Error(
@@ -330,9 +367,10 @@ async function ensureCaptchaPassed(page, chatIds, options) {
   await page.waitForTimeout(1500);
 }
 
-async function waitForLoginComplete(page, timeoutMs = AUTH_TIMEOUT_MS) {
+async function waitForLoginComplete(page, timeoutMs = AUTH_TIMEOUT_MS, options = {}) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
+    if (isAborted(options)) return false;
     if (!(await isLoginPage(page))) return true;
     await sleep(2000);
   }
@@ -342,6 +380,7 @@ async function waitForLoginComplete(page, timeoutMs = AUTH_TIMEOUT_MS) {
 async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   beginCaptionSession(chatIds, options, page);
   options._stepChat = createStepChat(options.token);
+  options._abortPhone = { aborted: false };
 
   try {
   await page.goto(MAX_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
@@ -369,6 +408,7 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
         total: AUTH_STEPS,
         lines: [
           'Отправьте номер: <code>+79XXXXXXXXX</code> или <code>9XXXXXXXXX</code>.',
+          'Если SMS не приходит — нажмите «Войти по QR».',
           '',
           buildBrowserPasswordHintHtml(),
         ],
@@ -399,19 +439,19 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
       status: 'wait',
       step: 2,
       total: AUTH_STEPS,
-      lines: ['Отправьте номер для входа в MAX.'],
+      lines: [
+        'Отправьте номер для входа в MAX.',
+        'Если SMS не приходит — нажмите «Войти по QR».',
+      ],
     }),
-    {
-      token: options.token,
-      useAdminPoll: options.useAdminPoll,
-      useWebPoll: options.useWebPoll,
+    switchToQrPromptOptions(options, {
       field: 'tel',
       label: 'Номер телефона',
-      hint: 'Пример: +79001234567 или 9001234567',
+      hint: 'Пример: +79001234567 или 9001234567. Если SMS нет — переключитесь на QR.',
       validate: (text) => normalizePhone(text) || false,
       invalidMessage:
         'Неверный номер. Пример: <code>+79001234567</code> или <code>9001234567</code>. Или /cancel.',
-    }
+    })
   );
 
   await notifyAuthDone(chatIds, options, {
@@ -439,10 +479,12 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   const codePromise = promptSmsCode(chatIds, options, smsPromptOptions, [
     'Отправьте 4–8 цифр из SMS, как только получите.',
     'Можно вводить параллельно с капчей «не робот».',
+    'Если SMS нет — нажмите «Войти по QR».',
   ]);
 
   const captchaAndNext = (async () => {
     await ensureCaptchaPassed(page, chatIds, options);
+    if (isAborted(options)) return 'aborted';
     await notifyAuthDone(chatIds, options, {
       title: 'Капча пройдена',
       status: 'done',
@@ -453,6 +495,10 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   })();
 
   const [nextStep, code] = await Promise.all([captchaAndNext, codePromise]);
+
+  if (nextStep === 'aborted' || isAborted(options)) {
+    throw new SwitchToQrError();
+  }
 
   if (nextStep === 'done') {
     await notifyAuthDone(chatIds, options, {
@@ -467,7 +513,10 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   if (nextStep === 'password') {
     await tryHandleBrowserPasswordPrompt(page, chatIds, options);
   } else {
-    const smsReady = await waitForSmsPage(page, 90000);
+    const smsReady = await waitForSmsPage(page, 90000, options);
+    if (isAborted(options)) {
+      throw new SwitchToQrError();
+    }
     if (!smsReady) {
       throw new Error('Экран ввода SMS-кода не появился. Повторите /reauth');
     }
@@ -486,7 +535,10 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
     await ensureCaptchaPassed(page, chatIds, options);
   }
 
-  const ok = await waitForLoginComplete(page, options.timeoutMs ?? AUTH_TIMEOUT_MS);
+  const ok = await waitForLoginComplete(page, options.timeoutMs ?? AUTH_TIMEOUT_MS, options);
+  if (isAborted(options)) {
+    throw new SwitchToQrError();
+  }
   if (!ok) {
     throw new Error('Время ожидания входа истекло (10 мин). Повторите: /reauth');
   }
@@ -508,6 +560,9 @@ async function runAuthPhoneOnPage(page, chatIds, options = {}) {
   });
 
   return true;
+  } catch (err) {
+    markAborted(options);
+    throw err;
   } finally {
     endCaptionSession();
   }

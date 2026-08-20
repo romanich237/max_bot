@@ -115,6 +115,10 @@ async function waitForCaptchaResolved(page, options = {}) {
   let lastClick = 0;
 
   while (Date.now() - started < timeoutMs) {
+    if (options.isAborted?.()) {
+      return false;
+    }
+
     if (await hasVisibleSmsInputs(page)) {
       return true;
     }

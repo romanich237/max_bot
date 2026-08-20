@@ -50,6 +50,7 @@ function waitForWebInput(state, prompt) {
     label: prompt.label || 'Введите значение',
     hint: prompt.hint || '',
     invalidMessage: prompt.invalidMessage || 'Неверный формат',
+    canSwitchToQr: Boolean(prompt.allowSwitchToQr),
   };
   state.message = prompt.label || state.message;
 
@@ -139,6 +140,14 @@ function waitForWebChoice(state, prompt) {
   });
 }
 
+function rejectWebInput(state, err) {
+  if (!state.inputResolver) {
+    return { ok: false, error: 'Сейчас ввод не ожидается' };
+  }
+  state.inputResolver.reject(err || new Error('Ввод прерван'));
+  return { ok: true };
+}
+
 function submitWebChoice(state, choice) {
   if (!state.choiceResolver) {
     return { ok: false, error: 'Сейчас выбор не ожидается' };
@@ -164,6 +173,7 @@ function getPublicStatus(state) {
           label: state.waitingInput.label,
           hint: state.waitingInput.hint,
           choices: state.waitingInput.choices || null,
+          canSwitchToQr: Boolean(state.waitingInput.canSwitchToQr),
         }
       : null,
     hasScreenshot: Boolean(state.screenshot),
@@ -182,5 +192,6 @@ module.exports = {
   submitWebInput,
   waitForWebChoice,
   submitWebChoice,
+  rejectWebInput,
   getPublicStatus,
 };

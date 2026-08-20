@@ -25,11 +25,12 @@ function renderSitePage(token) {
   <header>
     <h1>MAX в браузере</h1>
     <div class="actions">
+      <button class="ghost" id="openQr">Войти по QR</button>
       <button class="ghost" id="openPhone">Войти по номеру</button>
       <button class="primary" id="syncBtn">Сохранить сессию в бот</button>
     </div>
   </header>
-  <p class="hint">Войдите по номеру телефона прямо здесь — без QR-кода. После входа нажмите «Сохранить сессию в бот».</p>
+  <p class="hint">Войдите в MAX в окне ниже. Если SMS не приходит — нажмите «Войти по QR» и отсканируйте код в приложении. После входа нажмите «Сохранить сессию в бот».</p>
   <div id="status"></div>
   <iframe id="maxFrame" src="${maxUrl}" allow="clipboard-read; clipboard-write"></iframe>
   <script>
@@ -37,8 +38,40 @@ function renderSitePage(token) {
     const frame = document.getElementById('maxFrame');
     const status = document.getElementById('status');
 
-    document.getElementById('openPhone').onclick = () => {
+    function clickInFrame(pattern) {
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return false;
+        const buttons = Array.from(doc.querySelectorAll('button, a, [role="button"]'));
+        const btn = buttons.find((el) => pattern.test((el.innerText || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ')));
+        if (!btn) return false;
+        btn.click();
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function openMaxAnd(pattern) {
+      const tryClick = () => clickInFrame(pattern);
+      if (tryClick()) return;
+      frame.onload = () => {
+        setTimeout(tryClick, 1200);
+        setTimeout(tryClick, 2800);
+      };
       frame.src = '/site/' + TOKEN + '/max/';
+    }
+
+    document.getElementById('openQr').onclick = () => {
+      status.textContent = 'Открываю вход по QR-коду…';
+      if (!clickInFrame(/sign in with qr|войти по qr/i)) {
+        openMaxAnd(/sign in with qr|войти по qr/i);
+      }
+    };
+
+    document.getElementById('openPhone').onclick = () => {
+      status.textContent = 'Открываю вход по номеру…';
+      openMaxAnd(/sign in with phone|войти по номеру/i);
     };
 
     document.getElementById('syncBtn').onclick = async () => {

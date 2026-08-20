@@ -150,6 +150,12 @@ function renderSetupPage(token) {
 
     document.querySelectorAll('[data-mode]').forEach(btn => {
       btn.onclick = async () => {
+        const st = await api('/status');
+        if (btn.dataset.mode === 'qr' && st.waitingInput?.canSwitchToQr) {
+          const res = await api('/auth/switch', { mode: 'qr' });
+          if (!res.ok) alertMsg(res.error, 'err');
+          return;
+        }
         const res = await api('/auth/start', { mode: btn.dataset.mode });
         if (!res.ok) alertMsg(res.error, 'err');
       };
@@ -173,11 +179,14 @@ function renderSetupPage(token) {
 
       const choices = document.getElementById('authChoices');
       const inputBox = document.getElementById('authInputBox');
+      const qrBtn = document.querySelector('[data-mode="qr"]');
+      const phoneBtn = document.querySelector('[data-mode="phone"]');
       if (st.waitingInput?.field === 'choice') {
         choices.classList.remove('hidden');
         inputBox.classList.add('hidden');
+        qrBtn.textContent = 'QR-код';
+        phoneBtn.classList.remove('hidden');
       } else if (st.waitingInput) {
-        choices.classList.add('hidden');
         inputBox.classList.remove('hidden');
         document.getElementById('authInputLabel').textContent = st.waitingInput.label;
         document.getElementById('authInputHint').textContent = st.waitingInput.hint || '';
@@ -187,9 +196,19 @@ function renderSetupPage(token) {
         authInput.placeholder = st.waitingInput.field === 'tel' && /код|sms/i.test(st.waitingInput.label || '')
           ? '123456'
           : (st.waitingInput.field === 'tel' ? '+79001234567' : '');
+        if (st.waitingInput.canSwitchToQr) {
+          choices.classList.remove('hidden');
+          qrBtn.textContent = 'Переключиться на QR-код';
+          phoneBtn.classList.add('hidden');
+        } else {
+          choices.classList.add('hidden');
+          phoneBtn.classList.remove('hidden');
+        }
       } else if (st.step === 'auth') {
         choices.classList.toggle('hidden', st.hasScreenshot);
         inputBox.classList.add('hidden');
+        qrBtn.textContent = 'QR-код';
+        phoneBtn.classList.remove('hidden');
       }
 
       const img = document.getElementById('screenshot');

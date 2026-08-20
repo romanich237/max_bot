@@ -3,6 +3,7 @@ const { sendMessage, answerCallback, pollUpdates } = require('./tg-api');
 const { buildEventMessage, notifyEvent } = require('./tg-events');
 const { isLoginPage } = require('./parser');
 const { runAuthPhoneOnPage } = require('./auth-phone');
+const { isSwitchToQrError } = require('./auth-prompt');
 const {
   isBrowserPasswordPrompt,
   buildBrowserPasswordHintHtml,
@@ -424,7 +425,20 @@ async function chooseAuthModeTelegram(chatIds, options = {}) {
 async function runAuthOnPage(page, chatIds, options = {}) {
   const mode = options.mode === 'phone' ? 'phone' : 'qr';
   if (mode === 'phone') {
-    return runAuthPhoneOnPage(page, chatIds, options);
+    try {
+      return await runAuthPhoneOnPage(page, chatIds, options);
+    } catch (err) {
+      if (!isSwitchToQrError(err)) throw err;
+      await notifyEvent(
+        chatIds,
+        { ...AUTH.switchToQr, status: 'wait' },
+        options
+      );
+      return runAuthQrOnPage(page, chatIds, {
+        ...options,
+        mode: 'qr',
+      });
+    }
   }
   return runAuthQrOnPage(page, chatIds, options);
 }

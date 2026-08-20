@@ -1050,12 +1050,13 @@ async function handleMessage(message) {
     await sendMessage(
       chatId,
       [
-        '<b>MAX в браузере</b> (без QR-кода)',
+        '<b>MAX в браузере</b>',
         '',
         primary.startsWith('https://')
           ? 'Временный HTTPS: браузер может предупредить о сертификате — продолжите вручную.'
           : null,
-        'Откройте ссылку, войдите по <b>номеру телефона</b>, пройдите капчу вручную.',
+        'Откройте ссылку и войдите по <b>номеру телефона</b> или <b>QR-коду</b>.',
+        'Если SMS не приходит — на странице нажмите «Войти по QR».',
         'После входа нажмите <b>«Сохранить сессию в бот»</b> на странице.',
         '',
         `<a href="${primary}">${primary}</a>`,
@@ -1179,6 +1180,21 @@ async function handleCallback(query) {
   }
 
   const data = query.data || '';
+
+  if (data === 'auth:switch:qr') {
+    if (authInputWaiter?.onSwitch) {
+      await answerCallback(query.id, 'Переключаю на QR');
+      const waiter = authInputWaiter;
+      clearAuthInputWaiter();
+      if (query.message?.message_id) {
+        await deleteMessageQuiet(chatId, query.message.message_id);
+      }
+      waiter.onSwitch();
+      return;
+    }
+    await answerCallback(query.id, 'Сейчас нельзя');
+    return;
+  }
 
   if (data === 'auth:mode:qr' || data === 'auth:mode:phone') {
     if (!reauthHandler) {

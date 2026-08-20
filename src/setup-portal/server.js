@@ -6,6 +6,7 @@ const {
   getPublicStatus,
   submitWebInput,
   submitWebChoice,
+  rejectWebInput,
   DEFAULT_PORT,
 } = require('./state');
 
@@ -92,6 +93,15 @@ function createSetupHandler(state, handlers) {
           return sendJson(res, result.ok ? 200 : 400, result);
         }
         const result = submitWebInput(state, body.value);
+        return sendJson(res, result.ok ? 200 : 400, result);
+      }
+
+      if (route === 'auth/switch' && req.method === 'POST') {
+        if (!state.waitingInput?.canSwitchToQr) {
+          return sendJson(res, 400, { ok: false, error: 'Сейчас нельзя переключиться на QR' });
+        }
+        const { SwitchToQrError } = require('../auth-prompt');
+        const result = rejectWebInput(state, new SwitchToQrError());
         return sendJson(res, result.ok ? 200 : 400, result);
       }
 

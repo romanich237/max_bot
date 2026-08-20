@@ -1,5 +1,37 @@
 const { pollUpdates } = require('./tg-api');
 const { sendInputPrompt, clearInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
+const { BUTTONS } = require('./bot-texts');
+
+const SWITCH_TO_QR = 'SWITCH_TO_QR';
+
+class SwitchToQrError extends Error {
+  constructor() {
+    super(SWITCH_TO_QR);
+    this.name = 'SwitchToQrError';
+    this.code = SWITCH_TO_QR;
+  }
+}
+
+function isSwitchToQrError(err) {
+  return Boolean(err) && (err.code === SWITCH_TO_QR || err.name === 'SwitchToQrError');
+}
+
+function buildSwitchToQrKeyboard() {
+  return {
+    inline_keyboard: [[{ text: BUTTONS.authSwitchQr, callback_data: 'auth:switch:qr' }]],
+  };
+}
+
+function withSwitchToQrPrompt(options = {}) {
+  if (!options.allowSwitchToQr) return options;
+  return {
+    ...options,
+    extra: {
+      ...(options.extra || {}),
+      reply_markup: options.extra?.reply_markup || buildSwitchToQrKeyboard(),
+    },
+  };
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +70,14 @@ function promptViaAdminPoll(chatIds, promptMessage, options = {}) {
         clearTimeout(timer);
         reject(new Error('Вход отменён'));
       },
+      onSwitch: options.allowSwitchToQr
+        ? () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(new SwitchToQrError());
+          }
+        : null,
     });
 
     if (promptMessage) {
@@ -68,10 +108,13 @@ function promptViaWeb(promptMessage, options = {}) {
     invalidMessage: options.invalidMessage,
     validate: options.validate,
     timeoutMs: options.timeoutMs,
+    allowSwitchToQr: options.allowSwitchToQr,
   });
 }
 
 function promptTelegramText(chatIds, promptMessage, options = {}) {
+  options = withSwitchToQrPrompt(options);
+
   if (options.useWebPoll) {
     return promptViaWeb(promptMessage, {
       field: options.field || (/парол|password/i.test(promptMessage || '') ? 'password' : 'text'),
@@ -125,6 +168,18 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
 
     const handleUpdate = async (update) => {
       try {
+        const query = update.callback_query;
+        if (options.allowSwitchToQr && query?.data === 'auth:switch:qr') {
+          const chatId = String(query.message?.chat?.id || '');
+          if (!admins.has(chatId)) return false;
+          const { answerCallback } = require('./tg-api');
+          await answerCallback(query.id, 'Переключаю на QR', token);
+          await fail(new SwitchToQrError(), {
+            message: { chat: { id: chatId }, message_id: query.message?.message_id },
+          });
+          return true;
+        }
+
         const text = update.message?.text?.trim();
         if (!text) return false;
 
@@ -191,6 +246,7 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
       stopPoll = pollUpdates(handleUpdate, {
         priority: 10,
         token,
+        allowedUpdates: ['message', 'callback_query'],
         onError: (err) => console.error('auth-prompt:', err.message),
       });
     })().catch((err) => {
@@ -202,4 +258,7 @@ function promptTelegramText(chatIds, promptMessage, options = {}) {
 module.exports = {
   promptTelegramText,
   sleep,
+  SwitchToQrError,
+  isSwitchToQrError,
+  buildSwitchToQrKeyboard,
 };
