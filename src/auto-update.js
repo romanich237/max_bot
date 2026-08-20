@@ -13,7 +13,7 @@ const {
   UPDATE_APP_NAME,
 } = require('./pm2');
 
-const REPO_SLUG = process.env.AUTO_UPDATE_REPO || 'romanich237/max_bot';
+const DEFAULT_REPO_SLUG = 'romanich237/max_bot';
 const FETCH_RETRIES = 2;
 const FETCH_RETRY_MS = 1500;
 const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
@@ -99,6 +99,32 @@ function runQuiet(cmd, options = {}) {
   }
 }
 
+function normalizeRepoSlug(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/^git@github\.com:/i, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '');
+}
+
+function getRepoSlug() {
+  const fromEnv = normalizeRepoSlug(process.env.AUTO_UPDATE_REPO);
+  if (fromEnv) return fromEnv;
+
+  const fromCfg = normalizeRepoSlug(getAutoUpdate().repo);
+  if (fromCfg) return fromCfg;
+
+  try {
+    const fromGit = normalizeRepoSlug(runQuiet('git remote get-url origin'));
+    if (fromGit && /^[^/\s]+\/[^/\s]+$/.test(fromGit)) return fromGit;
+  } catch {
+    /* zip-установка без origin */
+  }
+
+  return DEFAULT_REPO_SLUG;
+}
+
 function escapeHtml(text) {
   return String(text || '')
     .replace(/&/g, '&amp;')
@@ -135,8 +161,8 @@ async function getRemotePackageVersion(branch) {
   if (fromGit) return fromGit;
 
   const urls = [
-    `https://raw.githubusercontent.com/${REPO_SLUG}/${encodeURIComponent(branch)}/package.json`,
-    `https://cdn.jsdelivr.net/gh/${REPO_SLUG}@${encodeURIComponent(branch)}/package.json`,
+    `https://raw.githubusercontent.com/${getRepoSlug()}/${encodeURIComponent(branch)}/package.json`,
+    `https://cdn.jsdelivr.net/gh/${getRepoSlug()}@${encodeURIComponent(branch)}/package.json`,
   ];
 
   for (const url of urls) {
@@ -463,7 +489,7 @@ async function fetchOriginAsync(branch) {
 }
 
 async function getRemoteShaViaApi(branch) {
-  const apiPath = `/repos/${REPO_SLUG}/commits/${encodeURIComponent(branch)}`;
+  const apiPath = `/repos/${getRepoSlug()}/commits/${encodeURIComponent(branch)}`;
   const attempts = [];
 
   attempts.push(async () => {
@@ -519,23 +545,23 @@ function archiveUrls(branch) {
   const encoded = encodeURIComponent(branch);
   return [
     {
-      url: `https://codeload.github.com/${REPO_SLUG}/zip/refs/heads/${encoded}`,
+      url: `https://codeload.github.com/${getRepoSlug()}/zip/refs/heads/${encoded}`,
       host: 'codeload.github.com',
     },
     {
-      url: `https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      url: `https://github.com/${getRepoSlug()}/archive/refs/heads/${encoded}.zip`,
       host: 'github.com',
     },
     {
-      url: `https://ghproxy.net/https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      url: `https://ghproxy.net/https://github.com/${getRepoSlug()}/archive/refs/heads/${encoded}.zip`,
       host: null,
     },
     {
-      url: `https://mirror.ghproxy.com/https://github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      url: `https://mirror.ghproxy.com/https://github.com/${getRepoSlug()}/archive/refs/heads/${encoded}.zip`,
       host: null,
     },
     {
-      url: `https://gitclone.com/github.com/${REPO_SLUG}/archive/refs/heads/${encoded}.zip`,
+      url: `https://gitclone.com/github.com/${getRepoSlug()}/archive/refs/heads/${encoded}.zip`,
       host: null,
     },
   ];
@@ -691,6 +717,7 @@ async function checkForUpdates(options = {}) {
   store.reload();
   const cfg = getAutoUpdate();
   const fromVersion = readLocalPackageVersion();
+  console.log(`auto-update: репо ${getRepoSlug()} ветка ${cfg.branch}`);
 
   try {
     let remoteInfo;

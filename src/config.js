@@ -133,6 +133,7 @@ function getAutoUpdate() {
     enabled: true,
     intervalMs: u.intervalMs ?? 60 * 1000,
     branch: u.branch || process.env.AUTO_UPDATE_BRANCH || 'main',
+    repo: u.repo || process.env.AUTO_UPDATE_REPO || '',
   };
 }
 

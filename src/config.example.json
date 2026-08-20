@@ -48,7 +48,8 @@
   },
   "autoUpdate": {
     "intervalMs": 60000,
-    "branch": "main"
+    "branch": "main",
+    "repo": "romanich237/max_bot"
   },
   "database": {
     "enabled": true,
