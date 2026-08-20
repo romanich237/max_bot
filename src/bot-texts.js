@@ -428,15 +428,11 @@ const UPDATES = {
     title: 'Обновления',
     lines: ['Обновлений нет.', version ? `Текущая версия: <code>${version}</code>` : null].filter(Boolean),
   }),
-  updating: (fromVer, toVer) => ({
+  updating: (fromVer) => ({
     title: 'Обновление',
     lines: [
       'Вышла новая версия, обновляю…',
-      fromVer && toVer && fromVer !== toVer
-        ? `Версия: <code>${fromVer}</code> → <code>${toVer}</code>`
-        : fromVer || toVer
-          ? `Версия: <code>${toVer || fromVer}</code>`
-          : null,
+      fromVer ? `Версия: <code>${fromVer}</code>` : null,
     ].filter(Boolean),
   }),
   done: (fromVer, toVer) => ({

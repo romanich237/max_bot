@@ -4,7 +4,7 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const { ROOT, getAutoUpdate, getAdminChatIds, store } = require('./config');
-const { sendMessage } = require('./tg-api');
+const { sendMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { UPDATES } = require('./bot-texts');
 const {
@@ -242,15 +242,40 @@ function hasLocalChanges() {
 
 async function notifyAdmins(text) {
   const chatIds = getAdminChatIds();
-  if (!chatIds.length) return;
+  const posts = [];
+  if (!chatIds.length) return posts;
 
   for (const chatId of chatIds) {
     try {
-      await sendMessage(chatId, text);
+      const data = await sendMessage(chatId, text);
+      if (data?.ok && data.result?.message_id) {
+        posts.push({ chatId, messageId: data.result.message_id });
+      }
     } catch (err) {
       console.error(`auto-update: не удалось уведомить ${chatId}:`, err.message);
     }
   }
+  return posts;
+}
+
+async function editAdminPosts(posts, text) {
+  if (!posts?.length) {
+    return notifyAdmins(text);
+  }
+
+  for (const { chatId, messageId } of posts) {
+    try {
+      await editMessageText(chatId, messageId, text);
+    } catch (err) {
+      console.warn(`auto-update: не удалось править сообщение ${chatId}: ${err.message}`);
+      try {
+        await sendMessage(chatId, text);
+      } catch (sendErr) {
+        console.error(`auto-update: не удалось уведомить ${chatId}:`, sendErr.message);
+      }
+    }
+  }
+  return posts;
 }
 
 function formatUpdateError(err) {
@@ -669,7 +694,7 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
   }
 }
 
-async function finishUpdate(fromSha, toSha, notify, fromVersion) {
+async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) {
   run('npm install --omit=dev --ignore-scripts');
 
   schedulePm2Restarts([APP_NAME, UPDATE_APP_NAME], {
@@ -681,7 +706,8 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion) {
   writeStoredSha(toSha);
 
   if (notify) {
-    await notifyAdmins(
+    await editAdminPosts(
+      progressPosts,
       buildEventMessage({
         ...UPDATES.done(fromVersion, toVersion),
         status: 'done',
@@ -693,7 +719,7 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion) {
   return { status: 'updated', fromSha, toSha, fromVersion, toVersion };
 }
 
-async function applyUpdate(fromSha, toSha, notify, branch, fromVersion) {
+async function applyUpdate(fromSha, toSha, notify, branch, fromVersion, progressPosts) {
   try {
     run(`git pull --ff-only origin ${branch}`);
   } catch (err) {
@@ -701,7 +727,7 @@ async function applyUpdate(fromSha, toSha, notify, branch, fromVersion) {
     await applyArchiveUpdate(branch, fromSha, toSha);
   }
 
-  return finishUpdate(fromSha, toSha, notify, fromVersion);
+  return finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts);
 }
 
 async function resolveRemoteSha(branch) {
@@ -727,6 +753,7 @@ async function checkForUpdates(options = {}) {
   store.reload();
   const cfg = getAutoUpdate();
   const fromVersion = readLocalPackageVersion();
+  let progressPosts = [];
   console.log(`auto-update: репо ${getRepoSlug()} ветка ${cfg.branch}`);
 
   try {
@@ -770,9 +797,9 @@ async function checkForUpdates(options = {}) {
     console.log(`auto-update: обновление ${fromVersion || fromSha} → ${toVersion || toSha} (via ${remoteInfo.via})`);
 
     if (notify) {
-      await notifyAdmins(
+      progressPosts = await notifyAdmins(
         buildEventMessage({
-          ...UPDATES.updating(fromVersion, toVersion),
+          ...UPDATES.updating(fromVersion),
           status: 'progress',
         })
       );
@@ -780,10 +807,10 @@ async function checkForUpdates(options = {}) {
 
     if (!isGitRepo() || remoteInfo.via === 'api' || !remote) {
       await applyArchiveUpdate(cfg.branch, fromSha, remote || toSha);
-      return finishUpdate(fromSha, remote || toSha, notify, fromVersion);
+      return finishUpdate(fromSha, remote || toSha, notify, fromVersion, progressPosts);
     }
 
-    return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion);
+    return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion, progressPosts);
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
     let finalErr = err;
@@ -800,15 +827,18 @@ async function checkForUpdates(options = {}) {
         if (!isGitRepo() || !hasLocalChanges()) {
           const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
           if (notify) {
-            await notifyAdmins(
-              buildEventMessage({
-                ...UPDATES.updating(fromVersion, toVersion),
-                status: 'progress',
-              })
-            );
+            const updatingText = buildEventMessage({
+              ...UPDATES.updating(fromVersion),
+              status: 'progress',
+            });
+            if (progressPosts.length) {
+              await editAdminPosts(progressPosts, updatingText);
+            } else {
+              progressPosts = await notifyAdmins(updatingText);
+            }
           }
           await applyArchiveUpdate(cfg.branch, local, String(sha));
-          return finishUpdate(local, String(sha), notify, fromVersion);
+          return finishUpdate(local, String(sha), notify, fromVersion, progressPosts);
         }
       } catch (fallbackErr) {
         console.error('auto-update: архивный путь тоже не сработал —', fallbackErr.message);
@@ -817,7 +847,8 @@ async function checkForUpdates(options = {}) {
     }
 
     if (notify) {
-      await notifyAdmins(
+      await editAdminPosts(
+        progressPosts,
         buildEventMessage({
           ...UPDATES.fail(formatUpdateError(finalErr).join('\n')),
           status: 'fail',

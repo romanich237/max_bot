@@ -1231,28 +1231,35 @@ async function handleManualUpdateCheck(chatId) {
     }
 
     if (preview.status === 'available') {
-      await sendMessage(
+      const sent = await sendMessage(
         chatId,
         buildEventMessage({
-          ...UPDATES.updating(preview.fromVersion, preview.toVersion),
+          ...UPDATES.updating(preview.fromVersion),
           status: 'progress',
         })
       );
       const result = await checkForUpdates({ notify: false, performUpdate: true });
-      if (result.status === 'updated') {
-        await sendMessage(
-          chatId,
-          buildEventMessage({
-            ...UPDATES.done(result.fromVersion, result.toVersion),
-            status: 'done',
-          })
-        );
-      } else if (result.status === 'error') {
-        await sendMessage(
-          chatId,
-          buildEventMessage({ ...UPDATES.fail(result.message), status: 'fail' })
-        );
+      const doneText =
+        result.status === 'updated'
+          ? buildEventMessage({
+              ...UPDATES.done(result.fromVersion, result.toVersion),
+              status: 'done',
+            })
+          : result.status === 'error'
+            ? buildEventMessage({ ...UPDATES.fail(result.message), status: 'fail' })
+            : null;
+      if (!doneText) return;
+
+      const messageId = sent?.ok ? sent.result?.message_id : null;
+      if (messageId) {
+        try {
+          await editMessageText(chatId, messageId, doneText);
+          return;
+        } catch (err) {
+          console.warn('update message edit:', err.message);
+        }
       }
+      await sendMessage(chatId, doneText);
       return;
     }
 
