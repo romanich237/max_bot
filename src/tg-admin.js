@@ -69,6 +69,8 @@ const {
   buildChatInfoKeyboard,
   buildNotifyChatText,
   buildNotifyChatKeyboard,
+  buildNotifyGroupViewText,
+  buildNotifyGroupViewKeyboard,
   buildBindGroupReplyKeyboard,
   bindNotificationChat,
   unbindNotificationChat,
@@ -1721,14 +1723,13 @@ async function handleCallback(query) {
     const targetId = data.slice('notify:chat:'.length);
     await refreshTelegramChat(targetId);
     const status = await getBotAdminStatus(targetId);
-    await answerCallback(
-      query.id,
-      status.admin ? 'Бот админ в группе' : 'Нет прав админа'
+    await answerCallback(query.id, 'Группа');
+    await editMessageText(
+      chatId,
+      query.message.message_id,
+      buildNotifyGroupViewText(targetId, status),
+      { reply_markup: await buildNotifyGroupViewKeyboard(targetId, status) }
     );
-    if (!status.admin) {
-      await sendMissingAdminNotice(chatId, targetId);
-    }
-    await showNotifyChats(chatId, query.message.message_id);
     return;
   }
 
@@ -1739,7 +1740,7 @@ async function handleCallback(query) {
       await answerCallback(query.id, result.error);
       return;
     }
-    await answerCallback(query.id, 'Группа убрана из списка');
+    await answerCallback(query.id, 'Группа удалена из рассылки');
     await showNotifyChats(chatId, query.message.message_id);
     return;
   }

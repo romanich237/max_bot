@@ -188,25 +188,10 @@ function listBoundGroupIds() {
 }
 
 function listKnownGroupChats() {
-  const bound = new Set(listBoundGroupIds().map(String));
-  const seen = new Set();
-  const groups = [];
-
-  for (const id of listBoundGroupIds()) {
-    const known = getKnownChat(id) || { id: String(id), title: 'Без названия' };
-    seen.add(String(id));
-    groups.push({ ...known, id: String(id), bound: true });
-  }
-
-  for (const chat of listKnownChats()) {
-    const id = String(chat.id);
-    if (isPrivateChatId(id) || seen.has(id)) continue;
-    if (chat.type === 'private' || chat.type === 'channel') continue;
-    seen.add(id);
-    groups.push({ ...chat, bound: bound.has(id) });
-  }
-
-  return groups;
+  return listBoundGroupIds().map((id) => {
+    const known = getKnownChat(id) || { title: 'Без названия' };
+    return { ...known, id: String(id), bound: true };
+  });
 }
 
 async function buildBotAdminInviteUrl() {
@@ -305,11 +290,11 @@ function buildNotifyChatText(adminByChat = {}) {
     }
 
     if (groups.length) {
-      lines.push('', `<b>Группы (${groups.filter((chat) => chat.bound).length})</b>`);
+      lines.push('', `<b>Группы (${groups.length})</b>`);
       for (const chat of groups) {
         const title = chat.title || 'Без названия';
-        const mark = chat.bound ? ` ${adminMark(Boolean(adminByChat[chat.id]?.admin))}` : ' — не привязана';
-        lines.push(`• <b>${escapeHtml(title)}</b> (<code>${chat.id}</code>)${mark}`);
+        const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
+        lines.push(`• <b>${escapeHtml(title)}</b> (<code>${chat.id}</code>) ${mark}`);
       }
     }
   }
@@ -320,28 +305,19 @@ function buildNotifyChatText(adminByChat = {}) {
 
 async function buildNotifyChatKeyboard(adminByChat = {}) {
   const groups = listKnownGroupChats();
-  const hasGroup = groups.some((chat) => chat.bound);
+  const hasGroup = groups.length > 0;
   const rows = [];
 
   for (const chat of groups) {
     const title = chat.title || 'Без названия';
-    if (chat.bound) {
-      const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
-      rows.push([
-        {
-          text: truncateButtonLabel(`${title} ${mark}`),
-          callback_data: `notify:chat:${chat.id}`,
-        },
-        { text: '🗑', callback_data: `notify:remove:${chat.id}` },
-      ]);
-    } else {
-      rows.push([
-        {
-          text: truncateButtonLabel(`${title} · привязать`),
-          callback_data: `bindchat:${chat.id}`,
-        },
-      ]);
-    }
+    const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
+    rows.push([
+      {
+        text: truncateButtonLabel(`${title} ${mark}`, 28),
+        callback_data: `notify:chat:${chat.id}`,
+      },
+      { text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chat.id}` },
+    ]);
   }
 
   rows.push([{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }]);
@@ -350,7 +326,7 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
     rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
   }
 
-  const missingAdmin = groups.some((chat) => chat.bound && !adminByChat[chat.id]?.admin);
+  const missingAdmin = groups.some((chat) => !adminByChat[chat.id]?.admin);
   if (missingAdmin) {
     const inviteUrl = await buildBotAdminInviteUrl();
     if (inviteUrl) {
@@ -364,6 +340,32 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
     [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }]
   );
 
+  return { inline_keyboard: rows };
+}
+
+function buildNotifyGroupViewText(chatId, status = {}) {
+  const known = getKnownChat(chatId);
+  const title = known?.title || 'Без названия';
+  return [
+    '<b>Группа уведомлений</b>',
+    '',
+    `Название: <b>${escapeHtml(title)}</b>`,
+    `ID: <code>${escapeHtml(String(chatId))}</code>`,
+    `Бот админ: ${status.admin ? '✅ да' : '❌ нет'}`,
+    '',
+    '«Удалить» убирает группу из рассылки. Из самой группы в Telegram бот не выйдет.',
+  ].join('\n');
+}
+
+async function buildNotifyGroupViewKeyboard(chatId, status = {}) {
+  const rows = [[{ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chatId}` }]];
+  if (!status.admin) {
+    const inviteUrl = await buildBotAdminInviteUrl();
+    if (inviteUrl) {
+      rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+    }
+  }
+  rows.push([{ text: '« К списку', callback_data: 'action:notifyChat' }]);
   return { inline_keyboard: rows };
 }
 
@@ -458,6 +460,8 @@ module.exports = {
   buildChatInfoKeyboard,
   buildNotifyChatText,
   buildNotifyChatKeyboard,
+  buildNotifyGroupViewText,
+  buildNotifyGroupViewKeyboard,
   buildMissingAdminText,
   buildMissingAdminKeyboard,
   buildBotAdminInviteUrl,
