@@ -17,6 +17,7 @@
     "currentDisplayName": "",
     "monitorAllChats": false,
     "monitoringEnabled": true,
+    "forwardingEnabled": true,
     "browserPassword": ""
   },
   "setupPortal": {

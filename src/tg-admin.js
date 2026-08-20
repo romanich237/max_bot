@@ -297,6 +297,7 @@ function buildStatusText() {
     STATUS.header,
     '',
     `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}`,
+    `${STATUS.forwarding}: ${onFlag(getMax().forwardingEnabled !== false)}`,
     `${STATUS.alwaysOnline}: ${onFlag(online.enabled)} · ${online.intervalMs / 1000} с`,
     `${STATUS.profileRotate}: ${onFlag(profile.enabled)} · ${profile.intervalMs / 1000} с`,
     profile.names?.length ? `Имена: ${profile.names.join(' → ')}` : STATUS.namesUnset,
@@ -364,8 +365,15 @@ function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
     [buildToggleButton(prefix, TOGGLES[0])],
-    [buildToggleButton(prefix, TOGGLES[1]), buildToggleButton(prefix, TOGGLES[2])],
-    [{ text: BUTTONS.profileNames, callback_data: 'action:profileNames' }],
+    [buildToggleButton(prefix, TOGGLES[1])],
+    [buildToggleButton(prefix, TOGGLES[2]), buildToggleButton(prefix, TOGGLES[3])],
+  ];
+
+  if (getProfileRotate().enabled) {
+    rows.push([{ text: BUTTONS.profileNames, callback_data: 'action:profileNames' }]);
+  }
+
+  rows.push(
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
@@ -373,8 +381,8 @@ function buildMenuKeyboard() {
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
       { text: BUTTONS.notifyChat, callback_data: 'action:notifyChat' },
-    ],
-  ];
+    ]
+  );
 
   const statusRow = [{ text: BUTTONS.refreshStatus, callback_data: 'status' }];
   if (isMonitoringEnabled()) {
@@ -1681,6 +1689,15 @@ async function handleCallback(query) {
     const path = data.slice('toggle:'.length).split('.');
     if (path[0] === 'autoUpdate') {
       await answerCallback(query.id, 'Автообновление всегда включено');
+      return;
+    }
+    if (path.join('.') === 'max.forwardingEnabled') {
+      const next = store.getPath(path) === false;
+      store.setPath(path, next);
+      await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
+      await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
+        reply_markup: buildMenuKeyboard(),
+      });
       return;
     }
     const next = store.togglePath(path);

@@ -426,6 +426,7 @@ function buildMaxChatsKeyboard() {
       {
         text: isMonitorAllChatsEnabled() ? '🌐 Все чаты: ✅' : '🌐 Все чаты: ❌',
         callback_data: 'maxchat:toggleAll',
+        style: isMonitorAllChatsEnabled() ? 'success' : 'danger',
       },
     ],
   ];

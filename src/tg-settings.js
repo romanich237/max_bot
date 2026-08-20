@@ -3,17 +3,25 @@ const { DEFAULT_BIO_TEMPLATE, MAX_BIO_LENGTH } = require('./profile-bio');
 const { TOGGLES, HINTS } = require('./bot-texts');
 
 const TOGGLE_ITEMS = [
+  { label: TOGGLES.forwarding, path: ['max', 'forwardingEnabled'], defaultOn: true },
   { label: TOGGLES.alwaysOnline, path: ['alwaysOnline', 'enabled'] },
   { label: TOGGLES.profileRotate, path: ['profileRotate', 'enabled'] },
   { label: TOGGLES.profileBio, path: ['profileBio', 'enabled'] },
 ];
 
-function buildToggleButton(prefix, item) {
+function isToggleOn(item) {
   const cfg = store.get();
   const value = item.path.reduce((cur, key) => cur?.[key], cfg);
+  if (item.defaultOn) return value !== false;
+  return Boolean(value);
+}
+
+function buildToggleButton(prefix, item) {
+  const on = isToggleOn(item);
   return {
-    text: `${item.label}: ${value ? '✅' : '❌'}`,
+    text: `${item.label}: ${on ? '✅' : '❌'}`,
     callback_data: `${prefix}${item.path.join('.')}`,
+    style: on ? 'success' : 'danger',
   };
 }
 

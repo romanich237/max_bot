@@ -58,7 +58,12 @@ function getMax() {
   return {
     ...m,
     monitoringEnabled: m.monitoringEnabled !== false,
+    forwardingEnabled: m.forwardingEnabled !== false,
   };
+}
+
+function isForwardingEnabled() {
+  return getMax().forwardingEnabled !== false;
 }
 
 function getMaxDisplayName() {
@@ -171,6 +176,7 @@ module.exports = {
   isPrivateChatId,
   getMax,
   getMaxDisplayName,
+  isForwardingEnabled,
   getDefaultChatUrl: maxChats.getDefaultChatUrl,
   getMonitorChatUrls: maxChats.getMonitorChatUrls,
   getForwardingMonitorChatUrls: maxChats.getForwardingMonitorChatUrls,

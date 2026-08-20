@@ -31,6 +31,7 @@ const BUTTONS = {
 };
 
 const TOGGLES = {
+  forwarding: 'Пересылка',
   alwaysOnline: 'Статус «в сети»',
   profileRotate: 'Смена имени',
   profileBio: 'Смена описания',
@@ -89,6 +90,7 @@ const STATUS = {
   chatsHeader: 'Отслеживаемые чаты MAX',
   chatsUnset: 'Чаты не заданы',
   notifyUnset: 'Уведомления: не настроены',
+  forwarding: 'Пересылка в Telegram',
   on: 'включён',
   off: 'выключен',
 };

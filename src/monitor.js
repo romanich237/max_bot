@@ -13,6 +13,7 @@ const {
   getForwardingMonitorChatUrls,
   isMonitorAllChatsEnabled,
   getDatabase,
+  isForwardingEnabled,
   store,
 } = require('./config');
 const {
@@ -98,6 +99,11 @@ async function persistMessage(message, options = {}) {
 }
 
 async function forwardMessage(page, message, isCatchUp, maxChatUrl) {
+  if (!isForwardingEnabled()) {
+    logMessage(message, `Пропуск (пересылка выкл) · ${chatLabelFromUrl(maxChatUrl)}`);
+    await persistMessage(message, { forwarded: false });
+    return;
+  }
   const mediaFiles = await downloadMessageMedia(
     page,
     message,
