@@ -395,21 +395,25 @@ install_from_zip() {
   [ -n "$src" ] || { rm -rf "$tmp"; fail "пустой zip"; }
 
   # обновляем поверх, не снося сессию/конфиг если уже стояло
+  # не делаем git init: пустой .git ломает git pull и auto-update
   cp -a "$src"/. "$INSTALL_DIR"/
   rm -rf "$tmp"
-
-  if [ ! -d "$INSTALL_DIR/.git" ] && command -v git >/dev/null 2>&1; then
-    git -C "$INSTALL_DIR" init >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" remote remove origin >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" remote add origin "$REPO_URL" >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" checkout -B "$BRANCH" >/dev/null 2>&1 || true
-  fi
   echo "репо из zip → $INSTALL_DIR"
 }
 
 clone_or_update_repo() {
   if [ -f "$INSTALL_DIR/package.json" ] && [ -f "$INSTALL_DIR/scripts/install.js" ]; then
-    echo "репозиторий уже здесь: $INSTALL_DIR"
+    if [ -d "$INSTALL_DIR/.git" ] && git -C "$INSTALL_DIR" rev-parse HEAD >/dev/null 2>&1; then
+      echo "обновляю $INSTALL_DIR…"
+      if git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" \
+        && git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"; then
+        return 0
+      fi
+      echo "git update отвалился — zip"
+    else
+      echo "$INSTALL_DIR уже есть (без git) — обновляю zip-ом"
+    fi
+    install_from_zip
     return 0
   fi
 

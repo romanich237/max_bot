@@ -17,6 +17,7 @@ const REPO_SLUG = process.env.AUTO_UPDATE_REPO || 'romanich237/max_bot';
 const FETCH_RETRIES = 2;
 const FETCH_RETRY_MS = 1500;
 const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
+const UPDATE_SHA_FILE = path.join(ROOT, 'data', '.update-sha');
 
 // DoH по IP — когда DNS в ахуе и github.com не резолвится
 const DOH_PROVIDERS = [
@@ -152,7 +153,39 @@ async function getRemotePackageVersion(branch) {
 }
 
 function isGitRepo() {
-  return fs.existsSync(path.join(ROOT, '.git'));
+  try {
+    if (runQuiet('git rev-parse --is-inside-work-tree') !== 'true') return false;
+    runQuiet('git rev-parse HEAD');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readStoredSha() {
+  try {
+    const stored = fs.readFileSync(UPDATE_SHA_FILE, 'utf8').trim();
+    if (stored) return stored;
+  } catch {
+    /* ignore */
+  }
+  if (!isGitRepo()) return '';
+  try {
+    return runQuiet('git rev-parse HEAD');
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredSha(sha) {
+  const value = String(sha || '').trim();
+  if (!value || value === 'archive') return;
+  try {
+    fs.mkdirSync(path.dirname(UPDATE_SHA_FILE), { recursive: true });
+    fs.writeFileSync(UPDATE_SHA_FILE, `${value}\n`, 'utf8');
+  } catch (err) {
+    console.warn(`auto-update: sha не сохранился (${err.message})`);
+  }
 }
 
 function isDnsOrNetworkError(err) {
@@ -197,12 +230,8 @@ function formatUpdateError(err) {
   } else if (isDnsOrNetworkError(err)) {
     lines.push(
       '',
-      'GitHub не резолвится на VPS. Одноразовый ремонт без git:',
-      '<code>cd ~/max-tg && node scripts/repair-update.js</code>',
-      '',
-      'Или починить DNS и обновить:',
-      '<code>echo "nameserver 1.1.1.1" | tee /etc/resolv.conf >/dev/null</code>',
-      '<code>cd ~/max-tg && git pull --ff-only && npm install --omit=dev && pm2 restart max-tg max-tg-update</code>'
+      'GitHub не резолвится на VPS. Обновление без git:',
+      '<code>cd ~/max-tg && node scripts/repair-update.js</code>'
     );
   } else {
     lines.push(
@@ -581,16 +610,18 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
     zip.extractAllTo(extractDir, true);
     copyTree(findExtractedRoot(extractDir), ROOT);
 
-    try {
-      runQuiet(`git fetch origin ${branch}`, { timeout: 30000 });
-      runQuiet(`git reset --hard origin/${branch}`);
-    } catch {
+    if (isGitRepo()) {
       try {
-        if (toSha && /^[0-9a-f]{7,40}$/i.test(toSha)) {
-          runQuiet(`git update-ref HEAD ${toSha}`);
-        }
+        runQuiet(`git fetch origin ${branch}`, { timeout: 30000 });
+        runQuiet(`git reset --hard origin/${branch}`);
       } catch {
-        console.warn('auto-update: архив на месте, git ref похуй синхронизировать');
+        try {
+          if (toSha && /^[0-9a-f]{7,40}$/i.test(toSha)) {
+            runQuiet(`git update-ref HEAD ${toSha}`);
+          }
+        } catch {
+          console.warn('auto-update: архив на месте, git ref не синхронизирован');
+        }
       }
     }
   } finally {
@@ -611,6 +642,7 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion) {
   });
 
   const toVersion = readLocalPackageVersion();
+  writeStoredSha(toSha);
 
   if (notify) {
     await notifyAdmins(
@@ -637,13 +669,15 @@ async function applyUpdate(fromSha, toSha, notify, branch, fromVersion) {
 }
 
 async function resolveRemoteSha(branch) {
-  try {
-    await ensureGithubDns();
-    await fetchOriginAsync(branch);
-    const remote = runQuiet(`git rev-parse origin/${branch}`);
-    if (remote) return { sha: remote, via: 'git' };
-  } catch (err) {
-    console.warn(`auto-update: git путь в топку — ${err.message}`);
+  if (isGitRepo()) {
+    try {
+      await ensureGithubDns();
+      await fetchOriginAsync(branch);
+      const remote = runQuiet(`git rev-parse origin/${branch}`);
+      if (remote) return { sha: remote, via: 'git' };
+    } catch (err) {
+      console.warn(`auto-update: git путь недоступен — ${err.message}`);
+    }
   }
 
   const sha = await getRemoteShaViaApi(branch);
@@ -656,27 +690,35 @@ async function checkForUpdates(options = {}) {
 
   store.reload();
   const cfg = getAutoUpdate();
-
-  if (!isGitRepo()) {
-    return { status: 'unavailable', reason: 'not-git' };
-  }
+  const fromVersion = readLocalPackageVersion();
 
   try {
-    const local = runQuiet('git rev-parse HEAD');
-    const remoteInfo = await resolveRemoteSha(cfg.branch);
+    let remoteInfo;
+    try {
+      remoteInfo = await resolveRemoteSha(cfg.branch);
+    } catch (err) {
+      console.warn(`auto-update: remote sha — ${err.message}`);
+      await patchGithubHosts().catch(() => {});
+      const sha = await getRemoteShaViaApi(cfg.branch).catch(() => '');
+      remoteInfo = sha ? { sha, via: 'api' } : { sha: '', via: 'api' };
+    }
+
+    const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
+    const local = readStoredSha();
     const remote = remoteInfo.sha;
 
-    if (!remote) {
-      return { status: 'error', message: `Ветка ${cfg.branch} не найдена` };
+    if (local && remote && local === remote) {
+      console.log(`auto-update: актуально ${fromVersion || local.slice(0, 7)} via ${remoteInfo.via}`);
+      return { status: 'up-to-date', sha: local.slice(0, 7), version: fromVersion };
     }
 
-    if (local === remote) {
-      const version = readLocalPackageVersion();
-      console.log(`auto-update: актуально ${version || local.slice(0, 7)} via ${remoteInfo.via}`);
-      return { status: 'up-to-date', sha: local.slice(0, 7), version };
+    if (!local && fromVersion && toVersion && fromVersion === toVersion) {
+      if (remote) writeStoredSha(remote);
+      console.log(`auto-update: актуально ${fromVersion} (без git)`);
+      return { status: 'up-to-date', sha: String(remote || '').slice(0, 7), version: fromVersion };
     }
 
-    if (hasLocalChanges()) {
+    if (isGitRepo() && hasLocalChanges()) {
       console.error('auto-update: есть локальные изменения, обновление пропущено');
       if (notify) {
         await notifyAdmins(buildEventMessage({ ...UPDATES.skipped, status: 'fail' }));
@@ -684,10 +726,8 @@ async function checkForUpdates(options = {}) {
       return { status: 'skipped', reason: 'local-changes' };
     }
 
-    const fromSha = local.slice(0, 7);
-    const toSha = remote.slice(0, 7);
-    const fromVersion = readLocalPackageVersion();
-    const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
+    const fromSha = String(local || fromVersion || 'local').slice(0, 7);
+    const toSha = String(remote || toVersion || 'remote').slice(0, 7);
 
     if (!performUpdate) {
       return { status: 'available', fromSha, toSha, fromVersion, toVersion };
@@ -704,9 +744,9 @@ async function checkForUpdates(options = {}) {
       );
     }
 
-    if (remoteInfo.via === 'api') {
-      await applyArchiveUpdate(cfg.branch, fromSha, toSha);
-      return finishUpdate(fromSha, toSha, notify, fromVersion);
+    if (!isGitRepo() || remoteInfo.via === 'api' || !remote) {
+      await applyArchiveUpdate(cfg.branch, fromSha, remote || toSha);
+      return finishUpdate(fromSha, remote || toSha, notify, fromVersion);
     }
 
     return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion);
@@ -714,18 +754,16 @@ async function checkForUpdates(options = {}) {
     console.error('auto-update: ошибка —', err.message);
     let finalErr = err;
 
-    // последний шанс: просто скачать zip и накатить
     if (isDnsOrNetworkError(err) || /DoH|API|архив|fetch/i.test(err.message)) {
       try {
-        console.warn('auto-update: всё плохо, пробую архив в лоб…');
-        const local = runQuiet('git rev-parse HEAD').slice(0, 7);
-        const fromVersion = readLocalPackageVersion();
+        console.warn('auto-update: пробую архив…');
+        const local = readStoredSha().slice(0, 7) || 'local';
         await patchGithubHosts();
         const sha = await getRemoteShaViaApi(cfg.branch).catch(() => 'archive');
-        if (sha !== 'archive' && sha === runQuiet('git rev-parse HEAD')) {
+        if (sha !== 'archive' && sha && sha === readStoredSha()) {
           return { status: 'up-to-date', sha: local, version: fromVersion };
         }
-        if (!hasLocalChanges()) {
+        if (!isGitRepo() || !hasLocalChanges()) {
           const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
           if (notify) {
             await notifyAdmins(
@@ -735,11 +773,11 @@ async function checkForUpdates(options = {}) {
               })
             );
           }
-          await applyArchiveUpdate(cfg.branch, local, String(sha).slice(0, 7));
-          return finishUpdate(local, String(sha).slice(0, 7), notify, fromVersion);
+          await applyArchiveUpdate(cfg.branch, local, String(sha));
+          return finishUpdate(local, String(sha), notify, fromVersion);
         }
       } catch (fallbackErr) {
-        console.error('auto-update: архивный путь тоже сдох —', fallbackErr.message);
+        console.error('auto-update: архивный путь тоже не сработал —', fallbackErr.message);
         finalErr = fallbackErr;
       }
     }
