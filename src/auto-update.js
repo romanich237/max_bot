@@ -151,6 +151,10 @@ async function getRemotePackageVersion(branch) {
   return '';
 }
 
+function isGitRepo() {
+  return fs.existsSync(path.join(ROOT, '.git'));
+}
+
 function isDnsOrNetworkError(err) {
   const message = errText(err);
   return /could not resolve host|name or service not known|temporary failure in name resolution|nodename nor servname|getaddrinfo|failed to connect|connection timed out|network is unreachable|ssl|unable to access|enotfound|eai_again/i.test(
