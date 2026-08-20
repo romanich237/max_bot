@@ -7,7 +7,6 @@ const {
   getProfileRotate,
   getProfileBio,
   getAlwaysOnline,
-  getDefaultChatUrl,
   getMonitorChatUrls,
   getNotificationChatIds,
   isPrivateChatId,
@@ -317,7 +316,6 @@ function buildStatusText() {
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
   const maxName = getMaxDisplayName();
-  const defaultUrl = getDefaultChatUrl();
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
 
@@ -362,14 +360,11 @@ function buildStatusText() {
   } else {
     for (const url of monitorUrls) {
       const title = escapeHtml(chatLabelFromUrl(url));
-      const marks = [];
-      if (url === defaultUrl) marks.push('⭐');
-      if (isRequiredChatUrl(url)) marks.push('📌');
-      const prefix = marks.length ? `${marks.join(' ')} ` : '• ';
+      const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
       const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
       const where =
         getNotifyTarget(url) === 'dm' ? 'ЛС' : getNotifyTarget(url) === 'group' ? 'группа' : 'ЛС+группа';
-      lines.push(`${prefix}<b>${title}</b> — ${forward} · ${where}`);
+      lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
     }
   }
 
@@ -851,15 +846,12 @@ async function showMaxChatView(chatId, messageId, index) {
     return;
   }
 
-  const defaultUrl = getDefaultChatUrl();
-  const title = escapeHtml(chatLabelFromUrl(url));
-  const lines = [`<b>${title}</b>`, '', `<code>${escapeHtml(url)}</code>`, ''];
-
-  if (url === defaultUrl) {
-    lines.push(CHATS.primary);
-  } else {
-    lines.push(CHATS.secondary);
-  }
+  const title = chatLabelFromUrl(url);
+  const lines = [
+    `Название чата: <b>${escapeHtml(title)}</b>`,
+    `Ссылка: <code>${escapeHtml(url)}</code>`,
+    '',
+  ];
 
   if (isRequiredChatUrl(url)) {
     lines.push(CHATS.requiredPinned);
@@ -1699,28 +1691,6 @@ async function handleCallback(query) {
     const index = Number.parseInt(data.slice('maxchat:view:'.length), 10) || 0;
     await answerCallback(query.id, 'Чат MAX');
     await showMaxChatView(chatId, query.message.message_id, index);
-    return;
-  }
-
-  if (data.startsWith('maxchat:default:')) {
-    const index = Number.parseInt(data.slice('maxchat:default:'.length), 10) || 0;
-    const urls = getMonitorChatUrls();
-    const url = urls[index];
-    if (!url) {
-      await answerCallback(query.id, 'Чат не найден');
-      return;
-    }
-
-    const result = setDefaultChatUrl(url);
-    if (result.error) {
-      await answerCallback(query.id, 'Ошибка');
-      await sendMessage(chatId, result.error);
-      return;
-    }
-
-    await answerCallback(query.id, 'Основной чат');
-    const nextIndex = Math.max(0, getMonitorChatUrls().indexOf(url));
-    await refreshMaxChatPanel(chatId, query, nextIndex);
     return;
   }
 

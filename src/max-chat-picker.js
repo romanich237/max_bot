@@ -54,6 +54,44 @@ function chatUrlFromId(chatId) {
   return chatUrlFromChatId(chatId);
 }
 
+async function openChatsTab(page) {
+  const navTab = page.getByRole('tab', { name: /^(чаты|chats)$/i }).first();
+  if (await navTab.isVisible({ timeout: 800 }).catch(() => false)) {
+    await navTab.click();
+    await page.waitForTimeout(600);
+    return true;
+  }
+
+  const navButton = page
+    .locator(
+      'nav button, aside button, [role="tablist"] button, [class*="tabbar" i] button, [class*="navbar" i] button, [class*="sidebar" i] button, [class*="dock" i] button'
+    )
+    .filter({ hasText: /^(чаты|chats)$/i })
+    .first();
+  if (await navButton.isVisible({ timeout: 800 }).catch(() => false)) {
+    await navButton.click();
+    await page.waitForTimeout(600);
+    return true;
+  }
+
+  const buttons = page.getByRole('button', { name: /^(чаты|chats)$/i });
+  const count = await buttons.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const btn = buttons.nth(i);
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    const isChatRow = await btn.evaluate((el) => {
+      const blob = [el.getAttribute('href') || '', el.outerHTML || ''].join(' ');
+      return /web\.max\.ru\/-?\d{5,}|(?:href|src)=["']\/-?\d{5,}/i.test(blob);
+    });
+    if (isChatRow) continue;
+    await btn.click();
+    await page.waitForTimeout(600);
+    return true;
+  }
+
+  return false;
+}
+
 async function ensureChatListVisible(page) {
   const currentUrl = page.url();
   if (!/web\.max\.ru/i.test(currentUrl)) {
@@ -81,11 +119,7 @@ async function ensureChatListVisible(page) {
     }
   }
 
-  const chatsBtn = page.getByRole('button', { name: /^(chats|чаты)$/i });
-  if (await chatsBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
-    await chatsBtn.click();
-    await page.waitForTimeout(800);
-  }
+  await openChatsTab(page);
 }
 
 async function waitForChatListDom(page) {
@@ -218,6 +252,7 @@ async function extractMaxChatsFromPage(page) {
       const key = cleanTitle.toLowerCase();
 
       if (!url) {
+        if (/^(chats|чаты)$/i.test(cleanTitle)) return;
         if (seenTitles.has(key)) return;
         seenTitles.add(key);
         chats.push({ title: cleanTitle, url: null });
@@ -261,11 +296,14 @@ async function extractMaxChatsFromPage(page) {
 
     for (const h3 of document.querySelectorAll('h3')) {
       const title = (h3.innerText || '').trim().split('\n')[0].trim();
-      if (!title || SKIP_HEADINGS.test(title)) continue;
+      if (!title) continue;
 
       const row =
         h3.closest('button.cell, button[class*="cell"], div.item') ||
         h3.parentElement?.closest?.('button.cell, button[class*="cell"], div.item');
+      const blob = nodeBlob(row || h3);
+      if (SKIP_HEADINGS.test(title) && !chatIdFromBlob(blob)) continue;
+
       addFromRow(row || h3);
     }
 
@@ -682,31 +720,35 @@ async function readUnreadCounts(page) {
         return 0;
       }
 
+      function chatIdFromEl(el) {
+        if (!el) return '';
+        const blob = [el.getAttribute?.('href') || '', el.outerHTML || ''].join(' ');
+        const match = blob.match(/web\.max\.ru\/(-?\d{5,})/) || blob.match(/["'\/](-?\d{5,})["'/?#\s]/);
+        return match ? match[1] : '';
+      }
+
       function unreadFromRow(row) {
         if (!row) return 0;
 
-        const marked = row.querySelector(
-          '[class*="counter" i], [class*="badge" i], [class*="unread" i], [class*="count" i], [class*="notif" i]'
+        const badges = row.querySelectorAll(
+          '[class*="counter" i], [class*="badge" i], [class*="unread" i], [class*="count" i], [class*="notif" i], [class*="indicator" i]'
         );
-        const fromClass = parseCount(marked?.innerText || marked?.textContent || '');
-        if (fromClass > 0) return fromClass;
+        let best = 0;
+        for (const badge of badges) {
+          const n = parseCount(badge.innerText || badge.textContent || '');
+          if (n > best) best = n;
+        }
+        if (best > 0) return best;
 
         const attr =
           row.getAttribute('data-unread') ||
           row.getAttribute('data-count') ||
-          marked?.getAttribute('data-count') ||
+          row.getAttribute('aria-label') ||
           '';
+        const fromAria = String(attr).match(/(\d{1,5})\s*(непрочит|unread|сообщ|message)/i);
+        if (fromAria) return Number(fromAria[1]);
         const fromAttr = parseCount(attr);
-        if (fromAttr > 0) return fromAttr;
-
-        const lines = String(row.innerText || '')
-          .split('\n')
-          .map((line) => line.replace(/\s+/g, ' ').trim())
-          .filter(Boolean);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          const n = parseCount(lines[i]);
-          if (n > 0) return n;
-        }
+        if (fromAttr > 0 && fromAttr < 10000) return fromAttr;
 
         if (
           row.querySelector(
@@ -719,36 +761,45 @@ async function readUnreadCounts(page) {
         return 0;
       }
 
-      const rows = document.querySelectorAll(
-        'div.item, .scrollListContent .item, button.cell, button[class*="cell"]'
-      );
       const seen = new Set();
       let chats = 0;
       let messages = 0;
 
-      for (const row of rows) {
-        const heading = row.querySelector('h3.title, h3');
-        const title = (heading?.innerText || '').trim().split('\n')[0].trim();
-        if (!title || /^(chats|чаты)$/i.test(title)) continue;
-        const key = title.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
+      const nodes = document.querySelectorAll(
+        'a[href], [href], button.cell, button[class*="cell"], [role="listitem"], div.item, [class*="dialog" i], [class*="peer" i], [class*="conversation" i]'
+      );
 
-        const count = unreadFromRow(row.querySelector('button.cell, button[class*="cell"]') || row);
+      for (const el of nodes) {
+        const id = chatIdFromEl(el);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const row =
+          el.closest(
+            'li, [role="listitem"], button.cell, button[class*="cell"], div.item, [class*="dialog" i], [class*="peer" i]'
+          ) || el;
+        const count = unreadFromRow(row);
         if (count > 0) {
           chats += 1;
           messages += count;
         }
       }
 
-      const tabButtons = document.querySelectorAll('button, [role="tab"], [role="button"]');
-      for (const btn of tabButtons) {
+      let tabCount = 0;
+      for (const btn of document.querySelectorAll(
+        'nav button, aside button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, [class*="sidebar" i] button'
+      )) {
         const label = (btn.innerText || '').trim().split('\n')[0].trim();
         if (!/^(чаты|chats)$/i.test(label)) continue;
-        const tabCount = unreadFromRow(btn);
-        if (tabCount > messages) messages = tabCount;
-        if (tabCount > 0 && chats === 0) chats = 1;
+        if (chatIdFromEl(btn)) continue;
+        tabCount = unreadFromRow(btn);
         break;
+      }
+
+      if (tabCount > 0 && chats === 0 && messages === 0) {
+        chats = tabCount;
+        messages = tabCount;
+      } else if (tabCount > 0 && messages > 0 && Math.abs(tabCount - messages) <= 1) {
+        messages = Math.max(messages, tabCount);
       }
 
       return { chats, messages };
@@ -763,6 +814,7 @@ module.exports = {
   MAX_HOME_URL,
   listMaxChats,
   ensureChatListVisible,
+  openChatsTab,
   extractMaxChatsFromPage,
   captureMaxChatListScreenshot,
   readUnreadCounts,

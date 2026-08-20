@@ -55,7 +55,7 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
   const parts = [];
 
   if (meta.maxChatUrl) {
-    parts.push(`📁 <b>${escapeHtml(chatLabelFromUrl(meta.maxChatUrl))}</b>`, '');
+    parts.push(`Чат: <b>${escapeHtml(chatLabelFromUrl(meta.maxChatUrl))}</b>`, '');
   }
 
   if (showServiceHeader) {

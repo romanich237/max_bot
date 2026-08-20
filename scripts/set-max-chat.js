@@ -61,7 +61,6 @@ if (dmOnly) {
 console.log('Чат MAX добавлен:');
 console.log('  URL:', url);
 if (title) console.log('  Название:', title);
-console.log('  Основной:', url === getDefaultChatUrl() ? 'да' : 'нет');
 console.log('  Всего в мониторинге:', getMonitorChatUrls().length);
 console.log('');
 console.log('Перезапуск: pm2 restart max-tg');

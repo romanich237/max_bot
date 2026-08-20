@@ -155,11 +155,10 @@ function removeNotifyTarget(url) {
   delete targets[normalized];
   store.setPath(['max', 'notifyTargets'], targets);
 }
-function chatMenuLabel(url, defaultUrl = getDefaultChatUrl()) {
-  const star = url === defaultUrl ? '⭐ ' : '';
+function chatMenuLabel(url) {
   const pin = isRequiredChatUrl(url) ? '📌 ' : '';
   const title = getChatTitle(url) || truncateUrl(url, 22);
-  return truncateButtonText(`${star}${pin}${title}`, 40);
+  return truncateButtonText(`${pin}${title}`, 40);
 }
 
 function truncateUrl(url, max = 36) {
@@ -406,7 +405,6 @@ function removeMonitorChatUrl(url) {
 
 function buildMaxChatsText() {
   const urls = getMonitorChatUrls();
-  const defaultUrl = getDefaultChatUrl();
   const lines = ['<b>Чаты MAX</b>', ''];
 
   if (!urls.length) {
@@ -417,14 +415,11 @@ function buildMaxChatsText() {
   lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
 
   for (const url of urls) {
-    const marks = [];
-    if (url === defaultUrl) marks.push('⭐');
-    if (isRequiredChatUrl(url)) marks.push('📌');
-    const prefix = marks.length ? `${marks.join(' ')} ` : '• ';
+    const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
     const title = escapeHtml(chatLabelFromUrl(url));
     const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
     const where = notifyTargetLabel(getNotifyTarget(url));
-    lines.push(`${prefix}<b>${title}</b> — ${forward} · ${where}`);
+    lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
   }
 
   lines.push('');
@@ -433,7 +428,7 @@ function buildMaxChatsText() {
   } else {
     lines.push('Сейчас: только чаты из списка.');
   }
-  lines.push('⭐ основной · 📌 удалить нельзя');
+  lines.push('📌 обязательный — удалить нельзя');
   return lines.join('\n');
 }
 
@@ -470,7 +465,7 @@ function buildNotifyTargetButtons(url, index) {
   });
 }
 
-function buildMaxChatActionButtons(url, index, urls, defaultUrl, options = {}) {
+function buildMaxChatActionButtons(url, index, urls, options = {}) {
   const compact = options.compact !== false;
   const actions = [];
   const forwardOn = isChatForwardEnabled(url);
@@ -488,10 +483,6 @@ function buildMaxChatActionButtons(url, index, urls, defaultUrl, options = {}) {
     });
   }
 
-  if (url !== defaultUrl) {
-    actions.push({ text: '⭐', callback_data: `maxchat:default:${index}` });
-  }
-
   if (!isRequiredChatUrl(url) && urls.length > 1) {
     actions.push({ text: '🗑', callback_data: `maxchat:remove:${index}` });
   }
@@ -501,7 +492,6 @@ function buildMaxChatActionButtons(url, index, urls, defaultUrl, options = {}) {
 
 function buildMaxChatsKeyboard() {
   const urls = getMonitorChatUrls();
-  const defaultUrl = getDefaultChatUrl();
   const all = isMonitorAllChatsEnabled();
   const rows = [
     [
@@ -516,11 +506,11 @@ function buildMaxChatsKeyboard() {
   urls.forEach((url, index) => {
     rows.push([
       {
-        text: chatMenuLabel(url, defaultUrl),
+        text: chatMenuLabel(url),
         callback_data: `maxchat:view:${index}`,
       },
     ]);
-    rows.push(buildMaxChatActionButtons(url, index, urls, defaultUrl));
+    rows.push(buildMaxChatActionButtons(url, index, urls));
   });
 
   rows.push([
@@ -566,9 +556,8 @@ function buildMaxChatPickKeyboard(chats = []) {
 function buildMaxChatViewKeyboard(index) {
   const urls = getMonitorChatUrls();
   const url = urls[index];
-  const defaultUrl = getDefaultChatUrl();
   const rows = [];
-  const actions = url ? buildMaxChatActionButtons(url, index, urls, defaultUrl, { compact: false }) : [];
+  const actions = url ? buildMaxChatActionButtons(url, index, urls, { compact: false }) : [];
   if (actions.length) rows.push(actions);
   if (url) rows.push(buildNotifyTargetButtons(url, index));
   rows.push([{ text: '« К списку', callback_data: 'maxchat:list' }]);

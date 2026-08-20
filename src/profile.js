@@ -371,10 +371,21 @@ async function closeProfileEditor(page) {
     await page.waitForTimeout(400);
   }
 
+  const { openChatsTab } = require('./max-chat-picker');
+  if (await openChatsTab(page)) return;
+
   const chats = page.getByRole('button', { name: /^(chats|чаты)$/i });
-  if (await chats.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await chats.click();
+  const count = await chats.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const btn = chats.nth(i);
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    const isChatRow = await btn.evaluate((el) =>
+      /web\.max\.ru\/-?\d{5,}/.test([el.getAttribute('href') || '', el.outerHTML || ''].join(' '))
+    );
+    if (isChatRow) continue;
+    await btn.click();
     await page.waitForTimeout(400);
+    return;
   }
 }
 

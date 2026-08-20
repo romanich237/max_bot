@@ -632,9 +632,8 @@ async function startMonitor() {
     `Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length})${isMonitorAllChatsEnabled() ? ' · режим «все чаты»' : ''}:`
   );
   for (const url of allUrls) {
-    const mark = url === defaultChatUrl ? '⭐' : '•';
     const muted = monitorUrls.includes(url) ? '' : ' [пересылка выкл.]';
-    console.log(`  ${mark} ${url}${muted}`);
+    console.log(`  • ${url}${muted}`);
   }
   console.log(`Медиа сохраняются в: ${settings.dataDir}`);
   if (db.isEnabled()) {
