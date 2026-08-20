@@ -11,12 +11,12 @@ const COMMANDS = {
 const BUTTONS = {
   profileNames: 'Список имён',
   bioTemplate: 'Шаблон описания',
-  bioCity: 'Город',
+  bioCity: 'Город для погоды',
   maxChats: 'Чаты MAX',
-  notifyChat: 'Куда приходят уведомления',
+  notifyChat: 'Куда слать в Telegram',
   refreshStatus: 'Обновить статус',
-  stopMax: 'Остановить мониторинг',
-  startMax: 'Запустить мониторинг',
+  stopMax: 'Остановить бота',
+  startMax: 'Запустить бота',
   backToMenu: '« В меню',
   backToChats: '« К списку чатов',
   bindNotify: '✅ Привязать для уведомлений',
@@ -31,10 +31,10 @@ const BUTTONS = {
 };
 
 const TOGGLES = {
-  forwarding: 'Пересылка',
-  alwaysOnline: 'Статус «в сети»',
-  profileRotate: 'Смена имени',
-  profileBio: 'Смена описания',
+  forwarding: 'Слать в Telegram',
+  alwaysOnline: 'Всегда в сети',
+  profileRotate: 'Менять имя',
+  profileBio: 'Менять описание',
 };
 
 const HINTS = {
@@ -80,8 +80,8 @@ const START = {
 
 const STATUS = {
   header: `<b>${BRAND}</b>`,
-  monitoring: 'Мониторинг MAX',
-  alwaysOnline: 'Статус «в сети»',
+  monitoring: 'Работа бота',
+  alwaysOnline: 'Всегда в сети',
   profileRotate: 'Смена имени',
   profileBio: 'Смена описания',
   namesUnset: 'Имена: не заданы',
@@ -90,7 +90,7 @@ const STATUS = {
   chatsHeader: 'Отслеживаемые чаты MAX',
   chatsUnset: 'Чаты не заданы',
   notifyUnset: 'Уведомления: не настроены',
-  forwarding: 'Пересылка в Telegram',
+  forwarding: 'Сообщения в Telegram',
   on: 'включён',
   off: 'выключен',
 };
@@ -315,12 +315,18 @@ const REPLY = {
 
 const MONITORING = {
   stopped: {
-    title: 'Мониторинг остановлен',
-    lines: ['Сообщения из MAX больше не пересылаются.'],
+    title: 'Бот остановлен',
+    lines: [
+      'Полная пауза: MAX не проверяется, имя и описание не меняются.',
+      'Чтобы только не слать уведомления, но оставить бота работать — выключите «Слать в Telegram».',
+    ],
   },
   started: {
-    title: 'Мониторинг запущен',
-    lines: ['Сообщения из MAX снова приходят в Telegram.'],
+    title: 'Бот запущен',
+    lines: [
+      'Снова следит за MAX.',
+      'Уведомления в Telegram зависят от кнопки «Слать в Telegram».',
+    ],
   },
   stopUnavailable: 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>',
   startUnavailable: 'Запуск недоступен. Выполните: <code>pm2 restart max-tg</code>',

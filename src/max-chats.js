@@ -408,7 +408,7 @@ function buildMaxChatActionButtons(url, index, urls, defaultUrl) {
   if (isRequiredChatUrl(url)) {
     const enabled = isChatForwardEnabled(url);
     actions.push({
-      text: enabled ? '🔕 Пересылка' : '🔔 Пересылка',
+        text: enabled ? '🔕 Не слать этот чат' : '🔔 Слать этот чат',
       callback_data: `maxchat:toggleRequired:${index}`,
     });
   } else if (urls.length > 1) {

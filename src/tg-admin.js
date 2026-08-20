@@ -1406,7 +1406,7 @@ async function handleCallback(query) {
   }
 
   if (data === 'action:stopMax') {
-    await answerCallback(query.id, 'Остановлено');
+    await answerCallback(query.id, 'Бот остановлен');
     if (!stopHandler) {
       await sendMessage(chatId, MONITORING.stopUnavailable);
       return;
@@ -1415,9 +1415,9 @@ async function handleCallback(query) {
     await sendMessage(
       chatId,
       buildEventMessage({
-        title: 'Мониторинг MAX остановлен',
+        title: MONITORING.stopped.title,
         status: 'done',
-        lines: ['Сообщения не пересылаются.'],
+        lines: MONITORING.stopped.lines,
       }),
       { reply_markup: buildMenuKeyboard() }
     );
@@ -1425,7 +1425,7 @@ async function handleCallback(query) {
   }
 
   if (data === 'action:startMax') {
-    await answerCallback(query.id, 'Запущено');
+    await answerCallback(query.id, 'Бот запущен');
     if (!startHandler) {
       await sendMessage(chatId, MONITORING.startUnavailable);
       return;
@@ -1433,7 +1433,7 @@ async function handleCallback(query) {
     startHandler();
     await sendMessage(
       chatId,
-        buildEventMessage({ ...MONITORING.started, status: 'done', lines: ['Пересылка сообщений включена.'] }),
+        buildEventMessage({ ...MONITORING.started, status: 'done' }),
       { reply_markup: buildMenuKeyboard() }
     );
     return;
@@ -1597,7 +1597,7 @@ async function handleCallback(query) {
 
     const next = !isChatForwardEnabled(url);
     setRequiredChatForwardEnabled(url, next);
-    await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
+    await answerCallback(query.id, next ? 'Этот чат снова шлётся в Telegram' : 'Этот чат больше не шлётся в Telegram');
     await showMaxChats(chatId, query.message.message_id);
     return;
   }
@@ -1694,7 +1694,7 @@ async function handleCallback(query) {
     if (path.join('.') === 'max.forwardingEnabled') {
       const next = store.getPath(path) === false;
       store.setPath(path, next);
-      await answerCallback(query.id, next ? 'Пересылка включена' : 'Пересылка выключена');
+      await answerCallback(query.id, next ? 'Сообщения идут в Telegram' : 'Сообщения в Telegram не отправляются');
       await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
         reply_markup: buildMenuKeyboard(),
       });
