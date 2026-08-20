@@ -18,7 +18,9 @@ const FETCH_RETRIES = 2;
 const FETCH_RETRY_MS = 1500;
 const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
 const UPDATE_SHA_FILE = path.join(ROOT, 'data', '.update-sha');
+const UPDATE_LOCK_FILE = path.join(ROOT, 'data', '.update-lock');
 const UPDATE_NOTICES_FILE = path.join(ROOT, 'data', '.update-notices.json');
+const UPDATE_LOCK_MS = 3 * 60 * 1000;
 
 // DoH по IP — когда DNS в ахуе и github.com не резолвится
 const DOH_PROVIDERS = [
@@ -139,6 +141,18 @@ function formatAppVersion(value) {
   return raw.startsWith('v') ? raw : `v${raw}`;
 }
 
+function isGitSha(value) {
+  return /^[0-9a-f]{7,40}$/i.test(String(value || '').trim());
+}
+
+function sameSha(a, b) {
+  const left = String(a || '').trim().toLowerCase();
+  const right = String(b || '').trim().toLowerCase();
+  if (!isGitSha(left) || !isGitSha(right)) return false;
+  const size = Math.min(left.length, right.length);
+  return left.slice(0, size) === right.slice(0, size);
+}
+
 function readLocalPackageVersion() {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -206,13 +220,50 @@ function readStoredSha() {
 
 function writeStoredSha(sha) {
   const value = String(sha || '').trim();
-  if (!value || value === 'archive') return;
+  if (!isGitSha(value)) return;
   try {
     fs.mkdirSync(path.dirname(UPDATE_SHA_FILE), { recursive: true });
     fs.writeFileSync(UPDATE_SHA_FILE, `${value}\n`, 'utf8');
   } catch (err) {
     console.warn(`auto-update: sha не сохранился (${err.message})`);
   }
+}
+
+function acquireUpdateLock() {
+  try {
+    const prev = Number(fs.readFileSync(UPDATE_LOCK_FILE, 'utf8').trim());
+    if (Number.isFinite(prev) && Date.now() - prev < UPDATE_LOCK_MS) return false;
+  } catch {
+    /* no lock */
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(UPDATE_LOCK_FILE), { recursive: true });
+    fs.writeFileSync(UPDATE_LOCK_FILE, `${Date.now()}\n`, 'utf8');
+    return true;
+  } catch (err) {
+    console.warn(`auto-update: lock не записался (${err.message})`);
+    return true;
+  }
+}
+
+function releaseUpdateLock() {
+  try {
+    fs.unlinkSync(UPDATE_LOCK_FILE);
+  } catch {
+    /* nop */
+  }
+}
+
+async function markUpToDate(version, sha, reason) {
+  if (isGitSha(sha)) writeStoredSha(sha);
+  await pruneUpdateNotices({ kinds: ['progress', 'done', 'notice', 'fail'] });
+  console.log(`auto-update: актуально ${version || String(sha || '').slice(0, 7)}${reason ? ` (${reason})` : ''}`);
+  return {
+    status: 'up-to-date',
+    sha: String(sha || '').slice(0, 7),
+    version,
+  };
 }
 
 function isDnsOrNetworkError(err) {
@@ -778,17 +829,18 @@ async function applyArchiveUpdate(branch, _fromSha, toSha) {
 async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) {
   run('npm install --omit=dev --ignore-scripts');
 
-  schedulePm2Restarts([APP_NAME, UPDATE_APP_NAME], {
-    delayMs: 2000,
-    staggerMs: 5000,
-  });
-
   const toVersion = readLocalPackageVersion();
   writeStoredSha(toSha);
+  releaseUpdateLock();
 
-  await pruneUpdateNotices({ keep: progressPosts || [] });
+  schedulePm2Restarts([APP_NAME], { delayMs: 2000 });
+  schedulePm2Restarts([UPDATE_APP_NAME], { delayMs: 20000 });
 
-  if (notify) {
+  const versionChanged = Boolean(fromVersion && toVersion && fromVersion !== toVersion);
+
+  await pruneUpdateNotices({ keep: versionChanged ? progressPosts || [] : [] });
+
+  if (notify && versionChanged) {
     const posts = await editAdminPosts(
       progressPosts,
       buildEventMessage({
@@ -798,10 +850,23 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) 
     );
     rememberUpdateNotices(posts || progressPosts || [], 'done');
   } else {
-    rememberUpdateNotices(progressPosts || [], 'done');
+    if (progressPosts?.length) {
+      for (const post of progressPosts) {
+        try {
+          await deleteMessage(post.chatId, post.messageId);
+        } catch {
+          /* nop */
+        }
+      }
+    }
+    await pruneUpdateNotices({ kinds: ['progress', 'done', 'notice', 'fail'] });
   }
 
-  console.log('auto-update: код обновлён, перезапуск PM2 запланирован');
+  console.log(
+    versionChanged
+      ? `auto-update: код обновлён ${fromVersion} → ${toVersion}, перезапуск PM2 запланирован`
+      : 'auto-update: код тот же, уведомление не шлю, перезапуск PM2 запланирован'
+  );
   return { status: 'updated', fromSha, toSha, fromVersion, toVersion };
 }
 
@@ -853,19 +918,21 @@ async function checkForUpdates(options = {}) {
       remoteInfo = sha ? { sha, via: 'api' } : { sha: '', via: 'api' };
     }
 
-    const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
+    const remoteVersion = await getRemotePackageVersion(cfg.branch);
+    const toVersion = remoteVersion || fromVersion;
     const local = readStoredSha();
     const remote = remoteInfo.sha;
 
-    if (local && remote && local === remote) {
-      console.log(`auto-update: актуально ${fromVersion || local.slice(0, 7)} via ${remoteInfo.via}`);
-      return { status: 'up-to-date', sha: local.slice(0, 7), version: fromVersion };
+    if (sameSha(local, remote)) {
+      return markUpToDate(fromVersion, remote, remoteInfo.via);
+    }
+
+    if (remoteVersion && fromVersion && remoteVersion === fromVersion) {
+      return markUpToDate(fromVersion, remote, 'та же версия');
     }
 
     if (!local && fromVersion && toVersion && fromVersion === toVersion) {
-      if (remote) writeStoredSha(remote);
-      console.log(`auto-update: актуально ${fromVersion} (без git)`);
-      return { status: 'up-to-date', sha: String(remote || '').slice(0, 7), version: fromVersion };
+      return markUpToDate(fromVersion, remote, 'без git');
     }
 
     if (isGitRepo() && hasLocalChanges()) {
@@ -873,35 +940,45 @@ async function checkForUpdates(options = {}) {
       remoteInfo = { sha: remoteInfo.sha || '', via: 'api' };
     }
 
-    const fromSha = String(local || fromVersion || 'local').slice(0, 7);
-    const toSha = String(remote || toVersion || 'remote').slice(0, 7);
+    const fromSha = isGitSha(local) ? local : String(fromVersion || 'local');
+    const toSha = isGitSha(remote) ? remote : '';
 
     if (!performUpdate) {
       return { status: 'available', fromSha, toSha, fromVersion, toVersion };
     }
 
+    if (!acquireUpdateLock()) {
+      console.log('auto-update: обновление уже идёт, пропускаю');
+      return { status: 'up-to-date', sha: String(local || '').slice(0, 7), version: fromVersion };
+    }
+
     console.log(`auto-update: обновление ${fromVersion || fromSha} → ${toVersion || toSha} (via ${remoteInfo.via})`);
 
-    if (notify) {
-      progressPosts = await notifyAdmins(
-        buildEventMessage({
-          ...UPDATES.updating(fromVersion),
-          status: 'progress',
-        }),
-        'progress'
-      );
-    }
+    try {
+      if (notify) {
+        progressPosts = await notifyAdmins(
+          buildEventMessage({
+            ...UPDATES.updating(fromVersion),
+            status: 'progress',
+          }),
+          'progress'
+        );
+      }
 
-    if (progressPosts.length) {
-      await pruneUpdateNotices({ keep: progressPosts });
-    }
+      if (progressPosts.length) {
+        await pruneUpdateNotices({ keep: progressPosts });
+      }
 
-    if (!isGitRepo() || remoteInfo.via === 'api' || !remote) {
-      await applyArchiveUpdate(cfg.branch, fromSha, remote || toSha);
-      return finishUpdate(fromSha, remote || toSha, notify, fromVersion, progressPosts);
-    }
+      if (!isGitRepo() || remoteInfo.via === 'api' || !toSha) {
+        await applyArchiveUpdate(cfg.branch, fromSha, toSha || remote || 'HEAD');
+        return await finishUpdate(fromSha, toSha || remote, notify, fromVersion, progressPosts);
+      }
 
-    return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion, progressPosts);
+      return await applyUpdate(fromSha, toSha, notify, cfg.branch, fromVersion, progressPosts);
+    } catch (err) {
+      releaseUpdateLock();
+      throw err;
+    }
   } catch (err) {
     console.error('auto-update: ошибка —', err.message);
     let finalErr = err;
@@ -909,14 +986,20 @@ async function checkForUpdates(options = {}) {
     if (isDnsOrNetworkError(err) || /DoH|API|архив|fetch/i.test(err.message)) {
       try {
         console.warn('auto-update: пробую архив…');
-        const local = readStoredSha().slice(0, 7) || 'local';
+        const stored = readStoredSha();
         await patchGithubHosts();
-        const sha = await getRemoteShaViaApi(cfg.branch).catch(() => 'archive');
-        if (sha !== 'archive' && sha && sha === readStoredSha()) {
-          return { status: 'up-to-date', sha: local, version: fromVersion };
+        const sha = await getRemoteShaViaApi(cfg.branch).catch(() => '');
+        if (sameSha(sha, stored)) {
+          return markUpToDate(fromVersion, sha, 'fallback sha');
+        }
+        const fallbackVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
+        if (fallbackVersion && fromVersion && fallbackVersion === fromVersion) {
+          return markUpToDate(fromVersion, sha, 'fallback версия');
         }
         if (!isGitRepo() || !hasLocalChanges()) {
-          const toVersion = (await getRemotePackageVersion(cfg.branch)) || fromVersion;
+          if (!acquireUpdateLock()) {
+            return { status: 'up-to-date', sha: String(stored || '').slice(0, 7), version: fromVersion };
+          }
           if (notify) {
             const updatingText = buildEventMessage({
               ...UPDATES.updating(fromVersion),
@@ -928,15 +1011,17 @@ async function checkForUpdates(options = {}) {
               progressPosts = await notifyAdmins(updatingText, 'progress');
             }
           }
-          await applyArchiveUpdate(cfg.branch, local, String(sha));
-          return finishUpdate(local, String(sha), notify, fromVersion, progressPosts);
+          await applyArchiveUpdate(cfg.branch, stored, sha || 'HEAD');
+          return await finishUpdate(stored, sha, notify, fromVersion, progressPosts);
         }
       } catch (fallbackErr) {
+        releaseUpdateLock();
         console.error('auto-update: архивный путь тоже не сработал —', fallbackErr.message);
         finalErr = fallbackErr;
       }
     }
 
+    releaseUpdateLock();
     if (notify) {
       await editAdminPosts(
         progressPosts,
@@ -963,19 +1048,26 @@ function scheduleAutoUpdate() {
         : `каждые ${Math.round(intervalMs / 60000)} мин`;
   console.log(`auto-update: проверка репозитория ${intervalLabel}`);
 
+  let tickBusy = false;
   const tick = async () => {
+    if (tickBusy) {
+      setTimeout(tick, intervalMs);
+      return;
+    }
+    tickBusy = true;
     try {
       await checkForUpdates();
     } catch (err) {
       console.error('auto-update:', err.message);
+    } finally {
+      tickBusy = false;
+      store.reload();
+      const next = getAutoUpdate();
+      setTimeout(tick, next.intervalMs);
     }
-
-    store.reload();
-    const next = getAutoUpdate();
-    setTimeout(tick, next.intervalMs);
   };
 
-  tick();
+  setTimeout(tick, 20 * 1000);
 }
 
 module.exports = {
