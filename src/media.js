@@ -166,10 +166,14 @@ async function downloadVoice(page, wrapperIndex, filePath) {
     page.on('response', onResponse);
 
     page
-      .evaluate((idx) => {
-        const wrapper = document.querySelectorAll('.messageWrapper')[idx];
+      .evaluate(({ idx, sel }) => {
+        const opened = document.querySelector('.openedChat');
+        const wrappers = opened
+          ? opened.querySelectorAll('.messageWrapper')
+          : document.querySelectorAll(sel);
+        const wrapper = wrappers[idx];
         wrapper?.querySelector('.attachAudio .button')?.click();
-      }, wrapperIndex)
+      }, { idx: wrapperIndex, sel: '.messageWrapper' })
       .catch(() => {});
 
     setTimeout(() => {
@@ -189,11 +193,15 @@ async function downloadVoice(page, wrapperIndex, filePath) {
     return filePath;
   }
 
-  const audioSrc = await page.evaluate((idx) => {
-    const wrapper = document.querySelectorAll('.messageWrapper')[idx];
+  const audioSrc = await page.evaluate(({ idx, sel }) => {
+    const opened = document.querySelector('.openedChat');
+    const wrappers = opened
+      ? opened.querySelectorAll('.messageWrapper')
+      : document.querySelectorAll(sel);
+    const wrapper = wrappers[idx];
     const audio = wrapper?.querySelector('audio');
     return audio?.src || audio?.currentSrc || null;
-  }, wrapperIndex);
+  }, { idx: wrapperIndex, sel: '.messageWrapper' });
 
   if (audioSrc) {
     if (audioSrc.startsWith('blob:')) {
@@ -208,11 +216,9 @@ async function downloadVoice(page, wrapperIndex, filePath) {
 }
 
 async function downloadSticker(page, wrapperIndex, filePath) {
-  const sticker = page
-    .locator('.messageWrapper')
-    .nth(wrapperIndex)
-    .locator('.sticker[data-testid]')
-    .first();
+  const opened = page.locator('.openedChat .messageWrapper');
+  const wrappers = (await opened.count()) > 0 ? opened : page.locator('.messageWrapper');
+  const sticker = wrappers.nth(wrapperIndex).locator('.sticker[data-testid]').first();
 
   if ((await sticker.count()) === 0) {
     throw new Error('стикер не найден в DOM');
@@ -227,7 +233,14 @@ async function downloadSticker(page, wrapperIndex, filePath) {
 async function findWrapperIndex(page, message, wrapperSelector) {
   const index = await page.evaluate(
     ({ author, body, time, reply, wrapperSelector: sel }) => {
-      const wrappers = document.querySelectorAll(sel);
+      const wrappers = (() => {
+        const opened = document.querySelector('.openedChat');
+        if (opened) {
+          const inner = opened.querySelectorAll('.messageWrapper');
+          if (inner.length) return inner;
+        }
+        return document.querySelectorAll(sel);
+      })();
       const norm = (value) =>
         String(value || '')
           .replace(/\s+/g, ' ')

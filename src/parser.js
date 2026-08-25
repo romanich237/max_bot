@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { getMax, getProfileRotate, getMaxDisplayName } = require('./config');
+const { chatIdFromUrl } = require('./max-chats');
 const { buildMediaKey, bodyWithMedia } = require('./media');
 
 const MESSAGE_WRAPPER_SELECTOR = '.messageWrapper';
@@ -101,15 +102,46 @@ async function isLoginPage(page) {
   return false;
 }
 
+async function waitForOpenChat(page, chatUrl, timeout = 15000) {
+  const expectedId = chatIdFromUrl(chatUrl);
+  if (!expectedId) {
+    await page.waitForTimeout(800);
+    return;
+  }
+
+  const escaped = expectedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page
+    .waitForURL(new RegExp(`web\\.max\\.ru/${escaped}(?:[/?#]|$)`, 'i'), { timeout })
+    .catch(() => {});
+
+  await page
+    .waitForFunction(
+      (chatId) => {
+        if (!String(location.href || '').includes(chatId)) return false;
+        const opened = document.querySelector('.openedChat');
+        if (opened) {
+          const style = window.getComputedStyle(opened);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return Boolean(opened || document.querySelector('.messageWrapper'));
+      },
+      expectedId,
+      { timeout }
+    )
+    .catch(() => {});
+
+  await page.waitForTimeout(600);
+}
+
 async function openChatWhenReady(page, chatUrl, maxAttempts = 3) {
   await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await waitForOpenChat(page, chatUrl);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await page.waitForTimeout(3000);
-
     if (await isLoginPage(page)) {
       if (attempt < maxAttempts - 1) {
         await page.reload({ waitUntil: 'domcontentloaded' });
+        await waitForOpenChat(page, chatUrl);
         continue;
       }
       return null;
@@ -122,6 +154,7 @@ async function openChatWhenReady(page, chatUrl, maxAttempts = 3) {
 
     if (attempt < maxAttempts - 1) {
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForOpenChat(page, chatUrl);
     }
   }
 
@@ -544,7 +577,23 @@ async function parseMessages(page) {
         });
       }
 
-      const wrappers = Array.from(document.querySelectorAll(wrapperSelector));
+      function queryWrappers(selector) {
+        const opened = document.querySelector('.openedChat');
+        if (opened) {
+          const inner = opened.querySelectorAll('.messageWrapper');
+          if (inner.length) return Array.from(inner);
+        }
+
+        const main = document.querySelector('main[name*="Chat window" i], main[name*="чат" i]');
+        if (main) {
+          const inner = main.querySelectorAll('.messageWrapper');
+          if (inner.length) return Array.from(inner);
+        }
+
+        return Array.from(document.querySelectorAll(selector));
+      }
+
+      const wrappers = queryWrappers(wrapperSelector);
       const wrapperDates = collectWrapperDates(wrappers);
       let lastAuthor = '';
       return wrappers.map((wrapper, index) => {
@@ -685,6 +734,7 @@ module.exports = {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
   openChatWhenReady,
+  waitForOpenChat,
   readMessages,
   findNewMessages,
   diffByTail,

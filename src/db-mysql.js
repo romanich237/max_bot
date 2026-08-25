@@ -79,6 +79,8 @@ async function initSchema() {
   await ensureColumn(p, 'messages', 'timed_fingerprint', 'VARCHAR(40) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'date_str', 'VARCHAR(16) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'clock_str', 'VARCHAR(8) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'chat_title', 'VARCHAR(255) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'chat_kind', 'VARCHAR(32) DEFAULT NULL');
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS media_files (
@@ -170,12 +172,16 @@ async function saveMessage(message, options = {}) {
   const { forwarded = false, mediaFiles = [] } = options;
   const p = await getPool();
   const reply = message.reply || {};
+  const chatUrl = message.maxChatUrl || message.chatUrl || getMax().chatUrl || '';
+  const chatTitle = message.chatTitle || null;
+  const chatKind = message.chatKind || null;
 
   await p.query(
     `INSERT INTO messages
       (message_key, author, body, time_str, is_own, chat_url, media_json, forwarded,
-       reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str,
+       chat_title, chat_kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       body = VALUES(body),
       media_json = VALUES(media_json),
@@ -187,6 +193,8 @@ async function saveMessage(message, options = {}) {
       date_str = VALUES(date_str),
       clock_str = VALUES(clock_str),
       chat_url = VALUES(chat_url),
+      chat_title = COALESCE(VALUES(chat_title), chat_title),
+      chat_kind = COALESCE(VALUES(chat_kind), chat_kind),
       forwarded = GREATEST(forwarded, VALUES(forwarded))`,
     [
       message.key,
@@ -194,7 +202,7 @@ async function saveMessage(message, options = {}) {
       message.body || '',
       message.time || '',
       message.isOwn ? 1 : 0,
-      message.maxChatUrl || message.chatUrl || getMax().chatUrl || '',
+      chatUrl,
       JSON.stringify(message.media || []),
       forwarded ? 1 : 0,
       reply.author || null,
@@ -204,6 +212,8 @@ async function saveMessage(message, options = {}) {
       message.timedFingerprint || null,
       message.date || null,
       message.clock || null,
+      chatTitle,
+      chatKind,
     ]
   );
 
@@ -232,6 +242,13 @@ async function saveMessage(message, options = {}) {
         fileSize,
       ]
     );
+  }
+}
+
+async function saveMessages(messages, options = {}) {
+  if (!messages?.length) return;
+  for (const message of messages) {
+    await saveMessage(message, options);
   }
 }
 
@@ -285,6 +302,7 @@ module.exports = {
   saveSeenKeys,
   saveSnapshot,
   saveMessage,
+  saveMessages,
   wasForwarded,
   close,
 };

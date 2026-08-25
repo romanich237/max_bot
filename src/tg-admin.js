@@ -23,6 +23,7 @@ const {
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
   isRequiredChatUrl,
+  isPersonalMaxChat,
   isChatForwardEnabled,
   setChatForwardEnabled,
   getNotifyTarget,
@@ -877,7 +878,11 @@ async function showMaxChatView(chatId, messageId, index) {
   lines.push('');
   lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
   const target = getNotifyTarget(url);
-  lines.push('Куда слать в Telegram — выберите кнопками ниже.');
+  lines.push(
+    isPersonalMaxChat(url)
+      ? 'Личный чат MAX — по умолчанию в ЛС.'
+      : 'Куда слать в Telegram — выберите кнопками ниже.'
+  );
   lines.push(
     target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth
   );
@@ -954,7 +959,26 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
 
   waitingInput.set(String(chatId), 'maxchat:add');
   await deleteMessageQuiet(chatId, userMessageId);
-  await showMaxChatWherePrompt(chatId, { url: resolved.url, title: resolved.title });
+  await proceedMaxChatAdd(chatId, { url: resolved.url, title: resolved.title });
+  return true;
+}
+
+async function proceedMaxChatAdd(chatId, pending) {
+  const url = String(pending?.url || '').trim();
+  const title = String(pending?.title || chatLabelFromUrl(url) || '').trim();
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key) || {};
+  maxChatAddCache.set(key, {
+    ...cache,
+    pending: { url, title },
+  });
+
+  if (url && (isPersonalMaxChat(url) || isRequiredChatUrl(url))) {
+    return finishMaxChatAddWithTarget(chatId, 'dm');
+  }
+
+  waitingInput.set(key, 'maxchat:add');
+  await showMaxChatWherePrompt(chatId, { url, title });
   return true;
 }
 
@@ -1103,7 +1127,7 @@ async function handleMaxChatPick(chatId, chat) {
   if (url) {
     if (title) setChatTitle(url, title);
     waitingInput.set(String(chatId), 'maxchat:add');
-    await showMaxChatWherePrompt(chatId, { url, title });
+    await proceedMaxChatAdd(chatId, { url, title });
     return true;
   }
 

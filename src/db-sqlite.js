@@ -81,11 +81,14 @@ async function initSchema() {
   ensureColumn(database, 'messages', 'timed_fingerprint', 'TEXT');
   ensureColumn(database, 'messages', 'date_str', 'TEXT');
   ensureColumn(database, 'messages', 'clock_str', 'TEXT');
+  ensureColumn(database, 'messages', 'chat_title', 'TEXT');
+  ensureColumn(database, 'messages', 'chat_kind', 'TEXT');
 
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_messages_fingerprint ON messages (fingerprint);
     CREATE INDEX IF NOT EXISTS idx_messages_timed_fp ON messages (timed_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_messages_date_str ON messages (date_str);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_url ON messages (chat_url);
   `);
 
   schemaReady = true;
@@ -168,16 +171,24 @@ async function saveSnapshot(snapshot) {
 }
 
 async function saveMessage(message, options = {}) {
-  const { forwarded = false, mediaFiles = [] } = options;
   const database = getDb();
+  saveMessageRow(database, message, options);
+}
+
+function saveMessageRow(database, message, options = {}) {
+  const { forwarded = false, mediaFiles = [] } = options;
   const reply = message.reply || {};
+  const chatUrl = message.maxChatUrl || message.chatUrl || getMax().chatUrl || '';
+  const chatTitle = message.chatTitle || '';
+  const chatKind = message.chatKind || '';
 
   database
     .prepare(
       `INSERT INTO messages
         (message_key, author, body, time_str, is_own, chat_url, media_json, forwarded,
-         reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str,
+         chat_title, chat_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(message_key) DO UPDATE SET
         body = excluded.body,
         media_json = excluded.media_json,
@@ -189,6 +200,8 @@ async function saveMessage(message, options = {}) {
         date_str = excluded.date_str,
         clock_str = excluded.clock_str,
         chat_url = excluded.chat_url,
+        chat_title = COALESCE(excluded.chat_title, chat_title),
+        chat_kind = COALESCE(excluded.chat_kind, chat_kind),
         forwarded = MAX(forwarded, excluded.forwarded)`
     )
     .run(
@@ -197,7 +210,7 @@ async function saveMessage(message, options = {}) {
       message.body || '',
       message.time || '',
       message.isOwn ? 1 : 0,
-      message.maxChatUrl || message.chatUrl || getMax().chatUrl || '',
+      chatUrl,
       JSON.stringify(message.media || []),
       forwarded ? 1 : 0,
       reply.author || null,
@@ -206,7 +219,9 @@ async function saveMessage(message, options = {}) {
       message.fingerprint || null,
       message.timedFingerprint || null,
       message.date || null,
-      message.clock || null
+      message.clock || null,
+      chatTitle || null,
+      chatKind || null
     );
 
   const insertMedia = database.prepare(
@@ -235,6 +250,17 @@ async function saveMessage(message, options = {}) {
       fileSize
     );
   }
+}
+
+async function saveMessages(messages, options = {}) {
+  if (!messages?.length) return;
+  const database = getDb();
+  const tx = database.transaction((items) => {
+    for (const message of items) {
+      saveMessageRow(database, message, options);
+    }
+  });
+  tx(messages);
 }
 
 async function wasForwarded(message) {
@@ -295,6 +321,7 @@ module.exports = {
   saveSeenKeys,
   saveSnapshot,
   saveMessage,
+  saveMessages,
   wasForwarded,
   close,
 };

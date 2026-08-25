@@ -20,6 +20,7 @@ const {
   scopedMessageKey,
   chatIdFromUrl,
   chatLabelFromUrl,
+  chatKindFromUrl,
 } = require('./max-chats');
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
@@ -40,6 +41,7 @@ const {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
   openChatWhenReady,
+  waitForOpenChat,
   readMessages,
   findNewMessages,
   diffByTail,
@@ -127,9 +129,36 @@ async function persistMessage(message, options = {}) {
   if (!db.isEnabled()) return;
 
   try {
-    await db.saveMessage(message, options);
+    await db.saveMessage(decorateMessageForDb(message, message.maxChatUrl), options);
   } catch (err) {
     console.error('Ошибка записи сообщения в БД:', err.message);
+  }
+}
+
+function decorateMessageForDb(message, chatUrl) {
+  const url = message.maxChatUrl || chatUrl || '';
+  return {
+    ...message,
+    maxChatUrl: url,
+    chatTitle: chatLabelFromUrl(url),
+    chatKind: chatKindFromUrl(url),
+  };
+}
+
+async function persistParsedMessages(messages, chatUrl, options = {}) {
+  if (!db.isEnabled() || !messages?.length) return;
+
+  try {
+    const rows = messages.map((message) => decorateMessageForDb(message, chatUrl));
+    if (typeof db.saveMessages === 'function') {
+      await db.saveMessages(rows, options);
+    } else {
+      for (const row of rows) {
+        await db.saveMessage(row, options);
+      }
+    }
+  } catch (err) {
+    console.error('Ошибка записи сообщений в БД:', err.message);
   }
 }
 
@@ -236,13 +265,13 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   }
 
   await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.waitForTimeout(2500);
+  await waitForOpenChat(page, chatUrl);
 
   if (await isLoginPage(page)) {
     const defaultUrl = getDefaultChatUrl();
     if (defaultUrl && (await probeMaxSession(page, defaultUrl))) {
       await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      await page.waitForTimeout(2500);
+      await waitForOpenChat(page, chatUrl);
     }
 
     if (await isLoginPage(page)) {
@@ -268,6 +297,11 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   syncOwnNamesFromMessages(messages);
 
   const scoped = scopeMessages(chatUrl, messages);
+  const persistKey = scoped.map((message) => message.key).join('\n');
+  if (persistKey && persistKey !== chatState.lastPersistKey) {
+    await persistParsedMessages(scoped, chatUrl, { forwarded: false });
+    chatState.lastPersistKey = persistKey;
+  }
 
   if (isStartup && forwardOnStart > 0) {
     const recent = scoped.filter(shouldForward).slice(-forwardOnStart);
@@ -286,11 +320,6 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
 
   if (needsBaseline) {
     markSeen(scoped, chatState);
-    for (const message of scoped) {
-      if (!shouldForward(message)) {
-        await persistMessage(message, { forwarded: false });
-      }
-    }
     chatState.lastSnapshot = snapshotFrom(scoped);
     chatState.baselineDone = true;
     return scoped;

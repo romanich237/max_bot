@@ -1,5 +1,5 @@
 const { isLoginPage, openChatWhenReady } = require('./parser');
-const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl, mergeChatTitles, setChatTitle, getChatTitle } = require('./max-chats');
+const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl, mergeChatTitles, setChatTitle, getChatTitle, getChatTitles, isRequiredChatUrl } = require('./max-chats');
 
 const MAX_HOME_URL = 'https://web.max.ru/';
 const CHAT_ID_RE = /-\d{5,}/;
@@ -222,33 +222,36 @@ async function extractMaxChatsFromPage(page) {
       return lines[0] || '';
     }
 
-    function findContainerForId(chatId) {
-      const escaped = chatId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const selectors = [
-        `a[href*="${chatId}"]`,
-        `[href*="${chatId}"]`,
-        `button`,
-        '[role="listitem"]',
-        '[class*="cell" i]',
-        '[class*="chat" i]',
-        '[class*="dialog" i]',
-        '[class*="peer" i]',
-        '[class*="conversation" i]',
-      ];
-
-      for (const selector of selectors) {
-        for (const el of document.querySelectorAll(selector)) {
-          const blob = [
-            el.getAttribute('href') || '',
-            el.outerHTML || '',
-            el.innerText || '',
-          ].join(' ');
-          if (new RegExp(escaped).test(blob)) {
-            return el.closest('button.cell, div.item, li, [role="listitem"]') || el;
-          }
-        }
+    function isChatListRow(el) {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.matches?.('button.cell') && el.querySelector?.('h3.title')) return true;
+      if (el.querySelector?.('h3.title') && el.closest?.('.scrollListContent, .scrollListScrollable, aside')) {
+        return true;
       }
+      return false;
+    }
 
+    function rowOwnsChatId(el, chatId) {
+      if (!el || !chatId) return false;
+      const escaped = String(chatId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?:web\\.max\\.ru\\/|["'/])${escaped}(?:["'/?#\\s]|$)`);
+      const blob = [
+        el.getAttribute?.('href') || '',
+        [...(el.attributes || [])].map((attr) => attr.value).join(' '),
+        el.innerHTML || '',
+      ].join(' ');
+      return re.test(blob);
+    }
+
+    function findContainerForId(chatId) {
+      const rows = document.querySelectorAll(
+        '.scrollListContent div.item, .scrollListScrollable div.item, aside div.item, button.cell'
+      );
+      for (const row of rows) {
+        const cell = row.matches?.('button.cell') ? row : row.querySelector?.('button.cell') || row;
+        if (!isChatListRow(cell) && !isChatListRow(row)) continue;
+        if (rowOwnsChatId(cell, chatId) || rowOwnsChatId(row, chatId)) return cell;
+      }
       return null;
     }
 
@@ -300,7 +303,7 @@ async function extractMaxChatsFromPage(page) {
       if (!row) return;
       const heading = row.querySelector?.('h3.title') || (row.matches?.('h3.title') ? row : null);
       const title = (heading?.innerText || pickTitle(row) || '').trim().split('\n')[0].trim();
-      const blob = [nodeBlob(row), nodeBlob(row.parentElement), nodeBlob(heading)].join(' ');
+      const blob = nodeBlob(row);
       addChat(title, chatUrlFromId(chatIdFromBlob(blob)) || null, row);
     }
 
@@ -361,9 +364,10 @@ async function extractMaxChatsFromPage(page) {
 
     const html = document.body?.innerHTML || '';
     for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(-\d{5,})/g)) {
-      const chatId = `-${match[1]}`;
+      const chatId = match[1];
       const url = chatUrlFromMatch(chatId.match(CHAT_ID));
       const container = findContainerForId(chatId);
+      if (!isChatListRow(container)) continue;
       addChat(pickTitle(container), url, container);
     }
 
@@ -371,6 +375,7 @@ async function extractMaxChatsFromPage(page) {
       const chatId = match[1];
       const url = chatUrlFromMatch([chatId]);
       const container = findContainerForId(chatId);
+      if (!isChatListRow(container)) continue;
       addChat(pickTitle(container), url, container);
     }
 
@@ -453,7 +458,11 @@ function normalizePageChatUrl(url) {
 }
 
 async function readOpenChatTitle(page) {
-  const profileBtn = page
+  const opened = page.locator('.openedChat').first();
+  const hasOpened = await opened.isVisible({ timeout: 800 }).catch(() => false);
+  const scope = hasOpened ? opened : page;
+
+  const profileBtn = scope
     .getByRole('button', { name: /^(Open|Открыть)\s+.+(profile|профил)/i })
     .first();
   if (await profileBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
@@ -467,7 +476,7 @@ async function readOpenChatTitle(page) {
   }
 
   const mainName = await page
-    .locator('main[name*="Chat window" i], main[name*="чат" i]')
+    .locator('main[name*="Chat window" i]')
     .first()
     .getAttribute('name')
     .catch(() => null);
@@ -478,31 +487,45 @@ async function readOpenChatTitle(page) {
       .replace(/^Чат с\s+/i, '')
       .replace(/\u00a0/g, ' ')
       .trim();
-    if (cleaned) return cleaned;
+    if (cleaned && !/^(chat window|чат)$/i.test(cleaned)) return cleaned;
   }
 
-  const heading = page.locator('h2').first();
+  const heading = scope.locator('h2').first();
   if (await heading.isVisible({ timeout: 1000 }).catch(() => false)) {
     const text = (await heading.innerText()).trim();
-    const match = text.match(/(?:Chat window with|Чат)\s+(.+)/i);
+    const match = text.match(/(?:Chat window with|Чат с)\s+(.+)/i);
     if (match?.[1]) return match[1].trim();
-    return text.split('\n')[0].trim();
+    const firstLine = text.split('\n')[0].trim();
+    if (firstLine && !/^(чаты|chats)$/i.test(firstLine)) return firstLine;
   }
 
   return '';
 }
 
+function titleOwnedByOtherChat(title, url) {
+  const clean = normalizeChatTitle(title).toLowerCase();
+  if (!clean) return false;
+  const current = normalizeMaxChatUrl(url);
+  for (const [otherUrl, stored] of Object.entries(getChatTitles())) {
+    if (otherUrl === current) continue;
+    if (normalizeChatTitle(stored).toLowerCase() === clean) return true;
+  }
+  return false;
+}
+
 async function ensureChatTitleFromPage(page, chatUrl) {
   const normalized = normalizeMaxChatUrl(chatUrl);
-  if (!normalized || getChatTitle(normalized)) return getChatTitle(normalized);
+  if (!normalized || getChatTitle(normalized) || isRequiredChatUrl(normalized)) {
+    return getChatTitle(normalized) || chatLabelFromUrl(normalized);
+  }
 
   const title = await readOpenChatTitle(page);
-  if (title) {
+  if (title && !titleOwnedByOtherChat(title, normalized)) {
     setChatTitle(normalized, title);
     return title;
   }
 
-  return '';
+  return getChatTitle(normalized);
 }
 
 async function resolveChatUrlByTitle(page, title) {
@@ -567,7 +590,7 @@ async function syncMonitoredChatTitles(page, urls = [], options = {}) {
       }
 
       const title = await readOpenChatTitle(page);
-      if (title) {
+      if (title && !titleOwnedByOtherChat(title, chatUrl)) {
         setChatTitle(chatUrl, title);
         updated[chatUrl] = title;
       }

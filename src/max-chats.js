@@ -52,16 +52,43 @@ function chatIdFromUrl(url) {
   return positive ? positive[1] : '';
 }
 
+function requiredTitleForUrl(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  const required = BUILTIN_REQUIRED_CHATS.find(
+    (item) => normalizeMaxChatUrl(item.url) === normalized
+  );
+  return required ? required.title : '';
+}
+
+function isPersonalMaxChat(url) {
+  const id = chatIdFromUrl(url);
+  return Boolean(id) && !String(id).startsWith('-');
+}
+
+function isGroupMaxChat(url) {
+  const id = chatIdFromUrl(url);
+  return Boolean(id) && String(id).startsWith('-');
+}
+
+function defaultNotifyTarget(url) {
+  if (isRequiredChatUrl(url) || isPersonalMaxChat(url)) return 'dm';
+  return 'both';
+}
+
+function chatKindFromUrl(url) {
+  if (isRequiredChatUrl(url)) return 'service';
+  if (isPersonalMaxChat(url)) return 'personal';
+  if (isGroupMaxChat(url)) return 'group';
+  return '';
+}
+
 function chatLabelFromUrl(url) {
   const normalized = normalizeMaxChatUrl(url);
+  const requiredTitle = requiredTitleForUrl(normalized);
+  if (requiredTitle) return requiredTitle;
+
   const title = getChatTitle(normalized);
   if (title) return title;
-
-  for (const required of BUILTIN_REQUIRED_CHATS) {
-    if (normalizeMaxChatUrl(required.url) === normalized) {
-      return required.title;
-    }
-  }
 
   const id = chatIdFromUrl(normalized);
   return id ? `Чат ${id}` : 'MAX';
@@ -87,7 +114,8 @@ function getChatTitle(url) {
 
 function setChatTitle(url, title) {
   const normalized = normalizeMaxChatUrl(url);
-  const clean = normalizeChatTitle(title);
+  const requiredTitle = requiredTitleForUrl(normalized);
+  const clean = requiredTitle || normalizeChatTitle(title);
   if (!normalized || !clean) return;
 
   const titles = getChatTitles();
@@ -135,7 +163,7 @@ function getNotifyTarget(url) {
   const normalized = normalizeMaxChatUrl(url);
   const saved = getNotifyTargets()[normalized];
   if (saved) return saved;
-  return isRequiredChatUrl(normalized) ? 'dm' : 'both';
+  return defaultNotifyTarget(normalized);
 }
 
 function setNotifyTarget(url, target) {
@@ -157,7 +185,7 @@ function removeNotifyTarget(url) {
 }
 function chatMenuLabel(url) {
   const pin = isRequiredChatUrl(url) ? '📌 ' : '';
-  const title = getChatTitle(url) || truncateUrl(url, 22);
+  const title = chatLabelFromUrl(url) || truncateUrl(url, 22);
   return truncateButtonText(`${pin}${title}`, 40);
 }
 
@@ -244,9 +272,7 @@ function ensureRequiredChats() {
 
   for (const required of BUILTIN_REQUIRED_CHATS) {
     const normalized = normalizeMaxChatUrl(required.url);
-    if (!getChatTitle(normalized)) {
-      setChatTitle(normalized, required.title);
-    }
+    setChatTitle(normalized, required.title);
     if (!getNotifyTargets()[normalized]) {
       setNotifyTarget(normalized, 'dm');
     }
@@ -263,6 +289,11 @@ function ensureRequiredChats() {
 
   if (changed) {
     store.setPath(['max', 'monitorChatUrls'], extras);
+  }
+
+  for (const url of collectMonitorUrls()) {
+    if (!isPersonalMaxChat(url) || getNotifyTargets()[url]) continue;
+    setNotifyTarget(url, 'dm');
   }
 }
 
@@ -331,6 +362,11 @@ function setDefaultChatUrl(url, options = {}) {
   store.setPath(['max', 'chatUrl'], normalized);
   store.setPath(['max', 'monitorChatUrls'], extras);
   if (options.title) setChatTitle(normalized, options.title);
+  if (options.notifyTarget) {
+    setNotifyTarget(normalized, options.notifyTarget);
+  } else if (!getNotifyTargets()[normalized]) {
+    setNotifyTarget(normalized, defaultNotifyTarget(normalized));
+  }
   return { ok: true, url: normalized };
 }
 
@@ -341,13 +377,17 @@ function addMonitorChatUrl(url, options = {}) {
   }
 
   if (options.asDefault) {
-    return setDefaultChatUrl(normalized);
+    return setDefaultChatUrl(normalized, options);
   }
 
   const urls = getMonitorChatUrls();
   if (urls.includes(normalized)) {
     if (options.title) setChatTitle(normalized, options.title);
-    if (options.notifyTarget) setNotifyTarget(normalized, options.notifyTarget);
+    if (options.notifyTarget) {
+      setNotifyTarget(normalized, options.notifyTarget);
+    } else if (!getNotifyTargets()[normalized]) {
+      setNotifyTarget(normalized, defaultNotifyTarget(normalized));
+    }
     return { ok: true, url: normalized, duplicate: true };
   }
 
@@ -368,6 +408,8 @@ function addMonitorChatUrl(url, options = {}) {
 
   if (options.notifyTarget) {
     setNotifyTarget(normalized, options.notifyTarget);
+  } else if (!getNotifyTargets()[normalized]) {
+    setNotifyTarget(normalized, defaultNotifyTarget(normalized));
   }
 
   return { ok: true, url: normalized };
@@ -419,7 +461,7 @@ function buildMaxChatsText() {
   }
 
   lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
-  lines.push('Куда слать (ЛС / группа) выбирается при добавлении чата или в его карточке.', '');
+  lines.push('Личные чаты MAX по умолчанию уходят в ЛС, группы — в ЛС и группу.', '');
 
   for (const url of urls) {
     const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
@@ -578,6 +620,10 @@ module.exports = {
   chatIdFromUrl,
   chatLabelFromUrl,
   chatMenuLabel,
+  chatKindFromUrl,
+  isPersonalMaxChat,
+  isGroupMaxChat,
+  defaultNotifyTarget,
   getChatTitles,
   getChatTitle,
   setChatTitle,
