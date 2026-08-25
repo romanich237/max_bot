@@ -48,4 +48,11 @@ pm2 logs max-tg
 pm2 restart max-tg
 ```
 
-Другой порт веб-страницы — в `config.json` → `sitePortal.port`.
+Если автообновление не выполняется, используйте:
+```bash
+cd ~/каталог
+git fetch origin
+git reset --hard origin/main
+npm install
+pm2 restart max-tg max-tg-update
+```
