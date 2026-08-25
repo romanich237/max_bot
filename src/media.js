@@ -52,12 +52,36 @@ function buildFilePath(message, media, index) {
   return path.join(dir, fileName);
 }
 
+function stableMediaUrl(url) {
+  const raw = String(url || '');
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw);
+    const path = parsed.pathname || '';
+    if (/\.[a-z0-9]{2,5}$/i.test(path) || /\/[a-f0-9-]{16,}(?:\/|$)/i.test(path)) {
+      return `${parsed.origin}${path}`;
+    }
+
+    const params = new URLSearchParams(parsed.search);
+    for (const key of [...params.keys()]) {
+      if (/^(x-amz-|sig|signature|expires|expiry|token|hash|ttl|ts|e|st|exp)/i.test(key)) {
+        params.delete(key);
+      }
+    }
+    const query = params.toString();
+    return `${parsed.origin}${path}${query ? `?${query}` : ''}`;
+  } catch {
+    return raw.split('?')[0].split('#')[0];
+  }
+}
+
 function buildMediaKey(media) {
   if (!media?.length) return '';
   return media
     .map((item) => {
-      if (item.url) return `${item.type}:${item.url}`;
       if (item.stickerId) return `sticker:${item.stickerId}`;
+      if (item.url) return `${item.type}:${stableMediaUrl(item.url)}`;
       if (item.duration) return `voice:${item.duration}`;
       return item.type;
     })

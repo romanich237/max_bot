@@ -79,8 +79,9 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
 
   if (message.body) parts.push(escapeHtml(message.body));
 
-  if (showTime && message.time) {
-    parts.push(`<i>${escapeHtml(message.time)}</i>`);
+  if (showTime && (message.time || message.date)) {
+    const when = [message.date, message.clock || message.time].filter(Boolean).join(' ');
+    parts.push(`<i>${escapeHtml(when)}</i>`);
   }
 
   return parts.filter((p) => p !== '').join('\n');

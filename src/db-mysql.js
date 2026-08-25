@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const { getDatabase, getMax } = require('./config');
+const { isDuplicateIdentity } = require('./parser');
 
 let pool = null;
 let schemaReady = false;
@@ -74,6 +75,10 @@ async function initSchema() {
   await ensureColumn(p, 'messages', 'reply_author', 'VARCHAR(255) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'reply_body', 'TEXT DEFAULT NULL');
   await ensureColumn(p, 'messages', 'reply_is_voice', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn(p, 'messages', 'fingerprint', 'VARCHAR(40) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'timed_fingerprint', 'VARCHAR(40) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'date_str', 'VARCHAR(16) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'clock_str', 'VARCHAR(8) DEFAULT NULL');
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS media_files (
@@ -91,6 +96,9 @@ async function initSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  await p.query('CREATE INDEX idx_messages_fingerprint ON messages (fingerprint)').catch(() => {});
+  await p.query('CREATE INDEX idx_messages_timed_fp ON messages (timed_fingerprint)').catch(() => {});
+
   schemaReady = true;
   const database = getDatabase();
   console.log(`MySQL подключен: ${database.host}/${database.database}`);
@@ -104,9 +112,23 @@ async function testConnection() {
 async function loadSeenKeys() {
   const p = await getPool();
   const [rows] = await p.query(
-    'SELECT message_key FROM seen_messages ORDER BY created_at ASC LIMIT 1000'
+    'SELECT message_key FROM seen_messages ORDER BY created_at DESC LIMIT 4000'
   );
-  return rows.map((r) => r.message_key);
+  return rows.map((r) => r.message_key).reverse();
+}
+
+async function loadForwardedIdentities() {
+  const p = await getPool();
+  const [rows] = await p.query(
+    `SELECT message_key AS \`key\`, fingerprint, timed_fingerprint AS timedFingerprint,
+            date_str AS date, clock_str AS clock, time_str AS time,
+            author, body, chat_url AS maxChatUrl, created_at AS seenAt
+     FROM messages
+     WHERE forwarded = 1
+     ORDER BY id DESC
+     LIMIT 4000`
+  );
+  return rows;
 }
 
 async function loadSnapshot() {
@@ -121,13 +143,17 @@ async function saveSeenKeys(keys) {
   if (!keys.length) return;
 
   const p = await getPool();
-  const slice = keys.slice(-500);
-
-  await p.query('DELETE FROM seen_messages');
-  if (slice.length) {
-    const placeholders = slice.map(() => '(?)').join(',');
-    await p.query(`INSERT IGNORE INTO seen_messages (message_key) VALUES ${placeholders}`, slice);
-  }
+  const slice = keys.slice(-4000);
+  const placeholders = slice.map(() => '(?)').join(',');
+  await p.query(`INSERT IGNORE INTO seen_messages (message_key) VALUES ${placeholders}`, slice);
+  await p.query(
+    `DELETE FROM seen_messages
+     WHERE created_at < (
+       SELECT created_at FROM (
+         SELECT created_at FROM seen_messages ORDER BY created_at DESC LIMIT 1 OFFSET 3999
+       ) AS keep_from
+     )`
+  ).catch(() => {});
 }
 
 async function saveSnapshot(snapshot) {
@@ -148,14 +174,19 @@ async function saveMessage(message, options = {}) {
   await p.query(
     `INSERT INTO messages
       (message_key, author, body, time_str, is_own, chat_url, media_json, forwarded,
-       reply_author, reply_body, reply_is_voice)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       body = VALUES(body),
       media_json = VALUES(media_json),
       reply_author = VALUES(reply_author),
       reply_body = VALUES(reply_body),
       reply_is_voice = VALUES(reply_is_voice),
+      fingerprint = VALUES(fingerprint),
+      timed_fingerprint = VALUES(timed_fingerprint),
+      date_str = VALUES(date_str),
+      clock_str = VALUES(clock_str),
+      chat_url = VALUES(chat_url),
       forwarded = GREATEST(forwarded, VALUES(forwarded))`,
     [
       message.key,
@@ -163,12 +194,16 @@ async function saveMessage(message, options = {}) {
       message.body || '',
       message.time || '',
       message.isOwn ? 1 : 0,
-      getMax().chatUrl || '',
+      message.maxChatUrl || message.chatUrl || getMax().chatUrl || '',
       JSON.stringify(message.media || []),
       forwarded ? 1 : 0,
       reply.author || null,
       reply.body || null,
       reply.isVoice ? 1 : 0,
+      message.fingerprint || null,
+      message.timedFingerprint || null,
+      message.date || null,
+      message.clock || null,
     ]
   );
 
@@ -203,29 +238,34 @@ async function saveMessage(message, options = {}) {
 async function wasForwarded(message) {
   const p = await getPool();
   const key = String(message.key || '');
-  if (!key) return false;
+  const fingerprint = String(message.fingerprint || '');
+  const timedFingerprint = String(message.timedFingerprint || '');
+  if (!key && !fingerprint) return false;
 
-  const [exact] = await p.query(
-    'SELECT 1 AS ok FROM messages WHERE forwarded = 1 AND message_key = ? LIMIT 1',
-    [key]
-  );
-  if (exact.length) return true;
+  if (key) {
+    const [exact] = await p.query(
+      'SELECT 1 AS ok FROM messages WHERE forwarded = 1 AND message_key = ? LIMIT 1',
+      [key]
+    );
+    if (exact.length) return true;
+  }
 
   const [rows] = await p.query(
-    `SELECT message_key, body FROM messages
-     WHERE forwarded = 1 AND author = ? AND IFNULL(time_str, '') = ?
-     ORDER BY id DESC LIMIT 30`,
-    [message.author || '', message.time || '']
+    `SELECT message_key, body, author, time_str, date_str, clock_str, fingerprint,
+            timed_fingerprint, chat_url, created_at
+     FROM messages
+     WHERE forwarded = 1 AND (
+       message_key = ?
+       OR (fingerprint IS NOT NULL AND fingerprint != '' AND fingerprint = ?)
+       OR (timed_fingerprint IS NOT NULL AND timed_fingerprint != '' AND timed_fingerprint = ?)
+       OR (author = ? AND IFNULL(body, '') = ?)
+     )
+     ORDER BY id DESC
+     LIMIT 80`,
+    [key, fingerprint, timedFingerprint, message.author || '', message.body || '']
   );
 
-  const body = message.body || '';
-  return rows.some(
-    (row) =>
-      (row.body || '') === body &&
-      (row.message_key === key ||
-        String(row.message_key).endsWith(`::${key}`) ||
-        key.endsWith(`::${row.message_key}`))
-  );
+  return rows.some((row) => isDuplicateIdentity(message, row));
 }
 
 async function close() {
@@ -240,6 +280,7 @@ module.exports = {
   initSchema,
   testConnection,
   loadSeenKeys,
+  loadForwardedIdentities,
   loadSnapshot,
   saveSeenKeys,
   saveSnapshot,

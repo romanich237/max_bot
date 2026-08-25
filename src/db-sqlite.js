@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { getDatabase, getMax } = require('./config');
+const { isDuplicateIdentity } = require('./parser');
 
 let db = null;
 let schemaReady = false;
@@ -76,6 +77,16 @@ async function initSchema() {
   ensureColumn(database, 'messages', 'reply_author', 'TEXT');
   ensureColumn(database, 'messages', 'reply_body', 'TEXT');
   ensureColumn(database, 'messages', 'reply_is_voice', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'messages', 'fingerprint', 'TEXT');
+  ensureColumn(database, 'messages', 'timed_fingerprint', 'TEXT');
+  ensureColumn(database, 'messages', 'date_str', 'TEXT');
+  ensureColumn(database, 'messages', 'clock_str', 'TEXT');
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_messages_fingerprint ON messages (fingerprint);
+    CREATE INDEX IF NOT EXISTS idx_messages_timed_fp ON messages (timed_fingerprint);
+    CREATE INDEX IF NOT EXISTS idx_messages_date_str ON messages (date_str);
+  `);
 
   schemaReady = true;
   console.log(`SQLite подключен: ${getDatabase().file}`);
@@ -88,9 +99,25 @@ async function testConnection() {
 async function loadSeenKeys() {
   const database = getDb();
   const rows = database
-    .prepare('SELECT message_key FROM seen_messages ORDER BY created_at ASC LIMIT 1000')
+    .prepare('SELECT message_key FROM seen_messages ORDER BY created_at DESC LIMIT 4000')
     .all();
-  return rows.map((r) => r.message_key);
+  return rows.map((r) => r.message_key).reverse();
+}
+
+async function loadForwardedIdentities() {
+  const database = getDb();
+  const rows = database
+    .prepare(
+      `SELECT message_key AS key, fingerprint, timed_fingerprint AS timedFingerprint,
+              date_str AS date, clock_str AS clock, time_str AS time,
+              author, body, chat_url AS maxChatUrl, created_at AS seenAt
+       FROM messages
+       WHERE forwarded = 1
+       ORDER BY id DESC
+       LIMIT 4000`
+    )
+    .all();
+  return rows;
 }
 
 async function loadSnapshot() {
@@ -104,13 +131,25 @@ async function saveSeenKeys(keys) {
   if (!keys.length) return;
 
   const database = getDb();
-  const slice = keys.slice(-500);
+  const slice = keys.slice(-4000);
   const insert = database.prepare('INSERT OR IGNORE INTO seen_messages (message_key) VALUES (?)');
 
   const tx = database.transaction((items) => {
-    database.prepare('DELETE FROM seen_messages').run();
     for (const key of items) {
       insert.run(key);
+    }
+    const extra =
+      database.prepare('SELECT COUNT(*) AS n FROM seen_messages').get().n - 4000;
+    if (extra > 0) {
+      database
+        .prepare(
+          `DELETE FROM seen_messages WHERE rowid IN (
+             SELECT rowid FROM (
+               SELECT rowid FROM seen_messages ORDER BY created_at ASC LIMIT ?
+             )
+           )`
+        )
+        .run(extra);
     }
   });
 
@@ -137,14 +176,19 @@ async function saveMessage(message, options = {}) {
     .prepare(
       `INSERT INTO messages
         (message_key, author, body, time_str, is_own, chat_url, media_json, forwarded,
-         reply_author, reply_body, reply_is_voice)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         reply_author, reply_body, reply_is_voice, fingerprint, timed_fingerprint, date_str, clock_str)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(message_key) DO UPDATE SET
         body = excluded.body,
         media_json = excluded.media_json,
         reply_author = excluded.reply_author,
         reply_body = excluded.reply_body,
         reply_is_voice = excluded.reply_is_voice,
+        fingerprint = excluded.fingerprint,
+        timed_fingerprint = excluded.timed_fingerprint,
+        date_str = excluded.date_str,
+        clock_str = excluded.clock_str,
+        chat_url = excluded.chat_url,
         forwarded = MAX(forwarded, excluded.forwarded)`
     )
     .run(
@@ -153,12 +197,16 @@ async function saveMessage(message, options = {}) {
       message.body || '',
       message.time || '',
       message.isOwn ? 1 : 0,
-      getMax().chatUrl || '',
+      message.maxChatUrl || message.chatUrl || getMax().chatUrl || '',
       JSON.stringify(message.media || []),
       forwarded ? 1 : 0,
       reply.author || null,
       reply.body || null,
-      reply.isVoice ? 1 : 0
+      reply.isVoice ? 1 : 0,
+      message.fingerprint || null,
+      message.timedFingerprint || null,
+      message.date || null,
+      message.clock || null
     );
 
   const insertMedia = database.prepare(
@@ -192,29 +240,42 @@ async function saveMessage(message, options = {}) {
 async function wasForwarded(message) {
   const database = getDb();
   const key = String(message.key || '');
-  if (!key) return false;
+  const fingerprint = String(message.fingerprint || '');
+  const timedFingerprint = String(message.timedFingerprint || '');
+  if (!key && !fingerprint) return false;
 
-  const exact = database
-    .prepare('SELECT 1 AS ok FROM messages WHERE forwarded = 1 AND message_key = ? LIMIT 1')
-    .get(key);
-  if (exact) return true;
+  if (key) {
+    const exact = database
+      .prepare('SELECT 1 AS ok FROM messages WHERE forwarded = 1 AND message_key = ? LIMIT 1')
+      .get(key);
+    if (exact) return true;
+  }
 
   const rows = database
     .prepare(
-      `SELECT message_key, body FROM messages
-       WHERE forwarded = 1 AND author = ? AND IFNULL(time_str, '') = ?
-       ORDER BY id DESC LIMIT 30`
+      `SELECT message_key, body, author, time_str, date_str, clock_str, fingerprint,
+              timed_fingerprint, chat_url, created_at
+       FROM messages
+       WHERE forwarded = 1 AND (
+         message_key = ?
+         OR (? != '' AND fingerprint = ?)
+         OR (? != '' AND timed_fingerprint = ?)
+         OR (author = ? AND IFNULL(body, '') = ?)
+       )
+       ORDER BY id DESC
+       LIMIT 80`
     )
-    .all(message.author || '', message.time || '');
+    .all(
+      key,
+      fingerprint,
+      fingerprint,
+      timedFingerprint,
+      timedFingerprint,
+      message.author || '',
+      message.body || ''
+    );
 
-  const body = message.body || '';
-  return rows.some(
-    (row) =>
-      (row.body || '') === body &&
-      (row.message_key === key ||
-        String(row.message_key).endsWith(`::${key}`) ||
-        key.endsWith(`::${row.message_key}`))
-  );
+  return rows.some((row) => isDuplicateIdentity(message, row));
 }
 
 async function close() {
@@ -229,6 +290,7 @@ module.exports = {
   initSchema,
   testConnection,
   loadSeenKeys,
+  loadForwardedIdentities,
   loadSnapshot,
   saveSeenKeys,
   saveSnapshot,

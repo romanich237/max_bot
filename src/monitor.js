@@ -44,11 +44,38 @@ const {
   findNewMessages,
   diffByTail,
   shouldForward,
+  isDuplicateIdentity,
 } = require('./parser');
 
-function markSeen(messages, seenKeys) {
+function markSeen(messages, chatState) {
   for (const message of messages) {
-    seenKeys.add(message.key);
+    rememberMessage(message, chatState);
+  }
+}
+
+function rememberMessage(message, chatState) {
+  if (!chatState.seenKeys) chatState.seenKeys = new Set();
+  if (!Array.isArray(chatState.seenRecords)) chatState.seenRecords = [];
+  if (message.key) chatState.seenKeys.add(message.key);
+  if (!message.fingerprint && !message.timedFingerprint) return;
+  const record = {
+    key: message.key,
+    fingerprint: message.fingerprint,
+    timedFingerprint: message.timedFingerprint,
+    date: message.date || '',
+    clock: message.clock || '',
+    time: message.time || '',
+    author: message.author || '',
+    body: message.body || '',
+    maxChatUrl: message.maxChatUrl || chatState.url || '',
+    seenAt: message.seenAt || new Date().toISOString(),
+  };
+  const exists = (chatState.seenRecords || []).some((item) => isDuplicateIdentity(message, item));
+  if (!exists) {
+    chatState.seenRecords.push(record);
+    if (chatState.seenRecords.length > 4000) {
+      chatState.seenRecords.splice(0, chatState.seenRecords.length - 4000);
+    }
   }
 }
 
@@ -58,7 +85,9 @@ function logMessage(message, prefix) {
   const mediaInfo = message.media?.length
     ? ` +${message.media.map((m) => m.type).join(',')}`
     : '';
-  console.log(`${prefix}: ${message.author}${replyInfo}: "${preview}"${mediaInfo}`);
+  const when = [message.date, message.clock || message.time].filter(Boolean).join(' ');
+  const timeInfo = when ? ` · ${when}` : '';
+  console.log(`${prefix}: ${message.author}${replyInfo}: "${preview}"${mediaInfo}${timeInfo}`);
 }
 
 function keysMatch(a, b) {
@@ -67,18 +96,24 @@ function keysMatch(a, b) {
   return a.endsWith(`::${b}`) || b.endsWith(`::${a}`);
 }
 
-function isMessageSeen(message, seenKeys) {
+function isMessageSeen(message, chatState) {
   const messageKey = String(message.key || '');
-  if (!messageKey) return false;
-  if (seenKeys.has(messageKey)) return true;
-  for (const key of seenKeys) {
-    if (keysMatch(String(key), messageKey)) return true;
+  const seenKeys = chatState.seenKeys || chatState;
+  if (messageKey && seenKeys.has?.(messageKey)) return true;
+  if (messageKey && seenKeys.forEach) {
+    for (const key of seenKeys) {
+      if (keysMatch(String(key), messageKey)) return true;
+    }
+  }
+  const records = chatState.seenRecords;
+  if (Array.isArray(records) && records.some((item) => isDuplicateIdentity(message, item))) {
+    return true;
   }
   return false;
 }
 
-async function wasAlreadyForwarded(message, seenKeys) {
-  if (isMessageSeen(message, seenKeys)) return true;
+async function wasAlreadyForwarded(message, chatState) {
+  if (isMessageSeen(message, chatState)) return true;
   if (!db.isEnabled() || typeof db.wasForwarded !== 'function') return false;
   try {
     return Boolean(await db.wasForwarded(message));
@@ -117,6 +152,7 @@ async function forwardMessage(page, message, isCatchUp, maxChatUrl) {
 function scopeMessages(chatUrl, messages) {
   return messages.map((message) => ({
     ...message,
+    maxChatUrl: chatUrl,
     key: scopedMessageKey(chatUrl, message.key),
   }));
 }
@@ -126,6 +162,7 @@ function createChatStates(state) {
   const urls = getMonitorChatUrls();
   const chatSnapshots = state.chatSnapshots || {};
   const rawSeen = state.seenKeys || [];
+  const rawRecords = state.seenRecords || [];
 
   const globalSeen = new Set(
     rawSeen.map((key) =>
@@ -143,9 +180,17 @@ function createChatStates(state) {
         return !/^-?\d{5,}::/.test(key);
       })
     );
+    const seenRecords = rawRecords.filter((item) => {
+      const chatUrl = item.maxChatUrl || item.chatUrl || '';
+      if (!chatUrl) return true;
+      if (chatUrl === url) return true;
+      const itemId = chatIdFromUrl(chatUrl);
+      return prefix && itemId && itemId === prefix;
+    });
     chatStates.set(url, {
       url,
       seenKeys,
+      seenRecords,
       lastSnapshot:
         chatSnapshots[url] || (url === defaultUrl ? state.lastSnapshot || [] : []),
       baselineDone: true,
@@ -158,6 +203,7 @@ function createChatStates(state) {
 function persistChatStates(chatStates) {
   const defaultUrl = getDefaultChatUrl();
   const seenKeys = new Set();
+  const seenRecords = [];
   const chatSnapshots = {};
   let lastSnapshot = [];
 
@@ -166,6 +212,9 @@ function persistChatStates(chatStates) {
     for (const key of chatState.seenKeys) {
       seenKeys.add(key);
     }
+    for (const record of chatState.seenRecords || []) {
+      seenRecords.push(record);
+    }
     if (url === defaultUrl) {
       lastSnapshot = chatState.lastSnapshot;
     }
@@ -173,6 +222,7 @@ function persistChatStates(chatStates) {
 
   return {
     seenKeys: [...seenKeys],
+    seenRecords: seenRecords.slice(-4000),
     lastSnapshot,
     chatSnapshots,
   };
@@ -222,18 +272,20 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   if (isStartup && forwardOnStart > 0) {
     const recent = scoped.filter(shouldForward).slice(-forwardOnStart);
     for (const message of recent) {
-      if (await wasAlreadyForwarded(message, chatState.seenKeys)) {
+      if (await wasAlreadyForwarded(message, chatState)) {
         logMessage(message, `Старт · уже в чате TG (${chatLabelFromUrl(chatUrl)})`);
+        rememberMessage(message, chatState);
+        await persistMessage(message, { forwarded: true });
         continue;
       }
       logMessage(message, `Старт → TG (${chatLabelFromUrl(chatUrl)})`);
       await forwardMessage(page, message, true, chatUrl);
+      rememberMessage(message, chatState);
     }
   }
 
-  markSeen(scoped, chatState.seenKeys);
-
   if (needsBaseline) {
+    markSeen(scoped, chatState);
     for (const message of scoped) {
       if (!shouldForward(message)) {
         await persistMessage(message, { forwarded: false });
@@ -244,14 +296,15 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     return scoped;
   }
 
-  const byKeys = findNewMessages(scoped, chatState.seenKeys);
+  const byKeys = findNewMessages(scoped, chatState.seenKeys).filter(
+    (message) => !isMessageSeen(message, chatState)
+  );
   let toSend = byKeys;
 
   if (toSend.length === 0 && chatState.lastSnapshot.length > 0) {
     const byTail = diffByTail(chatState.lastSnapshot, scoped).filter(
-      (message) => !chatState.seenKeys.has(message.key)
+      (message) => !isMessageSeen(message, chatState)
     );
-    markSeen(byTail, chatState.seenKeys);
     toSend = byTail;
   }
 
@@ -259,15 +312,21 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     if (!shouldForward(message)) {
       logMessage(message, `Пропуск (моё) · ${chatLabelFromUrl(chatUrl)}`);
       await persistMessage(message, { forwarded: false });
+      rememberMessage(message, chatState);
       continue;
     }
-    if (await wasAlreadyForwarded(message, chatState.seenKeys)) {
+    if (await wasAlreadyForwarded(message, chatState)) {
       logMessage(message, `Пропуск (уже в чате TG) · ${chatLabelFromUrl(chatUrl)}`);
+      rememberMessage(message, chatState);
+      await persistMessage(message, { forwarded: true });
       continue;
     }
     logMessage(message, `Новое · ${chatLabelFromUrl(chatUrl)}`);
     await forwardMessage(page, message, false, chatUrl);
+    rememberMessage(message, chatState);
   }
+
+  markSeen(scoped, chatState);
 
   if (toSend.length > 0) {
     chatState.lastSnapshot = snapshotFrom(scoped);
@@ -277,14 +336,19 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
 }
 
 function snapshotFrom(messages) {
-  return messages.map(({ key, author, body, time, isOwn, media, reply }) => ({
+  return messages.map(({ key, author, body, time, date, clock, fingerprint, timedFingerprint, isOwn, media, reply, maxChatUrl }) => ({
     key,
     author,
     body,
     time,
+    date,
+    clock,
+    fingerprint,
+    timedFingerprint,
     isOwn,
     media,
     reply,
+    maxChatUrl,
   }));
 }
 
@@ -495,7 +559,7 @@ async function startMonitor() {
       if (defaultState) {
         const scoped = scopeMessages(chatUrl, loaded);
         defaultState.lastSnapshot = snapshotFrom(scoped);
-        markSeen(scoped, defaultState.seenKeys);
+        markSeen(scoped, defaultState);
       }
       clearReauthPromptIds();
       clearSessionExpiredNotice();
@@ -820,6 +884,7 @@ async function startMonitor() {
           chatStates.set(url, {
             url,
             seenKeys: new Set(),
+            seenRecords: [],
             lastSnapshot: [],
             baselineDone: false,
           });

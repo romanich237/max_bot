@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { getMax, getProfileRotate, getMaxDisplayName } = require('./config');
 const { buildMediaKey, bodyWithMedia } = require('./media');
 
@@ -29,7 +30,6 @@ async function isLoginPage(page) {
     .catch(() => false);
   if (authFormVisible) return true;
 
-  // @Browser = веб-клиент, не логин блять
   const inChat = await page
     .locator(
       [
@@ -88,7 +88,7 @@ async function isLoginPage(page) {
     .catch(() => false);
 
   if (hasPassword) {
-    // пароль входа, не просто слово "browser" в UI
+    // пароль входа
     if (
       /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|двухфактор|2fa|enter your password|password for/i.test(
         bodyText
@@ -189,17 +189,222 @@ function keyAuthor(author) {
   return author;
 }
 
+function normalizeClock(value) {
+  const match = String(value || '').match(/(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  return `${String(match[1]).padStart(2, '0')}:${match[2]}`;
+}
+
+function hashIdentity(parts) {
+  return crypto.createHash('sha1').update(parts.join('\u0001')).digest('hex').slice(0, 20);
+}
+
+function contentFingerprint(msg) {
+  const reply = msg.reply || {};
+  return hashIdentity([
+    keyAuthor(msg.author),
+    String(msg.body || ''),
+    keyAuthor(reply.author || ''),
+    String(reply.body || ''),
+    reply.isVoice ? '1' : '0',
+    buildMediaKey(msg.media),
+  ]);
+}
+
+function timedFingerprint(msg) {
+  return hashIdentity([
+    contentFingerprint(msg),
+    msg.date || '',
+    msg.clock || normalizeClock(msg.time) || '',
+  ]);
+}
+
 function buildMessageKey(msg) {
   const reply = msg.reply || {};
   const replyPart = `${keyAuthor(reply.author)}::${reply.body || ''}::${reply.isVoice ? 1 : 0}`;
-  return `${keyAuthor(msg.author)}::${msg.body}::${msg.time}::${replyPart}::${buildMediaKey(msg.media)}`;
+  const when = [msg.date || '', msg.clock || normalizeClock(msg.time) || msg.time || '']
+    .filter(Boolean)
+    .join(' ');
+  return `${keyAuthor(msg.author)}::${msg.body}::${when}::${replyPart}::${buildMediaKey(msg.media)}`;
+}
+
+function attachIdentity(msg) {
+  const clock = normalizeClock(msg.time);
+  const date = msg.date || '';
+  const withMeta = { ...msg, clock, date };
+  return {
+    ...withMeta,
+    key: buildMessageKey(withMeta),
+    fingerprint: contentFingerprint(withMeta),
+    timedFingerprint: timedFingerprint(withMeta),
+  };
+}
+
+function chatsMatch(a, b) {
+  const left = String(a || '').trim();
+  const right = String(b || '').trim();
+  if (!left || !right) return true;
+  if (left === right) return true;
+  const idA = left.match(/-?\d{5,}/);
+  const idB = right.match(/-?\d{5,}/);
+  return Boolean(idA && idB && idA[0] === idB[0]);
+}
+
+function identityView(item = {}) {
+  return {
+    key: item.key || item.message_key || '',
+    fingerprint: item.fingerprint || '',
+    timedFingerprint: item.timedFingerprint || item.timed_fingerprint || '',
+    date: item.date || item.date_str || '',
+    clock: item.clock || normalizeClock(item.time || item.time_str || ''),
+    chatUrl: item.maxChatUrl || item.chatUrl || item.chat_url || '',
+    seenAt: item.seenAt || item.created_at || item.createdAt || '',
+    author: item.author || '',
+    body: item.body || '',
+  };
+}
+
+function isDuplicateIdentity(message, stored) {
+  const a = identityView(message);
+  const b = identityView(stored);
+  if (!a.key && !a.fingerprint && !a.body) return false;
+  if (!chatsMatch(a.chatUrl, b.chatUrl)) return false;
+
+  if (
+    a.key &&
+    b.key &&
+    (a.key === b.key || a.key.endsWith(`::${b.key}`) || b.key.endsWith(`::${a.key}`))
+  ) {
+    return true;
+  }
+
+  if (a.timedFingerprint && b.timedFingerprint && a.timedFingerprint === b.timedFingerprint) {
+    return true;
+  }
+
+  const sameContent =
+    Boolean(a.fingerprint && b.fingerprint && a.fingerprint === b.fingerprint) ||
+    Boolean(a.author && a.author === b.author && (a.body || '') === (b.body || ''));
+
+  if (!sameContent) return false;
+  if (a.date && b.date && a.date !== b.date) return false;
+  if (a.clock && b.clock && a.clock !== b.clock) return false;
+
+  if (!a.date || !b.date) {
+    const seenAt = Date.parse(b.seenAt || '');
+    if (Number.isFinite(seenAt) && Date.now() - seenAt > 18 * 60 * 60 * 1000) {
+      if (a.clock && b.clock && a.clock === b.clock) return false;
+    }
+  }
+
+  return true;
+}
+
+function localDateISO(daysAgo = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 async function parseMessages(page) {
+  const months = [
+    'январ',
+    'феврал',
+    'март',
+    'апрел',
+    'мая',
+    'июн',
+    'июл',
+    'август',
+    'сентябр',
+    'октябр',
+    'ноябр',
+    'декабр',
+  ];
+
   return page
-    .evaluate(({ wrapperSelector }) => {
+    .evaluate(({ wrapperSelector, todayISO, yesterdayISO, year, months }) => {
       function isTimeText(text) {
         return /^\d{1,2}:\d{2}(\s*(AM|PM))?$/i.test(text);
+      }
+
+      function parseHeaderDate(text) {
+        const raw = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!raw || raw.length > 48) return '';
+        if (/^сегодня$/i.test(raw)) return todayISO;
+        if (/^вчера$/i.test(raw)) return yesterdayISO;
+
+        const stripped = raw.replace(
+          /^(понедельник|вторник|среда|четверг|пятница|суббота|воскресенье),?\s*/i,
+          ''
+        );
+
+        const dotted = stripped.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
+        if (dotted) {
+          const day = dotted[1].padStart(2, '0');
+          const month = dotted[2].padStart(2, '0');
+          let parsedYear = year;
+          if (dotted[3]) {
+            parsedYear = dotted[3].length === 2 ? 2000 + Number(dotted[3]) : Number(dotted[3]);
+          }
+          return `${parsedYear}-${month}-${day}`;
+        }
+
+        const named = stripped.match(/^(\d{1,2})\s+([а-яё]+)/i);
+        if (named) {
+          const label = named[2].toLowerCase();
+          const monthIdx = months.findIndex((prefix) => label.startsWith(prefix));
+          if (monthIdx >= 0) {
+            const day = named[1].padStart(2, '0');
+            const month = String(monthIdx + 1).padStart(2, '0');
+            const yearMatch = stripped.match(/\b(20\d{2})\b/);
+            const parsedYear = yearMatch ? Number(yearMatch[1]) : year;
+            return `${parsedYear}-${month}-${day}`;
+          }
+        }
+
+        return '';
+      }
+
+      function collectWrapperDates(wrappers) {
+        const dates = wrappers.map(() => '');
+        if (!wrappers.length) return dates;
+
+        const root =
+          wrappers[0].closest(
+            '.openedChat, [class*="chatContent"], [class*="messagesList"], [class*="MessageList"], main'
+          ) || wrappers[0].parentElement;
+        if (!root) return dates;
+
+        const wrapperSet = new Set(wrappers);
+        let currentDate = '';
+
+        const walk = (node) => {
+          if (!node || node.nodeType !== 1) return;
+          if (wrapperSet.has(node)) {
+            const idx = wrappers.indexOf(node);
+            if (idx >= 0) dates[idx] = currentDate;
+            return;
+          }
+
+          if (!node.querySelector?.(wrapperSelector)) {
+            const parsed = parseHeaderDate(node.innerText);
+            if (parsed) {
+              currentDate = parsed;
+              return;
+            }
+          }
+
+          for (const child of node.children || []) {
+            walk(child);
+          }
+        };
+
+        walk(root);
+        return dates;
       }
 
       function extractTime(wrapper) {
@@ -339,9 +544,10 @@ async function parseMessages(page) {
         });
       }
 
-      const wrappers = document.querySelectorAll(wrapperSelector);
+      const wrappers = Array.from(document.querySelectorAll(wrapperSelector));
+      const wrapperDates = collectWrapperDates(wrappers);
       let lastAuthor = '';
-      return Array.from(wrappers).map((wrapper, index) => {
+      return wrappers.map((wrapper, index) => {
         let author = extractAuthor(wrapper);
         if (author === 'Неизвестно' && lastAuthor) {
           author = lastAuthor;
@@ -384,11 +590,18 @@ async function parseMessages(page) {
           body,
           reply,
           time,
+          date: wrapperDates[index] || '',
           media,
           isOwn,
         };
       });
-    }, { wrapperSelector: MESSAGE_WRAPPER_SELECTOR })
+    }, {
+      wrapperSelector: MESSAGE_WRAPPER_SELECTOR,
+      todayISO: localDateISO(0),
+      yesterdayISO: localDateISO(1),
+      year: new Date().getFullYear(),
+      months,
+    })
     .then((messages) =>
       messages
         .map((msg) => {
@@ -399,7 +612,7 @@ async function parseMessages(page) {
             reply: msg.reply || null,
             isOwn: msg.isOwn || isOwnByAuthor(msg.author),
           };
-          return { ...normalized, key: buildMessageKey(normalized) };
+          return attachIdentity(normalized);
         })
         .filter((msg) => Boolean(msg.body) || (msg.media && msg.media.length > 0))
     );
@@ -413,18 +626,19 @@ async function readMessages(page) {
 }
 
 function findNewMessages(messages, seenKeys) {
-  const fresh = [];
-  for (const message of messages) {
-    if (!seenKeys.has(message.key)) {
-      fresh.push(message);
-      seenKeys.add(message.key);
-    }
-  }
-  return fresh;
+  return messages.filter((message) => !seenKeys.has(message.key));
 }
 
 function messagesMatch(a, b) {
-  return a.body === b.body && a.time === b.time && a.author === b.author;
+  if (a.author !== b.author || a.body !== b.body) return false;
+  if (a.key && b.key && a.key === b.key) return true;
+  const dateA = a.date || '';
+  const dateB = b.date || '';
+  if (dateA && dateB && dateA !== dateB) return false;
+  const clockA = a.clock || normalizeClock(a.time);
+  const clockB = b.clock || normalizeClock(b.time);
+  if (clockA && clockB) return clockA === clockB;
+  return a.time === b.time;
 }
 
 function diffByTail(prev, current) {
@@ -477,4 +691,8 @@ module.exports = {
   waitForChat,
   shouldForward,
   isOwnByAuthor,
+  normalizeClock,
+  attachIdentity,
+  isDuplicateIdentity,
+  identityView,
 };

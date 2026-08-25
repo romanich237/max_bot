@@ -35,6 +35,8 @@ const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
   deleteWebhook,
   setBotCommands,
+  setBotDescription,
+  setBotShortDescription,
   sendMessage,
   answerCallback,
   editMessageText,
@@ -96,6 +98,7 @@ const {
   SAVED,
   ERRORS,
   UPDATES,
+  BOT_ABOUT,
 } = require('./bot-texts');
 const {
   buildBrowserPasswordAcceptedMessage,
@@ -2029,10 +2032,38 @@ async function handleCallback(query) {
   }
 }
 
+async function ensureBotAbout(tokenOverride) {
+  if (store.getPath(['telegram', 'defaultAboutApplied']) === true) {
+    return;
+  }
+
+  const [description, shortDescription] = await Promise.all([
+    setBotDescription(BOT_ABOUT, tokenOverride),
+    setBotShortDescription(BOT_ABOUT, tokenOverride),
+  ]);
+
+  if (!description?.ok) {
+    console.warn('setMyDescription:', description?.description);
+    return;
+  }
+  if (!shortDescription?.ok) {
+    console.warn('setMyShortDescription:', shortDescription?.description);
+    return;
+  }
+
+  store.setPath(['telegram', 'defaultAboutApplied'], true);
+  console.log('Описание Telegram-бота задано');
+}
+
 async function registerBotCommands(tokenOverride) {
   const data = await setBotCommands(BOT_COMMANDS, tokenOverride);
   if (!data.ok) {
     console.warn('setMyCommands:', data.description);
+  }
+  try {
+    await ensureBotAbout(tokenOverride);
+  } catch (err) {
+    console.warn('Описание Telegram-бота:', err.message);
   }
   return data;
 }

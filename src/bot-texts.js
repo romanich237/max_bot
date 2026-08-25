@@ -2,6 +2,9 @@ const { DEFAULT_BIO_TEMPLATE } = require('./profile-bio');
 
 const BRAND = 'MAX → Telegram';
 
+const BOT_ABOUT =
+  'Бот который пересылает сообщений из MAX в Telegram. Подробнее: https://github.com/romanich237/max_bot';
+
 const COMMANDS = {
   start: 'Старт и меню',
   menu: 'Панель управления',
@@ -504,6 +507,7 @@ const ERRORS = {
 
 module.exports = {
   BRAND,
+  BOT_ABOUT,
   COMMANDS,
   BUTTONS,
   TOGGLES,

@@ -26,6 +26,7 @@ module.exports = {
   initSchema: delegate('initSchema'),
   testConnection: delegate('testConnection'),
   loadSeenKeys: delegate('loadSeenKeys'),
+  loadForwardedIdentities: delegate('loadForwardedIdentities'),
   loadSnapshot: delegate('loadSnapshot'),
   saveSeenKeys: delegate('saveSeenKeys'),
   saveSnapshot: delegate('saveSnapshot'),

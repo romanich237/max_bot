@@ -114,6 +114,14 @@ async function setBotCommands(commands, tokenOverride) {
   return api('setMyCommands', { commands }, tokenOverride);
 }
 
+async function setBotDescription(description, tokenOverride) {
+  return api('setMyDescription', { description }, tokenOverride);
+}
+
+async function setBotShortDescription(shortDescription, tokenOverride) {
+  return api('setMyShortDescription', { short_description: shortDescription }, tokenOverride);
+}
+
 async function sendMessage(chatId, text, extra = {}, tokenOverride) {
   return api(
     'sendMessage',
@@ -251,6 +259,8 @@ module.exports = {
   deleteWebhook,
   deleteMessage,
   setBotCommands,
+  setBotDescription,
+  setBotShortDescription,
   sendMessage,
   sendPhotoBuffer,
   editPhotoBuffer,
