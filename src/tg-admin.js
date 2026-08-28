@@ -427,6 +427,15 @@ function buildLinksInlineRow() {
   ];
 }
 
+function buildAboutKeyboard() {
+  return {
+    inline_keyboard: [
+      buildLinksInlineRow(),
+      [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
+    ],
+  };
+}
+
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
@@ -457,8 +466,10 @@ function buildMenuKeyboard() {
     statusRow.push({ text: BUTTONS.startMax, callback_data: 'action:startMax', style: 'success' });
   }
   rows.push(statusRow);
-  rows.push([{ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }]);
-  rows.push(buildLinksInlineRow());
+  rows.push([
+    { text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' },
+    { text: BUTTONS.about, callback_data: 'action:about' },
+  ]);
 
   return { inline_keyboard: rows };
 }
@@ -1791,6 +1802,14 @@ async function handleCallback(query) {
   if (data === 'action:checkUpdate') {
     await answerCallback(query.id, 'Проверяю…');
     void handleManualUpdateCheck(chatId);
+    return;
+  }
+
+  if (data === 'action:about') {
+    await answerCallback(query.id, 'О сервисе');
+    await editMessageText(chatId, query.message.message_id, START.about, {
+      reply_markup: buildAboutKeyboard(),
+    });
     return;
   }
 
