@@ -14,7 +14,7 @@ const {
 } = require('./tg-settings');
 const { registerBotCommands } = require('./tg-admin');
 const { buildEventMessage, buildPipeline } = require('./tg-events');
-const { SETUP, BUTTONS } = require('./bot-texts');
+const { SETUP, BUTTONS, withTgEmoji, runWithPremiumEmoji } = require('./bot-texts');
 const { createStepChat } = require('./tg-step-chat');
 
 const WIZARD_STEPS = 3;
@@ -24,7 +24,7 @@ const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 function buildWizardKeyboard() {
   const rows = buildToggleRows('wizard:toggle:');
   rows.push([{ text: '✏️ Список имён', callback_data: 'wizard:profileNames' }]);
-  rows.push([{ text: '✅ Завершить настройку', callback_data: 'wizard:finish' }]);
+  rows.push([withTgEmoji({ text: 'Завершить настройку', callback_data: 'wizard:finish' }, 'check')]);
   return { inline_keyboard: rows };
 }
 
@@ -241,7 +241,10 @@ function runSetupWizard(options = {}) {
         );
       }
 
-      stopPoll = pollUpdates(handleUpdate, {
+      stopPoll = pollUpdates(async (update) => {
+        const from = update.message?.from || update.callback_query?.from;
+        return runWithPremiumEmoji(from, () => handleUpdate(update));
+      }, {
         priority: 10,
         token: options.token,
         onError: (err) => console.error('Ошибка мастера настройки:', err.message),

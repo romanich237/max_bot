@@ -1,4 +1,5 @@
 const store = require('./settings-store');
+const { withTgEmoji, withOnOffEmoji } = require('./bot-texts');
 
 const MAX_CHAT_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
@@ -264,9 +265,8 @@ function removeNotifyTarget(url) {
   store.setPath(['max', 'notifyTargets'], targets);
 }
 function chatMenuLabel(url) {
-  const pin = isRequiredChatUrl(url) ? '📌 ' : '';
   const title = chatLabelFromUrl(url) || truncateUrl(url, 22);
-  return truncateButtonText(`${pin}${title}`, 40);
+  return truncateButtonText(title, 40);
 }
 
 function truncateUrl(url, max = 36) {
@@ -603,10 +603,13 @@ function buildNotifyTargetButtons(url, index) {
   return options.map((item) => {
     const active = current === item.id;
     const button = {
-      text: active ? `${item.text} ✅` : item.text,
+      text: item.text,
       callback_data: `maxchat:where:${index}:${item.id}`,
     };
-    if (active) button.style = 'success';
+    if (active) {
+      button.style = 'success';
+      return withTgEmoji(button, 'check');
+    }
     return button;
   });
 }
@@ -615,14 +618,19 @@ function buildMaxChatActionButtons(url, index, urls) {
   const actions = [];
   const forwardOn = isChatForwardEnabled(url);
 
-  actions.push({
-    text: forwardOn ? 'Слать ✅' : 'Слать ❌',
-    callback_data: `maxchat:forward:${index}`,
-    style: forwardOn ? 'success' : 'danger',
-  });
+  actions.push(
+    withOnOffEmoji(
+      {
+        text: 'Слать',
+        callback_data: `maxchat:forward:${index}`,
+        style: forwardOn ? 'success' : 'danger',
+      },
+      forwardOn
+    )
+  );
 
   if (!isRequiredChatUrl(url) && urls.length > 1) {
-    actions.push({ text: '🗑', callback_data: `maxchat:remove:${index}` });
+    actions.push(withTgEmoji({ text: 'Удалить', callback_data: `maxchat:remove:${index}` }, 'trash'));
   }
 
   return actions;
@@ -634,31 +642,36 @@ function buildMaxChatsKeyboard() {
   const personal = isMonitorPersonalChatsEnabled();
   const rows = [
     [
-      {
-        text: all ? 'Все чаты ✅' : 'Все чаты ❌',
-        callback_data: 'maxchat:toggleAll',
-        style: all ? 'success' : 'danger',
-      },
-      {
-        text: personal ? 'Личные сообщения ✅' : 'Личные сообщения ❌',
-        callback_data: 'maxchat:togglePersonal',
-        style: personal ? 'success' : 'danger',
-      },
+      withOnOffEmoji(
+        {
+          text: 'Все чаты',
+          callback_data: 'maxchat:toggleAll',
+          style: all ? 'success' : 'danger',
+        },
+        all
+      ),
+      withOnOffEmoji(
+        {
+          text: 'Личные сообщения',
+          callback_data: 'maxchat:togglePersonal',
+          style: personal ? 'success' : 'danger',
+        },
+        personal
+      ),
     ],
   ];
 
   urls.forEach((url, index) => {
-    rows.push([
-      {
-        text: chatMenuLabel(url),
-        callback_data: `maxchat:view:${index}`,
-      },
-    ]);
+    const chatButton = {
+      text: chatMenuLabel(url),
+      callback_data: `maxchat:view:${index}`,
+    };
+    rows.push([isRequiredChatUrl(url) ? withTgEmoji(chatButton, 'pin') : chatButton]);
     rows.push(buildMaxChatActionButtons(url, index, urls));
   });
 
   rows.push([
-    { text: '➕ Добавить', callback_data: 'maxchat:add' },
+    withTgEmoji({ text: 'Добавить', callback_data: 'maxchat:add' }, 'plus'),
     { text: '« Меню', callback_data: 'discover:menu' },
   ]);
   return { inline_keyboard: rows };
@@ -717,14 +730,15 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
 
   const rows = slice.map((item) => {
     const selected = isSelectedPickChat(item.url);
-    const label = selected
-      ? truncateButtonText(`✅ ${item.title}`)
-      : item.title || `Чат ${item.i + 1}`;
+    const label = item.title || `Чат ${item.i + 1}`;
     const button = {
-      text: label,
+      text: selected ? truncateButtonText(label) : label,
       callback_data: chatIdFromUrl(item.url) ? `maxchat:p:${chatIdFromUrl(item.url)}` : `maxchat:pick:${item.i}`,
     };
-    if (selected) button.style = 'success';
+    if (selected) {
+      button.style = 'success';
+      return [withTgEmoji(button, 'check')];
+    }
     return [button];
   });
 

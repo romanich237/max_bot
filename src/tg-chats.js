@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { CHATS, BUTTONS } = require('./bot-texts');
+const { CHATS, BUTTONS, withTgEmoji } = require('./bot-texts');
 const path = require('path');
 const { store, resolveFromRoot, getNotificationChatIds, isPrivateChatId } = require('./config');
 
@@ -151,7 +151,7 @@ function buildChatInfoText(chat, freshTitle) {
 function buildChatInfoKeyboard(chatId) {
   return {
     inline_keyboard: [
-      [{ text: BUTTONS.bindNotify, callback_data: `bindchat:${chatId}` }],
+      [{ ...withTgEmoji({ text: BUTTONS.bindNotify, callback_data: `bindchat:${chatId}` }, 'check') }],
       [{ text: BUTTONS.backToChats, callback_data: 'discover:page:0' }],
       [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
     ],
@@ -213,7 +213,7 @@ async function buildMissingAdminKeyboard() {
   const inviteUrl = await buildBotAdminInviteUrl();
   const rows = [];
   if (inviteUrl) {
-    rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+    rows.push([withTgEmoji({ text: BUTTONS.addAdmin, url: inviteUrl }, 'plus')]);
   }
   rows.push([{ text: BUTTONS.docs, url: DOCS_URL }]);
   return { inline_keyboard: rows };
@@ -316,21 +316,21 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
         text: truncateButtonLabel(`${title} ${mark}`, 28),
         callback_data: `notify:chat:${chat.id}`,
       },
-      { text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chat.id}` },
+      withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chat.id}` }, 'trash'),
     ]);
   }
 
-  rows.push([{ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }]);
+  rows.push([withTgEmoji({ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }, 'plus')]);
 
   if (hasGroup) {
-    rows.push([{ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }]);
+    rows.push([withTgEmoji({ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }, 'kiss')]);
   }
 
   const missingAdmin = groups.some((chat) => !adminByChat[chat.id]?.admin);
   if (missingAdmin) {
     const inviteUrl = await buildBotAdminInviteUrl();
     if (inviteUrl) {
-      rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+      rows.push([withTgEmoji({ text: BUTTONS.addAdmin, url: inviteUrl }, 'plus')]);
     }
     rows.push([{ text: BUTTONS.docs, url: DOCS_URL }]);
   }
@@ -357,11 +357,11 @@ function buildNotifyGroupViewText(chatId, status = {}) {
 }
 
 async function buildNotifyGroupViewKeyboard(chatId, status = {}) {
-  const rows = [[{ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chatId}` }]];
+  const rows = [[withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chatId}` }, 'trash')]];
   if (!status.admin) {
     const inviteUrl = await buildBotAdminInviteUrl();
     if (inviteUrl) {
-      rows.push([{ text: BUTTONS.addAdmin, url: inviteUrl }]);
+      rows.push([withTgEmoji({ text: BUTTONS.addAdmin, url: inviteUrl }, 'plus')]);
     }
   }
   rows.push([{ text: '« К списку', callback_data: 'action:notifyChat' }]);
@@ -373,7 +373,7 @@ function buildBindGroupReplyKeyboard() {
     keyboard: [
       [
         {
-          text: BUTTONS.bindGroup,
+          ...withTgEmoji({ text: BUTTONS.bindGroup }, 'plus'),
           request_chat: {
             request_id: NOTIFY_GROUP_REQUEST_ID,
             chat_is_channel: false,

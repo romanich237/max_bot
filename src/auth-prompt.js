@@ -1,6 +1,6 @@
 const { pollUpdates } = require('./tg-api');
 const { sendInputPrompt, clearInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
-const { BUTTONS } = require('./bot-texts');
+const { BUTTONS, withTgEmoji } = require('./bot-texts');
 
 const SWITCH_TO_QR = 'SWITCH_TO_QR';
 
@@ -18,7 +18,7 @@ function isSwitchToQrError(err) {
 
 function buildSwitchToQrKeyboard() {
   return {
-    inline_keyboard: [[{ text: BUTTONS.authSwitchQr, callback_data: 'auth:switch:qr' }]],
+    inline_keyboard: [[withTgEmoji({ text: BUTTONS.authSwitchQr, callback_data: 'auth:switch:qr' }, 'camera')]],
   };
 }
 

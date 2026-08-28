@@ -1,6 +1,6 @@
 const { store } = require('./config');
 const { DEFAULT_BIO_TEMPLATE, MAX_BIO_LENGTH } = require('./profile-bio');
-const { TOGGLES, HINTS } = require('./bot-texts');
+const { TOGGLES, HINTS, withOnOffEmoji } = require('./bot-texts');
 
 const TOGGLE_ITEMS = [
   { label: TOGGLES.forwarding, path: ['max', 'forwardingEnabled'], defaultOn: true },
@@ -18,11 +18,14 @@ function isToggleOn(item) {
 
 function buildToggleButton(prefix, item) {
   const on = isToggleOn(item);
-  return {
-    text: `${item.label}: ${on ? '✅' : '❌'}`,
-    callback_data: `${prefix}${item.path.join('.')}`,
-    style: on ? 'success' : 'danger',
-  };
+  return withOnOffEmoji(
+    {
+      text: item.label,
+      callback_data: `${prefix}${item.path.join('.')}`,
+      style: on ? 'success' : 'danger',
+    },
+    on
+  );
 }
 
 function buildToggleRows(prefix) {

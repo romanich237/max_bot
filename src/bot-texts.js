@@ -22,15 +22,15 @@ const BUTTONS = {
   startMax: 'Запустить бота',
   backToMenu: '« В меню',
   backToChats: '« К списку чатов',
-  bindNotify: '✅ Привязать для уведомлений',
-  bindGroup: '➕ Добавить группу',
-  removeNotifyGroup: '🗑 Удалить',
-  addAdmin: '➕ Добавить в админы',
+  bindNotify: 'Привязать для уведомлений',
+  bindGroup: 'Добавить группу',
+  removeNotifyGroup: 'Удалить',
+  addAdmin: 'Добавить в админы',
   docs: '📄 Документация',
-  notifyDmOnly: '💬 Только личные сообщения',
-  authQr: '📷 QR-код',
-  authPhone: '📱 Номер телефона',
-  authSwitchQr: '📷 Войти по QR',
+  notifyDmOnly: 'Только личные сообщения',
+  authQr: 'QR-код',
+  authPhone: 'Номер телефона',
+  authSwitchQr: 'Войти по QR',
   refreshQr: '🔄 Обновить',
   checkUpdates: 'Проверить обновления',
   about: 'О сервисе',
@@ -44,6 +44,51 @@ const LINKS = {
   support: 'https://t.me/notificationsmax_in_tg?direct',
   github: 'https://github.com/romanich237/max_bot',
 };
+
+const { AsyncLocalStorage } = require('node:async_hooks');
+
+const tgEmojiPremium = new AsyncLocalStorage();
+let lastPremiumEmoji = false;
+
+function runWithPremiumEmoji(from, fn) {
+  lastPremiumEmoji = Boolean(from?.is_premium);
+  return tgEmojiPremium.run({ premium: lastPremiumEmoji }, fn);
+}
+
+function isPremiumEmojiUser() {
+  const ctx = tgEmojiPremium.getStore();
+  if (ctx) return Boolean(ctx.premium);
+  return lastPremiumEmoji;
+}
+
+const TG_EMOJI = {
+  check: { id: '5427009714745517609', fallback: '✅' },
+  cross: { id: '5465665476971471368', fallback: '❌' },
+  pin: { id: '5974352611711651172', fallback: '📌' },
+  trash: { id: '5974518878485615140', fallback: '🗑' },
+  kiss: { id: '5426948459921959705', fallback: '😘' },
+  plus: { id: '5397916757333654639', fallback: '➕' },
+  camera: { id: '5972273671446727832', fallback: '📷' },
+  phone: { id: '5407025283456835913', fallback: '📱' },
+};
+
+function withTgEmoji(button, kind) {
+  const spec = TG_EMOJI[kind];
+  if (!button || !spec) return button;
+
+  if (isPremiumEmojiUser()) {
+    return { ...button, icon_custom_emoji_id: spec.id };
+  }
+
+  const text = String(button.text || '').trim();
+  if (!text) return { ...button, text: spec.fallback };
+  if (text.startsWith(spec.fallback) || text.endsWith(spec.fallback)) return { ...button, text };
+  return { ...button, text: `${spec.fallback} ${text}` };
+}
+
+function withOnOffEmoji(button, on) {
+  return withTgEmoji(button, on ? 'check' : 'cross');
+}
 
 const TOGGLES = {
   forwarding: 'Слать в Telegram',
@@ -536,4 +581,8 @@ module.exports = {
   UPDATES,
   ERRORS,
   LINKS,
+  TG_EMOJI,
+  withTgEmoji,
+  withOnOffEmoji,
+  runWithPremiumEmoji,
 };

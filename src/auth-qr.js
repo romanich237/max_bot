@@ -23,7 +23,7 @@ const {
   upsertAuthText,
 } = require('./auth-caption');
 const { launchMaxContext } = require('./browser-context');
-const { BUTTONS, AUTH } = require('./bot-texts');
+const { BUTTONS, AUTH, withTgEmoji } = require('./bot-texts');
 const { deleteMessageQuiet } = require('./tg-step-chat');
 
 const MAX_LOGIN_URL = 'https://web.max.ru/';
@@ -33,9 +33,9 @@ const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
 function buildAuthModeKeyboard(options = {}) {
   const rows = [];
   if (options.allowQr !== false) {
-    rows.push([{ text: BUTTONS.authQr, callback_data: 'auth:mode:qr' }]);
+    rows.push([withTgEmoji({ text: BUTTONS.authQr, callback_data: 'auth:mode:qr' }, 'camera')]);
   }
-  rows.push([{ text: BUTTONS.authPhone, callback_data: 'auth:mode:phone' }]);
+  rows.push([withTgEmoji({ text: BUTTONS.authPhone, callback_data: 'auth:mode:phone' }, 'phone')]);
   return { inline_keyboard: rows };
 }
 

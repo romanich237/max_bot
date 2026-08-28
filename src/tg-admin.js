@@ -107,6 +107,7 @@ const {
   UPDATES,
   BOT_ABOUT,
   LINKS,
+  runWithPremiumEmoji,
 } = require('./bot-texts');
 const {
   buildBrowserPasswordAcceptedMessage,
@@ -2284,14 +2285,17 @@ function startTelegramAdmin() {
     });
 
   return pollUpdates(async (update) => {
-    recordChatFromUpdate(update);
-    try {
-      if (update.my_chat_member) await handleMyChatMember(update.my_chat_member);
-      if (update.message) await handleMessage(update.message);
-      if (update.callback_query) await handleCallback(update.callback_query);
-    } catch (err) {
-      console.error('Ошибка панели Telegram:', err.message);
-    }
+    const from = update.message?.from || update.callback_query?.from || update.my_chat_member?.from;
+    await runWithPremiumEmoji(from, async () => {
+      recordChatFromUpdate(update);
+      try {
+        if (update.my_chat_member) await handleMyChatMember(update.my_chat_member);
+        if (update.message) await handleMessage(update.message);
+        if (update.callback_query) await handleCallback(update.callback_query);
+      } catch (err) {
+        console.error('Ошибка панели Telegram:', err.message);
+      }
+    });
   }, {
     id: 'admin-main',
     priority: 0,
