@@ -192,6 +192,8 @@ module.exports = {
   getMonitorChatUrls: maxChats.getMonitorChatUrls,
   getForwardingMonitorChatUrls: maxChats.getForwardingMonitorChatUrls,
   isMonitorAllChatsEnabled: maxChats.isMonitorAllChatsEnabled,
+  isMonitorPersonalChatsEnabled: maxChats.isMonitorPersonalChatsEnabled,
+  needsDiscoveredChats: maxChats.needsDiscoveredChats,
   getProfileRotate,
   getProfileBio,
   getAlwaysOnline,

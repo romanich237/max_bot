@@ -51,8 +51,8 @@ pm2 restart max-tg
 ```
 
 ## Если автообновление не выполняется(Блокировка DNS и тп), используйте:
-```bash
-cd ~/каталог
+git init
+git remote add origin https://github.com/romanich237/max_bot.git
 git fetch origin
 git reset --hard origin/main
 npm install

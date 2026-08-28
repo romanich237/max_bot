@@ -18,6 +18,7 @@
     "ownAuthorNames": [],
     "currentDisplayName": "",
     "monitorAllChats": false,
+    "monitorPersonalChats": false,
     "monitoringEnabled": true,
     "forwardingEnabled": true,
     "browserPassword": ""

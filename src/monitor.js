@@ -12,6 +12,8 @@ const {
   getMonitorChatUrls,
   getForwardingMonitorChatUrls,
   isMonitorAllChatsEnabled,
+  isMonitorPersonalChatsEnabled,
+  needsDiscoveredChats,
   getDatabase,
   isForwardingEnabled,
   store,
@@ -424,7 +426,7 @@ async function startMonitor() {
   }
 
   async function refreshDiscoveredUrlsIfNeeded(page, force = false) {
-    if (!isMonitorAllChatsEnabled()) {
+    if (!needsDiscoveredChats()) {
       discoveredMonitorUrls = [];
       lastDiscoveryAt = 0;
       return discoveredMonitorUrls;
@@ -440,7 +442,8 @@ async function startMonitor() {
       discoveredMonitorUrls = urls;
       lastDiscoveryAt = now;
       if (urls.length) {
-        console.log(`Режим «все чаты»: найдено ${urls.length} чатов в MAX`);
+        const mode = isMonitorAllChatsEnabled() ? 'все чаты' : 'личные сообщения';
+        console.log(`Режим «${mode}»: найдено ${urls.length} чатов в MAX`);
       }
     } catch (err) {
       console.warn('Не удалось обновить список всех чатов MAX:', err.message);
@@ -744,7 +747,7 @@ async function startMonitor() {
   });
 
   const allUrls = getMonitorChatUrls();
-  if (isMonitorAllChatsEnabled()) {
+  if (needsDiscoveredChats()) {
     profileBusy = true;
     try {
       await refreshDiscoveredUrlsIfNeeded(page, true);
@@ -754,9 +757,12 @@ async function startMonitor() {
   }
 
   const monitorUrls = getActiveMonitorUrls();
-  console.log(
-    `Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length})${isMonitorAllChatsEnabled() ? ' · режим «все чаты»' : ''}:`
-  );
+  const modeLabel = isMonitorAllChatsEnabled()
+    ? ' · режим «все чаты»'
+    : isMonitorPersonalChatsEnabled()
+      ? ' · режим «личные сообщения»'
+      : '';
+  console.log(`Чаты MAX для мониторинга (${monitorUrls.length}/${allUrls.length})${modeLabel}:`);
   for (const url of allUrls) {
     const muted = monitorUrls.includes(url) ? '' : ' [пересылка выкл.]';
     console.log(`  • ${url}${muted}`);
@@ -934,7 +940,7 @@ async function startMonitor() {
     if (!isMonitoringEnabled() || profileBusy || authBusy) return;
 
     try {
-      if (isMonitorAllChatsEnabled()) {
+      if (needsDiscoveredChats()) {
         await refreshDiscoveredUrlsIfNeeded(page);
       }
 

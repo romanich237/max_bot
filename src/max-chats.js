@@ -385,27 +385,47 @@ function setMonitorAllChatsEnabled(enabled) {
   store.setPath(['max', 'monitorAllChats'], Boolean(enabled));
 }
 
+function isMonitorPersonalChatsEnabled() {
+  return Boolean(store.getPath(['max', 'monitorPersonalChats']));
+}
+
+function setMonitorPersonalChatsEnabled(enabled) {
+  store.setPath(['max', 'monitorPersonalChats'], Boolean(enabled));
+}
+
+function needsDiscoveredChats() {
+  return isMonitorAllChatsEnabled() || isMonitorPersonalChatsEnabled();
+}
+
+function uniqueMonitorUrls(list) {
+  const seen = new Set();
+  const urls = [];
+  for (const url of list.map(normalizeMaxChatUrl).filter(Boolean)) {
+    if (!seen.has(url)) {
+      seen.add(url);
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
 function getForwardingMonitorChatUrls(discoveredUrls = null) {
   let urls;
 
   if (isMonitorAllChatsEnabled() && Array.isArray(discoveredUrls) && discoveredUrls.length) {
-    const seen = new Set();
-    urls = [];
-
-    for (const url of discoveredUrls.map(normalizeMaxChatUrl).filter(Boolean)) {
-      if (!seen.has(url)) {
-        seen.add(url);
-        urls.push(url);
-      }
-    }
-
-    for (const required of BUILTIN_REQUIRED_CHATS) {
-      const normalized = normalizeMaxChatUrl(required.url);
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        urls.push(normalized);
-      }
-    }
+    urls = uniqueMonitorUrls([
+      ...discoveredUrls,
+      ...BUILTIN_REQUIRED_CHATS.map((item) => item.url),
+    ]);
+  } else if (
+    isMonitorPersonalChatsEnabled() &&
+    Array.isArray(discoveredUrls) &&
+    discoveredUrls.length
+  ) {
+    const personal = discoveredUrls.filter(
+      (url) => isPersonalMaxChat(url) || isRequiredChatUrl(url)
+    );
+    urls = uniqueMonitorUrls([...getMonitorChatUrls(), ...personal]);
   } else {
     urls = getMonitorChatUrls();
   }
@@ -550,6 +570,8 @@ function buildMaxChatsText() {
   lines.push('');
   if (isMonitorAllChatsEnabled()) {
     lines.push('Сейчас бот читает <b>все чаты в MAX</b>, не только список.');
+  } else if (isMonitorPersonalChatsEnabled()) {
+    lines.push('Сейчас бот читает <b>все личные сообщения MAX</b> и чаты из списка.');
   } else {
     lines.push('Сейчас: только чаты из списка.');
   }
@@ -604,12 +626,18 @@ function buildMaxChatActionButtons(url, index, urls) {
 function buildMaxChatsKeyboard() {
   const urls = getMonitorChatUrls();
   const all = isMonitorAllChatsEnabled();
+  const personal = isMonitorPersonalChatsEnabled();
   const rows = [
     [
       {
         text: all ? 'Все чаты ✅' : 'Все чаты ❌',
         callback_data: 'maxchat:toggleAll',
         style: all ? 'success' : 'danger',
+      },
+      {
+        text: personal ? 'Личные сообщения ✅' : 'Личные сообщения ❌',
+        callback_data: 'maxchat:togglePersonal',
+        style: personal ? 'success' : 'danger',
       },
     ],
   ];
@@ -722,6 +750,9 @@ module.exports = {
   getForwardingMonitorChatUrls,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
+  isMonitorPersonalChatsEnabled,
+  setMonitorPersonalChatsEnabled,
+  needsDiscoveredChats,
   isRequiredChatUrl,
   isChatForwardEnabled,
   setChatForwardEnabled,

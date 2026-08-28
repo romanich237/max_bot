@@ -32,6 +32,8 @@ const {
   cycleNotifyTarget,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
+  isMonitorPersonalChatsEnabled,
+  setMonitorPersonalChatsEnabled,
 } = require('./max-chats');
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
@@ -1822,6 +1824,14 @@ async function handleCallback(query) {
     const next = !isMonitorAllChatsEnabled();
     setMonitorAllChatsEnabled(next);
     await answerCallback(query.id, next ? 'Все чаты MAX' : 'Только список');
+    await showMaxChats(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data === 'maxchat:togglePersonal') {
+    const next = !isMonitorPersonalChatsEnabled();
+    setMonitorPersonalChatsEnabled(next);
+    await answerCallback(query.id, next ? 'Личные сообщения MAX' : 'Личные выкл');
     await showMaxChats(chatId, query.message.message_id);
     return;
   }
