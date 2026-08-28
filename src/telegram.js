@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { File } = require('node:buffer');
-const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName } = require('./config');
+const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName, isPrivateChatId } = require('./config');
 const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl } = require('./max-chats');
 const replyStore = require('./reply-store');
@@ -88,7 +88,8 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
 }
 
 function replyMarkupForChat(chatId, replyMarkup) {
-  return replyMarkup || null;
+  if (!replyMarkup || !isPrivateChatId(chatId)) return null;
+  return replyMarkup;
 }
 
 function notifyChatIds(sendContext = {}) {
@@ -333,7 +334,10 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, sendConte
     const { token } = getTelegram();
     const chatIds = notifyChatIds(sendContext);
     await Promise.all(
-      chatIds.map((chatId) => sendReplyPrompt(chatId, message, sendContext.replyMarkup, token))
+      chatIds.map((chatId) => {
+        const markup = replyMarkupForChat(chatId, sendContext.replyMarkup);
+        return markup ? sendReplyPrompt(chatId, message, markup, token) : null;
+      })
     );
   }
 }
@@ -370,7 +374,10 @@ async function sendToTelegram(message, options = {}) {
         const { token } = getTelegram();
         const chatIds = notifyChatIds(sendContext);
         await Promise.all(
-          chatIds.map((chatId) => sendReplyPrompt(chatId, message, sendContext.replyMarkup, token))
+          chatIds.map((chatId) => {
+            const markup = replyMarkupForChat(chatId, sendContext.replyMarkup);
+            return markup ? sendReplyPrompt(chatId, message, markup, token) : null;
+          })
         );
       }
       captionUsed = true;
