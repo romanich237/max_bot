@@ -267,16 +267,21 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   await openChatPage(page, chatUrl);
 
   if (await isLoginPage(page)) {
-    const defaultUrl = getDefaultChatUrl();
-    if (defaultUrl && (await probeMaxSession(page, defaultUrl))) {
-      await openChatPage(page, chatUrl);
-    }
-
-    if (await isLoginPage(page)) {
+    const defaultUrl = getDefaultChatUrl() || chatUrl;
+    const sessionOk = Boolean(defaultUrl) && (await probeMaxSession(page, defaultUrl));
+    if (!sessionOk) {
       if (onLoginRequired) {
         await onLoginRequired();
       }
       return null;
+    }
+
+    await openChatPage(page, chatUrl);
+    if (await isLoginPage(page)) {
+      console.warn(
+        `[${chatLabelFromUrl(chatUrl)}] Сессия MAX жива, но чат не открылся — пропуск цикла`
+      );
+      return [];
     }
   }
 

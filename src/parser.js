@@ -24,33 +24,37 @@ function ownNamesLower() {
 }
 
 async function isLoginPage(page) {
+  if (!page || page.isClosed()) return true;
+
   const authFormVisible = await page
-    .locator('form.auth--qr-code, form.auth--password, form.auth--code, form.auth')
+    .locator(
+      'form.auth--qr-code, form.auth--password, form.auth--code, form.auth--captcha, .auth--qr-code, .auth--password, .auth--code'
+    )
     .first()
     .isVisible({ timeout: 500 })
     .catch(() => false);
-  if (authFormVisible) return true;
 
-  const inChat = await page
+  const inApp = await page
     .locator(
       [
-        '.messageWrapper',
         '.openedChat',
-        'main[name*="Chat window" i]',
-        'main[name*="чат" i]',
-        '[class*="chatContent"]',
-        '[class*="messagesList"]',
-        '[class*="MessageList"]',
-        '[data-testid*="chat" i]',
+        '.messageWrapper',
+        '.scrollListContent h3.title',
+        'button.cell h3.title',
+        '.app.app--mainActive',
+        'main.main--active',
       ].join(', ')
     )
     .first()
-    .isVisible({ timeout: 1500 })
+    .isVisible({ timeout: 800 })
     .catch(() => false);
-  if (inChat) return false;
+
+  if (inApp && !authFormVisible) return false;
+  if (authFormVisible) return true;
 
   const url = String(page.url() || '');
-  const onChatUrl = /web\.max\.ru\/-?\d+/i.test(url);
+  const onChatUrl = /web\.max\.ru\/-?\d{5,}/i.test(url);
+  if (onChatUrl) return false;
 
   const captchaIframe = await page
     .locator('iframe[src*="not_robot_captcha"], iframe[src*="id.vk.ru"]')
@@ -60,46 +64,34 @@ async function isLoginPage(page) {
   if (captchaIframe) return true;
 
   const qrVisible = await page
-    .locator('form.auth--qr-code canvas, form.auth canvas, form.auth--qr-code img[src*="qr"]')
+    .locator(
+      'form.auth--qr-code canvas, form.auth--qr-code img[src*="qr"], .auth--qr-code canvas, .auth--qr-code img[src*="qr"]'
+    )
     .first()
-    .or(page.locator('img[alt*="QR" i], img[alt*="qr" i]').first())
-    .isVisible({ timeout: 800 })
+    .isVisible({ timeout: 400 })
     .catch(() => false);
   if (qrVisible) return true;
 
   let bodyText = '';
   try {
-    bodyText = await page.locator('body').innerText({ timeout: 2000 });
+    bodyText = await page.locator('body').innerText({ timeout: 1500 });
   } catch {
     bodyText = '';
   }
 
   if (/войдите в max|sign in to max/i.test(bodyText)) return true;
   if (/войти по номеру телефона|phone number do you want/i.test(bodyText)) return true;
-  if (/код из sms|sms.*code|enter.*code|введите.*код/i.test(bodyText)) return true;
-  if (/не робот|not a robot|captcha/i.test(bodyText)) return true;
-
-  // qr-текст в чате — ложная тревога, скипаем
-  if (!onChatUrl && /qr-код|qr code|scan the qr/i.test(bodyText)) return true;
+  if (/код из sms|enter the code from|введите код из/i.test(bodyText)) return true;
+  if (/не робот|not a robot/i.test(bodyText)) return true;
+  if (/qr-код|scan the qr/i.test(bodyText)) return true;
 
   const hasPassword = await page
-    .locator('form.auth input[type="password"], form.auth--password input[type="password"], input[type="password"]')
+    .locator('form.auth--password input[type="password"]')
     .first()
-    .isVisible({ timeout: 400 })
+    .isVisible({ timeout: 300 })
     .catch(() => false);
 
-  if (hasPassword) {
-    // пароль входа
-    if (
-      /пароль (аккаунта|для входа)|cloud password|облачн\w* парол|подтвердите вход|подтверждение входа|двухфактор|2fa|enter your password|password for/i.test(
-        bodyText
-      )
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  return Boolean(hasPassword);
 }
 
 async function readOpenedHeaderTitle(page) {
@@ -134,7 +126,7 @@ async function waitForOpenChat(page, chatUrl, timeout = 15000, options = {}) {
 
   await page
     .waitForFunction(
-      ({ chatId, previousTitle: prevTitle }) => {
+      (chatId) => {
         const path = String(location.pathname || '').replace(/\/+$/, '');
         if (path !== `/${chatId}` && !path.endsWith(`/${chatId}`)) return false;
 
@@ -143,25 +135,37 @@ async function waitForOpenChat(page, chatUrl, timeout = 15000, options = {}) {
         const style = window.getComputedStyle(opened);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
 
-        const titleNode =
-          opened.querySelector('button.main .content') ||
-          opened.querySelector('.header') ||
-          opened.querySelector('h2');
-        const title = String(titleNode?.innerText || '')
-          .split('\n')[0]
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        if (prevTitle) {
-          return Boolean(title && title !== prevTitle);
-        }
-
-        return Boolean(title || opened.querySelector('.messageWrapper'));
+        return Boolean(
+          opened.querySelector('.messageWrapper') ||
+            opened.querySelector('button.main') ||
+            opened.querySelector('.header')
+        );
       },
-      { chatId: expectedId, previousTitle },
+      expectedId,
       { timeout }
     )
     .catch(() => {});
+
+  if (previousTitle) {
+    await page
+      .waitForFunction(
+        (prevTitle) => {
+          const opened = document.querySelector('.openedChat');
+          const titleNode =
+            opened?.querySelector('button.main .content') ||
+            opened?.querySelector('.header') ||
+            opened?.querySelector('h2');
+          const title = String(titleNode?.innerText || '')
+            .split('\n')[0]
+            .replace(/\s+/g, ' ')
+            .trim();
+          return Boolean(title && title !== prevTitle);
+        },
+        previousTitle,
+        { timeout: 3500 }
+      )
+      .catch(() => {});
+  }
 
   await page.waitForTimeout(400);
 }
