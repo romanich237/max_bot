@@ -670,7 +670,12 @@ async function startMonitor() {
       if (await isLoginPage(page)) {
         throw new Error('Сессия MAX истекла. Отправьте /reauth');
       }
-      return await resolveChatUrlByTitle(page, title);
+      return await Promise.race([
+        resolveChatUrlByTitle(page, title),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Не удалось открыть чат в MAX за 8 сек')), 8000);
+        }),
+      ]);
     } finally {
       profileBusy = false;
       if (returnUrl && returnUrl.includes('web.max.ru')) {
@@ -690,8 +695,15 @@ async function startMonitor() {
       if (await isLoginPage(page)) {
         throw new Error('Сессия MAX истекла. Отправьте /reauth');
       }
-      await openChatWhenReady(page, url);
-      return await ensureChatKindFromPage(page, url);
+      return await Promise.race([
+        (async () => {
+          await openChatWhenReady(page, url);
+          return ensureChatKindFromPage(page, url);
+        })(),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Не удалось определить тип чата за 8 сек')), 8000);
+        }),
+      ]);
     } finally {
       profileBusy = false;
       if (returnUrl && returnUrl.includes('web.max.ru')) {

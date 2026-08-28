@@ -25,6 +25,8 @@ const {
   isRequiredChatUrl,
   isPersonalMaxChat,
   isGroupMaxChat,
+  getStoredChatKind,
+  setChatKind,
   isChatForwardEnabled,
   setChatForwardEnabled,
   getNotifyTarget,
@@ -249,6 +251,9 @@ async function beginMaxChatAdd(chatId) {
     }
 
     const sent = await sendInputPrompt(chatId, caption, { reply_markup: keyboard });
+    if (!sent?.ok) {
+      throw new Error(sent?.description || 'Telegram не принял список кнопок');
+    }
     maxChatAddCache.set(key, {
       chats,
       photoMessageId,
@@ -982,30 +987,66 @@ async function handleMaxChatUrlInput(chatId, text, userMessageId) {
   return true;
 }
 
+function telegramEditOk(result) {
+  return Boolean(result?.ok) || /not modified/i.test(String(result?.description || ''));
+}
+
+async function editMaxChatPickMessage(chatId, text, extra = {}) {
+  const key = String(chatId);
+  const cache = maxChatAddCache.get(key) || {};
+  const messageId = cache.pickMessageId || cache.whereMessageId;
+  if (messageId) {
+    try {
+      const result = await editMessageText(chatId, messageId, text, extra);
+      if (telegramEditOk(result)) return true;
+      console.warn('maxchat pick edit:', result?.description || 'edit failed');
+    } catch (err) {
+      console.warn('maxchat pick edit:', err.message);
+    }
+  }
+
+  const sent = await sendMessage(chatId, text, extra);
+  const id = sent?.ok ? sent.result?.message_id || null : null;
+  if (id) {
+    maxChatAddCache.set(key, { ...cache, pickMessageId: id, whereMessageId: id });
+    return true;
+  }
+  if (!sent?.ok) {
+    console.warn('maxchat pick send:', sent?.description || 'send failed');
+  }
+  return false;
+}
+
+function resolvePendingChatKind(pending) {
+  const url = String(pending?.url || '').trim();
+  const listed = pending?.kind === 'personal' || pending?.kind === 'group' ? pending.kind : '';
+  if (listed && url) setChatKind(url, listed);
+  if (listed) return listed;
+  if (url && isRequiredChatUrl(url)) return 'personal';
+  return getStoredChatKind(url) || '';
+}
+
 async function proceedMaxChatAdd(chatId, pending) {
   const url = String(pending?.url || '').trim();
   const title = String(pending?.title || chatLabelFromUrl(url) || '').trim();
+  const kind = resolvePendingChatKind(pending);
   const key = String(chatId);
   const cache = maxChatAddCache.get(key) || {};
   maxChatAddCache.set(key, {
     ...cache,
-    pending: { url, title },
+    pending: { url, title, kind },
   });
 
-  if (url && maxChatKindHandler && !isRequiredChatUrl(url)) {
-    try {
-      await maxChatKindHandler(url);
-    } catch (err) {
-      console.warn('maxchat kind:', err.message);
-    }
-  }
-
-  if (url && (isPersonalMaxChat(url) || isRequiredChatUrl(url))) {
+  if (url && (kind === 'personal' || isRequiredChatUrl(url))) {
+    await editMaxChatPickMessage(
+      chatId,
+      ['<b>Добавить чат MAX</b>', '', `Добавляю в ЛС: <b>${escapeHtml(title || url)}</b>…`].join('\n')
+    );
     return finishMaxChatAddWithTarget(chatId, 'dm');
   }
 
   waitingInput.set(key, 'maxchat:add');
-  await showMaxChatWherePrompt(chatId, { url, title });
+  await showMaxChatWherePrompt(chatId, { url, title, kind });
   return true;
 }
 
@@ -1016,7 +1057,7 @@ async function showMaxChatWherePrompt(chatId, pending) {
   const title = String(pending?.title || chatLabelFromUrl(url) || '').trim();
   maxChatAddCache.set(key, {
     ...cache,
-    pending: { url, title },
+    pending: { url, title, kind: pending?.kind || cache.pending?.kind || '' },
   });
 
   const text = [
@@ -1030,29 +1071,13 @@ async function showMaxChatWherePrompt(chatId, pending) {
     .filter(Boolean)
     .join('\n');
   const extra = { reply_markup: buildMaxChatPickWhereKeyboard() };
-  const latest = maxChatAddCache.get(key) || {};
 
-  if (latest.photoMessageId) {
-    try {
-      await editMessageCaption(chatId, latest.photoMessageId, text, extra);
-      return;
-    } catch (err) {
-      console.warn('maxchat where caption:', err.message);
-    }
-  }
-
-  if (latest.whereMessageId) {
-    try {
-      await editMessageText(chatId, latest.whereMessageId, text, extra);
-      return;
-    } catch (err) {
-      console.warn('maxchat where edit:', err.message);
-    }
-  }
+  if (await editMaxChatPickMessage(chatId, text, extra)) return;
 
   const sent = await sendMessage(chatId, text, extra);
   maxChatAddCache.set(key, {
     ...maxChatAddCache.get(key),
+    pickMessageId: sent?.result?.message_id || null,
     whereMessageId: sent?.result?.message_id || null,
   });
 }
@@ -1151,6 +1176,23 @@ async function finishMaxChatAddWithTarget(chatId, target) {
 async function handleMaxChatPick(chatId, chat) {
   let url = String(chat?.url || '').trim();
   const title = String(chat?.title || '').trim();
+  const kind = chat?.kind === 'personal' || chat?.kind === 'group' ? chat.kind : '';
+
+  await editMaxChatPickMessage(
+    chatId,
+    [
+      '<b>Добавить чат MAX</b>',
+      '',
+      url
+        ? `Выбран: <b>${escapeHtml(title || url)}</b>`
+        : `Ищу в MAX: <b>${escapeHtml(title || 'чат')}</b>…`,
+    ].join('\n'),
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: '« Отмена', callback_data: 'maxchat:canceladd' }]],
+      },
+    }
+  );
 
   if (!url && title && maxChatResolveHandler) {
     try {
@@ -1163,8 +1205,9 @@ async function handleMaxChatPick(chatId, chat) {
 
   if (url) {
     if (title) setChatTitle(url, title);
+    if (kind) setChatKind(url, kind);
     waitingInput.set(String(chatId), 'maxchat:add');
-    await proceedMaxChatAdd(chatId, { url, title });
+    await proceedMaxChatAdd(chatId, { url, title, kind });
     return true;
   }
 
@@ -1172,7 +1215,7 @@ async function handleMaxChatPick(chatId, chat) {
     return handleMaxChatUrlInput(chatId, title);
   }
 
-  await sendMessage(chatId, CHATS.addNotFound);
+  await editMaxChatPickMessage(chatId, CHATS.addNotFound);
   return false;
 }
 
@@ -1901,16 +1944,28 @@ async function handleCallback(query) {
 
   if (data.startsWith('maxchat:pick:')) {
     const index = Number.parseInt(data.slice('maxchat:pick:'.length), 10);
-    const cache = maxChatAddCache.get(String(chatId));
+    const key = String(chatId);
+    const cache = maxChatAddCache.get(key);
     const chat = cache?.chats?.[index];
     if (!chat) {
-      await answerCallback(query.id, 'Чат не найден');
+      await answerCallback(query.id, 'Чат не найден, откройте список заново');
       return;
     }
 
-    waitingInput.set(String(chatId), 'maxchat:add');
-    await answerCallback(query.id, chat.title || 'Куда слать?');
-    await handleMaxChatPick(chatId, chat);
+    waitingInput.set(key, 'maxchat:add');
+    maxChatAddCache.set(key, {
+      ...cache,
+      pickMessageId: query.message?.message_id || cache.pickMessageId,
+    });
+    try {
+      await answerCallback(query.id, chat.title || 'Выбрано');
+    } catch (err) {
+      console.warn('maxchat pick answer:', err.message);
+    }
+    void handleMaxChatPick(chatId, chat).catch(async (err) => {
+      console.warn('maxchat pick:', err.message);
+      await sendMessage(chatId, CHATS.addPickerFail(escapeHtml(err.message))).catch(() => {});
+    });
     return;
   }
 
@@ -2121,7 +2176,10 @@ async function handleCallback(query) {
     await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
       reply_markup: buildMenuKeyboard(),
     });
+    return;
   }
+
+  await answerCallback(query.id);
 }
 
 async function ensureBotAbout(tokenOverride) {
@@ -2176,9 +2234,13 @@ function startTelegramAdmin() {
 
   return pollUpdates(async (update) => {
     recordChatFromUpdate(update);
-    if (update.my_chat_member) await handleMyChatMember(update.my_chat_member);
-    if (update.message) await handleMessage(update.message);
-    if (update.callback_query) await handleCallback(update.callback_query);
+    try {
+      if (update.my_chat_member) await handleMyChatMember(update.my_chat_member);
+      if (update.message) await handleMessage(update.message);
+      if (update.callback_query) await handleCallback(update.callback_query);
+    } catch (err) {
+      console.error('Ошибка панели Telegram:', err.message);
+    }
   }, {
     id: 'admin-main',
     priority: 0,

@@ -178,15 +178,16 @@ async function editPhotoBuffer(chatId, messageId, buffer, caption = '', tokenOve
 }
 
 async function answerCallback(callbackQueryId, text, tokenOverride) {
-  return api(
-    'answerCallbackQuery',
-    {
-      callback_query_id: callbackQueryId,
-      text,
-      show_alert: false,
-    },
-    tokenOverride
-  );
+  const payload = {
+    callback_query_id: callbackQueryId,
+    show_alert: false,
+  };
+  const notice = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+  if (notice) payload.text = notice;
+  return api('answerCallbackQuery', payload, tokenOverride);
 }
 
 async function editMessageText(chatId, messageId, text, extra = {}, tokenOverride) {

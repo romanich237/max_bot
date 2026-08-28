@@ -689,7 +689,9 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
   const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
   const slice = all.slice(safePage * MAX_CHAT_PICK_PAGE, (safePage + 1) * MAX_CHAT_PICK_PAGE);
 
-  const rows = slice.map((item) => [{ text: item.title, callback_data: `maxchat:pick:${item.i}` }]);
+  const rows = slice.map((item) => [
+    { text: item.title || `Чат ${item.i + 1}`, callback_data: `maxchat:pick:${item.i}` },
+  ]);
 
   if (totalPages > 1) {
     const nav = [];
