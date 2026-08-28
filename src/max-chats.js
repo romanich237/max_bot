@@ -206,7 +206,12 @@ function removeChatTitle(url) {
 
 function mergeChatTitles(entries = []) {
   for (const entry of entries) {
-    if (entry?.url && entry?.title) {
+    if (
+      entry?.url &&
+      entry?.title &&
+      !isJunkChatTitle(entry.title) &&
+      !/^https:\/\/web\.max\.ru\//i.test(entry.title)
+    ) {
       setChatTitle(entry.url, entry.title);
     }
     if (entry?.url && entry?.kind) {
@@ -669,15 +674,30 @@ function truncateButtonText(text, max = TG_BUTTON_TEXT_MAX) {
   return `${value.slice(0, max - 1)}…`;
 }
 
+function isJunkChatTitle(title) {
+  return /^(группа|group|groups|канал|channel|чаты|chats|чат|личные|personal|online|в сети)$/i.test(
+    String(title || '').replace(/\s+/g, ' ').trim()
+  );
+}
+
+function pickButtonLabel(chat) {
+  const url = String(chat?.url || '').trim();
+  if (url) return truncateButtonText(url);
+  const title = String(chat?.title || '').replace(/\s+/g, ' ').trim();
+  if (title && !isJunkChatTitle(title)) return truncateButtonText(title);
+  return '';
+}
+
 function uniquePickItems(chats = []) {
   const chosen = new Map();
   for (let i = 0; i < chats.length; i++) {
-    const title = truncateButtonText(chats[i]?.title);
+    const url = String(chats[i]?.url || '').trim();
+    const title = pickButtonLabel(chats[i]);
     if (!title) continue;
-    const key = title.toLowerCase();
+    const key = url || title.toLowerCase();
     const prev = chosen.get(key);
-    if (!prev || (!prev.url && chats[i].url)) {
-      chosen.set(key, { i, title, url: chats[i].url });
+    if (!prev || (!prev.url && url)) {
+      chosen.set(key, { i, title, url });
     }
   }
   return [...chosen.values()];

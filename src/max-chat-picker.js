@@ -175,25 +175,21 @@ async function waitForChatListDom(page) {
 
 async function extractMaxChatsFromPage(page) {
   return page.evaluate((groupSubtitlePattern) => {
-    const CHAT_ID = /-\d{5,}/;
     const ANY_CHAT_ID = /(?:web\.max\.ru\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/;
     const GROUP_SUBTITLE_RE = new RegExp(groupSubtitlePattern, 'i');
+    const JUNK_TITLE_RE =
+      /^(группа|group|groups|канал|channel|чаты|chats|чат|личные|personal|online|в сети)$/i;
 
     function chatIdFromBlob(blob) {
       const text = String(blob || '');
-      const negative = text.match(/-\d{5,}/);
-      if (negative) return negative[0];
       const fromHref = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/);
       if (fromHref) return fromHref[1];
-      return '';
+      const negative = text.match(/-\d{5,}/);
+      return negative ? negative[0] : '';
     }
 
     function chatUrlFromId(chatId) {
       return chatId ? `https://web.max.ru/${chatId}` : '';
-    }
-
-    function chatUrlFromMatch(match) {
-      return chatUrlFromId(match?.[0]);
     }
 
     function nodeBlob(el) {
@@ -202,79 +198,19 @@ async function extractMaxChatsFromPage(page) {
       return [el.getAttribute?.('href') || '', attrs, el.outerHTML || ''].join(' ');
     }
 
-    function pickTitle(container) {
-      if (!container) return '';
+    function isJunkTitle(value) {
+      return JUNK_TITLE_RE.test(String(value || '').replace(/\s+/g, ' ').trim());
+    }
 
-      const titleNode =
+    function rowTitle(container) {
+      if (!container) return '';
+      const heading =
         (container.matches?.('h3.title') ? container : null) ||
         container.querySelector?.('h3.title');
-      const fromTitle = (titleNode?.innerText || '').trim().split('\n')[0].trim();
-      if (fromTitle) return fromTitle;
-
-      const fromAria = container.getAttribute('aria-label') || '';
-      if (fromAria.trim()) {
-        return fromAria.trim().split(',')[0].trim();
-      }
-
-      const fallbackNode = container.querySelector?.(
-        '[class*="title" i], [class*="name" i], [class*="header" i], [class*="peer" i] span, h3, h4'
-      );
-      const fromNode = fallbackNode?.innerText || '';
-      if (fromNode.trim()) {
-        return fromNode.trim().split('\n')[0].trim();
-      }
-
-      const lines = (container.innerText || '')
-        .split('\n')
-        .map((line) => line.replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
-
-      for (const line of lines) {
-        if (/^\d{1,2}:\d{2}$/.test(line)) continue;
-        if (CHAT_ID.test(line)) continue;
-        if (/^(вчера|сегодня|yesterday|today)$/i.test(line)) continue;
-        return line;
-      }
-
-      return lines[0] || '';
+      const fromTitle = (heading?.innerText || '').trim().split('\n')[0].trim();
+      if (fromTitle && !isJunkTitle(fromTitle)) return fromTitle;
+      return '';
     }
-
-    function isChatListRow(el) {
-      if (!el || el.nodeType !== 1) return false;
-      if (el.matches?.('button.cell') && el.querySelector?.('h3.title')) return true;
-      if (el.querySelector?.('h3.title') && el.closest?.('.scrollListContent, .scrollListScrollable, aside')) {
-        return true;
-      }
-      return false;
-    }
-
-    function rowOwnsChatId(el, chatId) {
-      if (!el || !chatId) return false;
-      const escaped = String(chatId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`(?:web\\.max\\.ru\\/|["'/])${escaped}(?:["'/?#\\s]|$)`);
-      const blob = [
-        el.getAttribute?.('href') || '',
-        [...(el.attributes || [])].map((attr) => attr.value).join(' '),
-        el.innerHTML || '',
-      ].join(' ');
-      return re.test(blob);
-    }
-
-    function findContainerForId(chatId) {
-      const rows = document.querySelectorAll(
-        '.scrollListContent div.item, .scrollListScrollable div.item, aside div.item, button.cell'
-      );
-      for (const row of rows) {
-        const cell = row.matches?.('button.cell') ? row : row.querySelector?.('button.cell') || row;
-        if (!isChatListRow(cell) && !isChatListRow(row)) continue;
-        if (rowOwnsChatId(cell, chatId) || rowOwnsChatId(row, chatId)) return cell;
-      }
-      return null;
-    }
-
-    const chats = [];
-    const seen = new Set();
-    const seenTitles = new Set();
 
     function kindFromContainer(container) {
       if (!container) return '';
@@ -289,21 +225,29 @@ async function extractMaxChatsFromPage(page) {
       return GROUP_SUBTITLE_RE.test(text) ? 'group' : '';
     }
 
+    function listRoot() {
+      return (
+        document.querySelector('aside .scrollListContent') ||
+        document.querySelector('aside .scrollListScrollable') ||
+        document.querySelector('aside') ||
+        document.querySelector('.scrollListContent')
+      );
+    }
+
+    const chats = [];
+    const seen = new Set();
+    const seenTitles = new Set();
+
     function addChat(title, url, container) {
-      let cleanTitle = (title || pickTitle(container) || '').replace(/\s+/g, ' ').trim();
+      const kind = kindFromContainer(container);
+      let cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
+      if (isJunkTitle(cleanTitle)) cleanTitle = '';
+      if (!cleanTitle) cleanTitle = url || '';
       if (!cleanTitle) return;
 
       const key = cleanTitle.toLowerCase();
-      const kind = kindFromContainer(container);
 
       if (!url) {
-        const fromList = Boolean(
-          container &&
-            (container.matches?.('h3.title, button.cell, div.item') ||
-              container.querySelector?.('h3.title') ||
-              container.closest?.('.scrollListContent, .scrollListScrollable, button.cell, div.item'))
-        );
-        if (/^(chats|чаты)$/i.test(cleanTitle) && !fromList) return;
         if (seenTitles.has(key)) return;
         seenTitles.add(key);
         chats.push({ title: cleanTitle, url: null, kind: kind || undefined });
@@ -312,8 +256,8 @@ async function extractMaxChatsFromPage(page) {
 
       if (seen.has(url)) {
         const existing = chats.find((chat) => chat.url === url);
-        if (existing && (!existing.title || CHAT_ID.test(existing.title))) {
-          existing.title = cleanTitle;
+        if (existing && (!existing.title || existing.title === url || isJunkTitle(existing.title))) {
+          if (cleanTitle && cleanTitle !== url) existing.title = cleanTitle;
         }
         if (existing && kind && !existing.kind) existing.kind = kind;
         return;
@@ -333,84 +277,31 @@ async function extractMaxChatsFromPage(page) {
     }
 
     function addFromRow(row) {
-      if (!row) return;
-      const heading = row.querySelector?.('h3.title') || (row.matches?.('h3.title') ? row : null);
-      const title = (heading?.innerText || pickTitle(row) || '').trim().split('\n')[0].trim();
-      const blob = nodeBlob(row);
-      addChat(title, chatUrlFromId(chatIdFromBlob(blob)) || null, row);
+      if (!row || row.closest?.('.openedChat')) return;
+      const item = row.closest?.('div.item') || row;
+      const cell = item.querySelector?.('button.cell') || (item.matches?.('button.cell') ? item : row);
+      const blob = [nodeBlob(item), nodeBlob(cell)].join(' ');
+      const url = chatUrlFromId(chatIdFromBlob(blob)) || null;
+      addChat(rowTitle(cell) || rowTitle(item), url, cell);
     }
 
-    for (const item of document.querySelectorAll(
-      '.scrollListContent div.item, .scrollListScrollable div.item, aside div.item'
-    )) {
-      const cell = item.querySelector('button.cell') || item;
-      addFromRow(cell);
+    const root = listRoot();
+    const scope = root || document;
+    for (const item of scope.querySelectorAll('div.item, button.cell')) {
+      if (item.closest?.('.openedChat')) continue;
+      if (root && !root.contains(item)) continue;
+      addFromRow(item);
     }
 
-    for (const h3 of document.querySelectorAll('button.cell > h3.title, button.cell h3.title, h3.title')) {
-      const title = (h3.innerText || '').trim().split('\n')[0].trim();
-      if (!title) continue;
-
-      const row =
-        h3.closest('button.cell, div.item') ||
-        h3.parentElement?.closest?.('button.cell, div.item');
-      addFromRow(row || h3);
-    }
-
-    for (const link of document.querySelectorAll('a[href], [href]')) {
-      const href = link.getAttribute('href') || '';
-      const match = href.match(ANY_CHAT_ID) || href.match(CHAT_ID);
-      if (!match) continue;
-      const chatId = match[1] || match[0];
-
-      const container =
-        link.closest(
-          'li, [role="listitem"], button, [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i], [class*="conversation" i]'
-        ) || link.parentElement;
-
-      addChat(pickTitle(container) || pickTitle(link), chatUrlFromId(chatId), container);
-    }
-
-    for (const el of document.querySelectorAll(
-      'button, [role="button"], [role="listitem"], [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i]'
-    )) {
-      let chatId = '';
-
-      for (const attr of el.attributes || []) {
-        const match = String(attr.value || '').match(ANY_CHAT_ID) || String(attr.value || '').match(CHAT_ID);
-        if (match) {
-          chatId = match[1] || match[0];
-          break;
-        }
+    if (root) {
+      const html = root.innerHTML || '';
+      for (const match of html.matchAll(ANY_CHAT_ID)) {
+        const chatId = match[1];
+        if (!chatId) continue;
+        const url = chatUrlFromId(chatId);
+        if (!url || seen.has(url)) continue;
+        addChat(url, url, root);
       }
-
-      if (!chatId) {
-        const innerLink = el.querySelector('a[href], [href]');
-        const href = innerLink?.getAttribute('href') || '';
-        const match = href.match(ANY_CHAT_ID) || href.match(CHAT_ID);
-        if (match) chatId = match[1] || match[0];
-      }
-
-      if (!chatId) continue;
-
-      addChat(pickTitle(el), chatUrlFromId(chatId), el);
-    }
-
-    const html = document.body?.innerHTML || '';
-    for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(-\d{5,})/g)) {
-      const chatId = match[1];
-      const url = chatUrlFromMatch(chatId.match(CHAT_ID));
-      const container = findContainerForId(chatId);
-      if (!isChatListRow(container)) continue;
-      addChat(pickTitle(container), url, container);
-    }
-
-    for (const match of html.matchAll(/(?:https:\/\/web\.max\.ru)?\/(\d{5,})(?=["'/?#\s]|$)/g)) {
-      const chatId = match[1];
-      const url = chatUrlFromMatch([chatId]);
-      const container = findContainerForId(chatId);
-      if (!isChatListRow(container)) continue;
-      addChat(pickTitle(container), url, container);
     }
 
     return chats;
@@ -419,44 +310,17 @@ async function extractMaxChatsFromPage(page) {
 
 async function findChatListClip(page) {
   return page.evaluate(() => {
-    const CHAT_ID = /-\d{5,}/;
-    const counts = new Map();
+    const list =
+      document.querySelector('aside .scrollListScrollable') ||
+      document.querySelector('aside .cropped') ||
+      document.querySelector('aside .scrollListContent') ||
+      document.querySelector('aside');
 
-    function bump(el) {
-      let node = el;
-      for (let depth = 0; depth < 12 && node; depth++) {
-        node = node.parentElement;
-        if (!node || node === document.body) break;
-        counts.set(node, (counts.get(node) || 0) + 1);
-      }
-    }
+    if (!list) return null;
 
-    for (const el of document.querySelectorAll('a[href], [href], button, [role="listitem"], [class*="cell" i], button.cell')) {
-      if (el.querySelector?.('h3.title') || el.matches?.('button.cell')) {
-        bump(el);
-        continue;
-      }
-      const blob = [
-        el.getAttribute('href') || '',
-        el.outerHTML || '',
-      ].join(' ');
+    const rect = list.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 40) return null;
 
-      if (!CHAT_ID.test(blob) && !/-?\d{5,}/.test(blob)) continue;
-      bump(el);
-    }
-
-    let best = null;
-    let bestCount = 0;
-    for (const [el, count] of counts) {
-      if (count > bestCount) {
-        best = el;
-        bestCount = count;
-      }
-    }
-
-    if (!best || bestCount < 1) return null;
-
-    const rect = best.getBoundingClientRect();
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const padding = 8;
 
