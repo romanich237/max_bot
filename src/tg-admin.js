@@ -24,6 +24,7 @@ const {
   chatLabelFromUrl,
   isRequiredChatUrl,
   isPersonalMaxChat,
+  isGroupMaxChat,
   isChatForwardEnabled,
   setChatForwardEnabled,
   getNotifyTarget,
@@ -133,6 +134,7 @@ let stopHandler = null;
 let startHandler = null;
 let maxChatPickerHandler = null;
 let maxChatResolveHandler = null;
+let maxChatKindHandler = null;
 let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 const maxChatAddCache = new Map();
@@ -194,6 +196,10 @@ function setMaxChatPickerHandler(fn) {
 
 function setMaxChatResolveHandler(fn) {
   maxChatResolveHandler = typeof fn === 'function' ? fn : null;
+}
+
+function setMaxChatKindHandler(fn) {
+  maxChatKindHandler = typeof fn === 'function' ? fn : null;
 }
 
 async function clearMaxChatAddPrompt(chatId, userMessageId) {
@@ -881,7 +887,9 @@ async function showMaxChatView(chatId, messageId, index) {
   lines.push(
     isPersonalMaxChat(url)
       ? 'Личный чат MAX — по умолчанию в ЛС.'
-      : 'Куда слать в Telegram — выберите кнопками ниже.'
+      : isGroupMaxChat(url)
+        ? 'Группа или канал MAX — по умолчанию в ЛС и группу.'
+        : 'Куда слать в Telegram — выберите кнопками ниже.'
   );
   lines.push(
     target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth
@@ -972,6 +980,14 @@ async function proceedMaxChatAdd(chatId, pending) {
     ...cache,
     pending: { url, title },
   });
+
+  if (url && maxChatKindHandler && !isRequiredChatUrl(url)) {
+    try {
+      await maxChatKindHandler(url);
+    } catch (err) {
+      console.warn('maxchat kind:', err.message);
+    }
+  }
 
   if (url && (isPersonalMaxChat(url) || isRequiredChatUrl(url))) {
     return finishMaxChatAddWithTarget(chatId, 'dm');
@@ -2132,6 +2148,7 @@ module.exports = {
   setStartHandler,
   setMaxChatPickerHandler,
   setMaxChatResolveHandler,
+  setMaxChatKindHandler,
   buildStatusText,
   buildMenuKeyboard,
   BOT_COMMANDS,

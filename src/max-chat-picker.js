@@ -1,5 +1,20 @@
 const { isLoginPage, openChatWhenReady } = require('./parser');
-const { isMaxChatUrl, normalizeMaxChatUrl, chatLabelFromUrl, mergeChatTitles, setChatTitle, getChatTitle, getChatTitles, isRequiredChatUrl } = require('./max-chats');
+const {
+  isMaxChatUrl,
+  normalizeMaxChatUrl,
+  chatLabelFromUrl,
+  mergeChatTitles,
+  setChatTitle,
+  getChatTitle,
+  getChatTitles,
+  isRequiredChatUrl,
+  GROUP_SUBTITLE_SELECTOR,
+  GROUP_SUBTITLE_PATTERN,
+  kindFromSubtitleText,
+  PERSONAL_ONLINE_SELECTOR,
+  getStoredChatKind,
+  setChatKind,
+} = require('./max-chats');
 
 const MAX_HOME_URL = 'https://web.max.ru/';
 const CHAT_ID_RE = /-\d{5,}/;
@@ -159,8 +174,9 @@ async function waitForChatListDom(page) {
 }
 
 async function extractMaxChatsFromPage(page) {
-  return page.evaluate(() => {
+  return page.evaluate((groupSubtitlePattern) => {
     const CHAT_ID = /-\d{5,}/;
+    const GROUP_SUBTITLE_RE = new RegExp(groupSubtitlePattern, 'i');
 
     function chatIdFromBlob(blob) {
       const text = String(blob || '');
@@ -259,11 +275,25 @@ async function extractMaxChatsFromPage(page) {
     const seen = new Set();
     const seenTitles = new Set();
 
+    function kindFromContainer(container) {
+      if (!container) return '';
+      if (container.querySelector?.('.subtitleWrapper .online, span.online')) {
+        return 'personal';
+      }
+      const node =
+        (container.matches?.('.subtitleWrapper') ? container : null) ||
+        container.querySelector?.('.subtitleWrapper');
+      const text = (node?.innerText || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '';
+      return GROUP_SUBTITLE_RE.test(text) ? 'group' : '';
+    }
+
     function addChat(title, url, container) {
       let cleanTitle = (title || pickTitle(container) || '').replace(/\s+/g, ' ').trim();
       if (!cleanTitle) return;
 
       const key = cleanTitle.toLowerCase();
+      const kind = kindFromContainer(container);
 
       if (!url) {
         const fromList = Boolean(
@@ -275,7 +305,7 @@ async function extractMaxChatsFromPage(page) {
         if (/^(chats|чаты)$/i.test(cleanTitle) && !fromList) return;
         if (seenTitles.has(key)) return;
         seenTitles.add(key);
-        chats.push({ title: cleanTitle, url: null });
+        chats.push({ title: cleanTitle, url: null, kind: kind || undefined });
         return;
       }
 
@@ -284,19 +314,21 @@ async function extractMaxChatsFromPage(page) {
         if (existing && (!existing.title || CHAT_ID.test(existing.title))) {
           existing.title = cleanTitle;
         }
+        if (existing && kind && !existing.kind) existing.kind = kind;
         return;
       }
 
       const titleOnly = chats.findIndex((chat) => !chat.url && chat.title.toLowerCase() === key);
       if (titleOnly >= 0) {
         chats[titleOnly].url = url;
+        if (kind) chats[titleOnly].kind = kind;
         seen.add(url);
         return;
       }
 
       seen.add(url);
       seenTitles.add(key);
-      chats.push({ title: cleanTitle, url });
+      chats.push({ title: cleanTitle, url, kind: kind || undefined });
     }
 
     function addFromRow(row) {
@@ -380,7 +412,7 @@ async function extractMaxChatsFromPage(page) {
     }
 
     return chats;
-  });
+  }, GROUP_SUBTITLE_PATTERN);
 }
 
 async function findChatListClip(page) {
@@ -457,6 +489,36 @@ function normalizePageChatUrl(url) {
   }
 }
 
+async function readOpenChatSubtitle(page) {
+  const loc = page.locator(GROUP_SUBTITLE_SELECTOR).first();
+  const visible = await loc.isVisible({ timeout: 2500 }).catch(() => false);
+  if (!visible) return '';
+  const text = await loc.innerText().catch(() => '');
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function hasOpenChatOnlineStatus(page) {
+  const loc = page.locator(PERSONAL_ONLINE_SELECTOR).first();
+  return loc.isVisible({ timeout: 800 }).catch(() => false);
+}
+
+async function ensureChatKindFromPage(page, chatUrl) {
+  const normalized = normalizeMaxChatUrl(chatUrl);
+  if (!normalized || isRequiredChatUrl(normalized)) {
+    return getStoredChatKind(normalized) || '';
+  }
+
+  const subtitle = await readOpenChatSubtitle(page);
+  let kind = kindFromSubtitleText(subtitle);
+  if (kind !== 'group' && (await hasOpenChatOnlineStatus(page))) {
+    kind = 'personal';
+  }
+  if (kind) setChatKind(normalized, kind);
+  return kind || getStoredChatKind(normalized);
+}
+
 async function readOpenChatTitle(page) {
   const opened = page.locator('.openedChat').first();
   const hasOpened = await opened.isVisible({ timeout: 800 }).catch(() => false);
@@ -515,6 +577,8 @@ function titleOwnedByOtherChat(title, url) {
 
 async function ensureChatTitleFromPage(page, chatUrl) {
   const normalized = normalizeMaxChatUrl(chatUrl);
+  await ensureChatKindFromPage(page, normalized);
+
   if (!normalized || getChatTitle(normalized) || isRequiredChatUrl(normalized)) {
     return getChatTitle(normalized) || chatLabelFromUrl(normalized);
   }
@@ -590,6 +654,7 @@ async function syncMonitoredChatTitles(page, urls = [], options = {}) {
       }
 
       const title = await readOpenChatTitle(page);
+      await ensureChatKindFromPage(page, chatUrl);
       if (title && !titleOwnedByOtherChat(title, chatUrl)) {
         setChatTitle(chatUrl, title);
         updated[chatUrl] = title;
@@ -865,6 +930,8 @@ module.exports = {
   captureMaxChatListScreenshot,
   readUnreadCounts,
   readOpenChatTitle,
+  readOpenChatSubtitle,
+  ensureChatKindFromPage,
   ensureChatTitleFromPage,
   resolveChatUrlByTitle,
   syncMonitoredChatTitles,

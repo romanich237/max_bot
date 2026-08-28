@@ -102,8 +102,26 @@ async function isLoginPage(page) {
   return false;
 }
 
-async function waitForOpenChat(page, chatUrl, timeout = 15000) {
+async function readOpenedHeaderTitle(page) {
+  return page
+    .evaluate(() => {
+      const opened = document.querySelector('.openedChat');
+      if (!opened) return '';
+      const node =
+        opened.querySelector('button.main .content') ||
+        opened.querySelector('.header') ||
+        opened.querySelector('h2');
+      return String(node?.innerText || '')
+        .split('\n')[0]
+        .replace(/\s+/g, ' ')
+        .trim();
+    })
+    .catch(() => '');
+}
+
+async function waitForOpenChat(page, chatUrl, timeout = 15000, options = {}) {
   const expectedId = chatIdFromUrl(chatUrl);
+  const previousTitle = String(options.previousTitle || '').trim();
   if (!expectedId) {
     await page.waitForTimeout(800);
     return;
@@ -116,26 +134,49 @@ async function waitForOpenChat(page, chatUrl, timeout = 15000) {
 
   await page
     .waitForFunction(
-      (chatId) => {
-        if (!String(location.href || '').includes(chatId)) return false;
+      ({ chatId, previousTitle: prevTitle }) => {
+        const path = String(location.pathname || '').replace(/\/+$/, '');
+        if (path !== `/${chatId}` && !path.endsWith(`/${chatId}`)) return false;
+
         const opened = document.querySelector('.openedChat');
-        if (opened) {
-          const style = window.getComputedStyle(opened);
-          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (!opened) return false;
+        const style = window.getComputedStyle(opened);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+
+        const titleNode =
+          opened.querySelector('button.main .content') ||
+          opened.querySelector('.header') ||
+          opened.querySelector('h2');
+        const title = String(titleNode?.innerText || '')
+          .split('\n')[0]
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (prevTitle) {
+          return Boolean(title && title !== prevTitle);
         }
-        return Boolean(opened || document.querySelector('.messageWrapper'));
+
+        return Boolean(title || opened.querySelector('.messageWrapper'));
       },
-      expectedId,
+      { chatId: expectedId, previousTitle },
       { timeout }
     )
     .catch(() => {});
 
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(400);
+}
+
+async function openChatPage(page, chatUrl, timeout = 15000) {
+  const previousTitle = await readOpenedHeaderTitle(page);
+  const sameChat = chatIdFromUrl(page.url()) === chatIdFromUrl(chatUrl);
+  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await waitForOpenChat(page, chatUrl, timeout, {
+    previousTitle: sameChat ? '' : previousTitle,
+  });
 }
 
 async function openChatWhenReady(page, chatUrl, maxAttempts = 3) {
-  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await waitForOpenChat(page, chatUrl);
+  await openChatPage(page, chatUrl);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (await isLoginPage(page)) {
@@ -484,25 +525,62 @@ async function parseMessages(page) {
         };
       }
 
+      function normalizeBodyText(text) {
+        return String(text || '')
+          .replace(/\u00a0/g, ' ')
+          .replace(/\r\n/g, '\n')
+          .replace(/[ \t]+\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+      }
+
       function extractBody(wrapper) {
+        const roots = [...wrapper.querySelectorAll('.bubbleContent')];
+        if (!roots.length) roots.push(wrapper);
+
         const parts = [];
+        for (const root of roots) {
+          const clone = root.cloneNode(true);
+          clone
+            .querySelectorAll(
+              [
+                '.mark',
+                '.header',
+                '.meta',
+                '.meta--text',
+                '.attachAudio',
+                '.media',
+                '.grid',
+                '.tile',
+                '.sticker',
+                '.avatarImage',
+                '[class*="keyboard"]',
+                '[class*="reaction"]',
+              ].join(', ')
+            )
+            .forEach((el) => el.remove());
 
-        wrapper.querySelectorAll('.bubbleContent').forEach((bubble) => {
-          bubble.querySelectorAll('.text.svelte-1htnb3l, .text').forEach((el) => {
-            if (el.closest('.mark')) return;
-            if (el.closest('.header')) return;
-            if (el.closest('.meta')) return;
-
-            const t = el.innerText.trim();
-            if (!t || isTimeText(t)) return;
-            if (t === 'Голосовое сообщение') return;
-
-            parts.push(t);
+          const texts = [...clone.querySelectorAll('.text')].filter((el) => {
+            const t = String(el.innerText || '').trim();
+            if (!t || isTimeText(t) || t === 'Голосовое сообщение') return false;
+            return true;
           });
-        });
+          const top = texts.filter(
+            (el) => !texts.some((other) => other !== el && other.contains(el))
+          );
 
-        const unique = [...new Set(parts)];
-        return unique.join('\n').trim();
+          let chunk = top.length
+            ? top.map((el) => String(el.innerText || '').trim()).join('\n')
+            : String(clone.innerText || '');
+
+          chunk = normalizeBodyText(chunk).replace(
+            /\n\d{1,2}:\d{2}(\s*(AM|PM))?$/i,
+            ''
+          );
+          if (chunk) parts.push(chunk);
+        }
+
+        return [...new Set(parts)].join('\n\n').trim();
       }
 
       function isValidPhoto(img) {
@@ -580,14 +658,14 @@ async function parseMessages(page) {
       function queryWrappers(selector) {
         const opened = document.querySelector('.openedChat');
         if (opened) {
-          const inner = opened.querySelectorAll('.messageWrapper');
-          if (inner.length) return Array.from(inner);
+          const style = window.getComputedStyle(opened);
+          if (style.display === 'none' || style.visibility === 'hidden') return [];
+          return Array.from(opened.querySelectorAll('.messageWrapper'));
         }
 
         const main = document.querySelector('main[name*="Chat window" i], main[name*="чат" i]');
         if (main) {
-          const inner = main.querySelectorAll('.messageWrapper');
-          if (inner.length) return Array.from(inner);
+          return Array.from(main.querySelectorAll('.messageWrapper'));
         }
 
         return Array.from(document.querySelectorAll(selector));
@@ -606,6 +684,10 @@ async function parseMessages(page) {
 
         const reply = extractReply(wrapper);
         let body = extractBody(wrapper);
+        if (author && body === author) body = '';
+        if (author && body.startsWith(`${author}\n`)) {
+          body = body.slice(author.length).trim();
+        }
         const time = extractTime(wrapper);
         const media = extractMedia(wrapper);
 
@@ -734,6 +816,7 @@ module.exports = {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
   openChatWhenReady,
+  openChatPage,
   waitForOpenChat,
   readMessages,
   findNewMessages,

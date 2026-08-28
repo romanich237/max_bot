@@ -25,10 +25,10 @@ const {
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler, setMaxChatKindHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, discoverMaxChatsForMonitor } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -41,7 +41,7 @@ const {
   MESSAGE_WRAPPER_SELECTOR,
   isLoginPage,
   openChatWhenReady,
-  waitForOpenChat,
+  openChatPage,
   readMessages,
   findNewMessages,
   diffByTail,
@@ -264,14 +264,12 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     throw new Error('Страница браузера закрыта');
   }
 
-  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await waitForOpenChat(page, chatUrl);
+  await openChatPage(page, chatUrl);
 
   if (await isLoginPage(page)) {
     const defaultUrl = getDefaultChatUrl();
     if (defaultUrl && (await probeMaxSession(page, defaultUrl))) {
-      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      await waitForOpenChat(page, chatUrl);
+      await openChatPage(page, chatUrl);
     }
 
     if (await isLoginPage(page)) {
@@ -283,6 +281,15 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   }
 
   await ensureChatTitleFromPage(page, chatUrl);
+
+  const openedId = chatIdFromUrl(page.url());
+  const expectedId = chatIdFromUrl(chatUrl);
+  if (expectedId && openedId !== expectedId) {
+    console.warn(
+      `[${chatLabelFromUrl(chatUrl)}] Страница не совпала: ждали ${expectedId}, открыт ${openedId || page.url()}`
+    );
+    return [];
+  }
 
   let messages = await readMessages(page);
   const needsBaseline = isStartup || chatState.baselineDone === false;
@@ -656,6 +663,27 @@ async function startMonitor() {
         throw new Error('Сессия MAX истекла. Отправьте /reauth');
       }
       return await resolveChatUrlByTitle(page, title);
+    } finally {
+      profileBusy = false;
+      if (returnUrl && returnUrl.includes('web.max.ru')) {
+        await openChatWhenReady(page, returnUrl).catch(() => {});
+      }
+    }
+  });
+
+  setMaxChatKindHandler(async (url) => {
+    if (authBusy) {
+      throw new Error('Идёт авторизация MAX, повторите позже');
+    }
+
+    const returnUrl = getDefaultChatUrl() || page.url();
+    profileBusy = true;
+    try {
+      if (await isLoginPage(page)) {
+        throw new Error('Сессия MAX истекла. Отправьте /reauth');
+      }
+      await openChatWhenReady(page, url);
+      return await ensureChatKindFromPage(page, url);
     } finally {
       profileBusy = false;
       if (returnUrl && returnUrl.includes('web.max.ru')) {

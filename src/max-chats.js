@@ -60,14 +60,89 @@ function requiredTitleForUrl(url) {
   return required ? required.title : '';
 }
 
-function isPersonalMaxChat(url) {
+const GROUP_SUBTITLE_SELECTOR = [
+  '.openedChat .header .subtitleWrapper',
+  '.openedChat .subtitleWrapper',
+].join(', ');
+
+const GROUP_SUBTITLE_PATTERN =
+  String.raw`(?:\d{1,3}(?:[ \u00a0,.\u202f']\d{3})*|\d+(?:[.,]\d+)?\s*[kKmMкК]?)\s*(?:followers?|подписчик(?:а|ов|и)?|members?|участник(?:а|ов|и)?|subscribers?)`;
+const GROUP_SUBTITLE_RE = new RegExp(GROUP_SUBTITLE_PATTERN, 'i');
+
+const PERSONAL_SUBTITLE_PATTERN =
+  String.raw`(?:last\s+seen|online|typing|был[аои]?|в\s+сети|печатает|только\s+что|недавно)`;
+const PERSONAL_SUBTITLE_RE = new RegExp(PERSONAL_SUBTITLE_PATTERN, 'i');
+
+const PERSONAL_ONLINE_SELECTOR = [
+  '.openedChat .header .subtitleWrapper .online',
+  '.openedChat .subtitleWrapper .online',
+  '.openedChat span.online',
+].join(', ');
+
+function kindFromSubtitleText(text) {
+  const value = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!value) return '';
+  if (GROUP_SUBTITLE_RE.test(value)) return 'group';
+  if (PERSONAL_SUBTITLE_RE.test(value)) return 'personal';
+  return '';
+}
+
+function getChatKinds() {
+  const raw = store.getPath(['max', 'chatKinds']);
+  if (!raw || typeof raw !== 'object') return {};
+  const kinds = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const normalized = normalizeMaxChatUrl(key);
+    if (normalized && (value === 'group' || value === 'personal')) {
+      kinds[normalized] = value;
+    }
+  }
+  return kinds;
+}
+
+function getStoredChatKind(url) {
+  return getChatKinds()[normalizeMaxChatUrl(url)] || '';
+}
+
+function setChatKind(url, kind) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized || isRequiredChatUrl(normalized)) return;
+  if (kind !== 'group' && kind !== 'personal') return;
+
+  const kinds = getChatKinds();
+  if (kinds[normalized] === kind) return;
+  kinds[normalized] = kind;
+  store.setPath(['max', 'chatKinds'], kinds);
+}
+
+function removeChatKind(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  const kinds = getChatKinds();
+  if (!kinds[normalized]) return;
+  delete kinds[normalized];
+  store.setPath(['max', 'chatKinds'], kinds);
+}
+
+function kindFromUrlFallback(url) {
   const id = chatIdFromUrl(url);
-  return Boolean(id) && !String(id).startsWith('-');
+  if (!id) return '';
+  return String(id).startsWith('-') ? 'group' : 'personal';
+}
+
+function getChatKind(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (isRequiredChatUrl(normalized)) return 'service';
+  return getStoredChatKind(normalized) || kindFromUrlFallback(normalized);
+}
+
+function isPersonalMaxChat(url) {
+  return getChatKind(url) === 'personal';
 }
 
 function isGroupMaxChat(url) {
-  const id = chatIdFromUrl(url);
-  return Boolean(id) && String(id).startsWith('-');
+  return getChatKind(url) === 'group';
 }
 
 function defaultNotifyTarget(url) {
@@ -76,10 +151,7 @@ function defaultNotifyTarget(url) {
 }
 
 function chatKindFromUrl(url) {
-  if (isRequiredChatUrl(url)) return 'service';
-  if (isPersonalMaxChat(url)) return 'personal';
-  if (isGroupMaxChat(url)) return 'group';
-  return '';
+  return getChatKind(url);
 }
 
 function chatLabelFromUrl(url) {
@@ -136,6 +208,9 @@ function mergeChatTitles(entries = []) {
   for (const entry of entries) {
     if (entry?.url && entry?.title) {
       setChatTitle(entry.url, entry.title);
+    }
+    if (entry?.url && entry?.kind) {
+      setChatKind(entry.url, entry.kind);
     }
   }
 }
@@ -448,6 +523,7 @@ function removeMonitorChatUrl(url) {
   store.setPath(['max', 'disabledRequiredChats'], getDisabledForwardChatUrls().filter((item) => item !== normalized));
   removeNotifyTarget(normalized);
   removeChatTitle(normalized);
+  removeChatKind(normalized);
   return { ok: true, url: normalized };
 }
 
@@ -620,7 +696,18 @@ module.exports = {
   chatIdFromUrl,
   chatLabelFromUrl,
   chatMenuLabel,
+  GROUP_SUBTITLE_SELECTOR,
+  GROUP_SUBTITLE_PATTERN,
+  GROUP_SUBTITLE_RE,
+  PERSONAL_SUBTITLE_PATTERN,
+  PERSONAL_SUBTITLE_RE,
+  PERSONAL_ONLINE_SELECTOR,
+  kindFromSubtitleText,
   chatKindFromUrl,
+  getChatKind,
+  getStoredChatKind,
+  setChatKind,
+  removeChatKind,
   isPersonalMaxChat,
   isGroupMaxChat,
   defaultNotifyTarget,
