@@ -688,6 +688,12 @@ function pickButtonLabel(chat) {
   return '';
 }
 
+function isSelectedPickChat(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized) return false;
+  return getMonitorChatUrls().some((item) => normalizeMaxChatUrl(item) === normalized);
+}
+
 function uniquePickItems(chats = []) {
   const chosen = new Map();
   for (let i = 0; i < chats.length; i++) {
@@ -709,9 +715,15 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
   const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
   const slice = all.slice(safePage * MAX_CHAT_PICK_PAGE, (safePage + 1) * MAX_CHAT_PICK_PAGE);
 
-  const rows = slice.map((item) => [
-    { text: item.title || `Чат ${item.i + 1}`, callback_data: `maxchat:pick:${item.i}` },
-  ]);
+  const rows = slice.map((item) => {
+    const selected = isSelectedPickChat(item.url);
+    const label = selected
+      ? truncateButtonText(`✅ ${item.title}`)
+      : item.title || `Чат ${item.i + 1}`;
+    const button = { text: label, callback_data: `maxchat:pick:${item.i}` };
+    if (selected) button.style = 'success';
+    return [button];
+  });
 
   if (totalPages > 1) {
     const nav = [];

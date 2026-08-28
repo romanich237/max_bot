@@ -1144,6 +1144,15 @@ async function finishMaxChatAddWithTarget(chatId, target) {
   });
   if (result.error) return result;
 
+  if (cache?.chats?.length) {
+    waitingInput.set(key, 'maxchat:add');
+    const next = { ...maxChatAddCache.get(key) };
+    delete next.pending;
+    maxChatAddCache.set(key, next);
+    await restoreMaxChatPickPrompt(chatId);
+    return result;
+  }
+
   waitingInput.delete(key);
   await clearMaxChatAddPrompt(chatId);
 
