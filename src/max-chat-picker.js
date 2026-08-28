@@ -176,13 +176,14 @@ async function waitForChatListDom(page) {
 async function extractMaxChatsFromPage(page) {
   return page.evaluate((groupSubtitlePattern) => {
     const CHAT_ID = /-\d{5,}/;
+    const ANY_CHAT_ID = /(?:web\.max\.ru\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/;
     const GROUP_SUBTITLE_RE = new RegExp(groupSubtitlePattern, 'i');
 
     function chatIdFromBlob(blob) {
       const text = String(blob || '');
       const negative = text.match(/-\d{5,}/);
       if (negative) return negative[0];
-      const fromHref = text.match(/(?:web\.max\.ru\/|href=["']\/)(-?\d{5,})/);
+      const fromHref = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/);
       if (fromHref) return fromHref[1];
       return '';
     }
@@ -358,15 +359,16 @@ async function extractMaxChatsFromPage(page) {
 
     for (const link of document.querySelectorAll('a[href], [href]')) {
       const href = link.getAttribute('href') || '';
-      const match = href.match(CHAT_ID);
+      const match = href.match(ANY_CHAT_ID) || href.match(CHAT_ID);
       if (!match) continue;
+      const chatId = match[1] || match[0];
 
       const container =
         link.closest(
           'li, [role="listitem"], button, [class*="cell" i], [class*="chat" i], [class*="dialog" i], [class*="peer" i], [class*="conversation" i]'
         ) || link.parentElement;
 
-      addChat(pickTitle(container) || pickTitle(link), chatUrlFromMatch(match), container);
+      addChat(pickTitle(container) || pickTitle(link), chatUrlFromId(chatId), container);
     }
 
     for (const el of document.querySelectorAll(
@@ -375,9 +377,9 @@ async function extractMaxChatsFromPage(page) {
       let chatId = '';
 
       for (const attr of el.attributes || []) {
-        const match = String(attr.value || '').match(CHAT_ID);
+        const match = String(attr.value || '').match(ANY_CHAT_ID) || String(attr.value || '').match(CHAT_ID);
         if (match) {
-          chatId = match[0];
+          chatId = match[1] || match[0];
           break;
         }
       }
@@ -385,13 +387,13 @@ async function extractMaxChatsFromPage(page) {
       if (!chatId) {
         const innerLink = el.querySelector('a[href], [href]');
         const href = innerLink?.getAttribute('href') || '';
-        const match = href.match(CHAT_ID);
-        if (match) chatId = match[0];
+        const match = href.match(ANY_CHAT_ID) || href.match(CHAT_ID);
+        if (match) chatId = match[1] || match[0];
       }
 
       if (!chatId) continue;
 
-      addChat(pickTitle(el), chatUrlFromMatch(chatId.match(CHAT_ID)), el);
+      addChat(pickTitle(el), chatUrlFromId(chatId), el);
     }
 
     const html = document.body?.innerHTML || '';
@@ -429,13 +431,17 @@ async function findChatListClip(page) {
       }
     }
 
-    for (const el of document.querySelectorAll('a[href], [href], button, [role="listitem"], [class*="cell" i]')) {
+    for (const el of document.querySelectorAll('a[href], [href], button, [role="listitem"], [class*="cell" i], button.cell')) {
+      if (el.querySelector?.('h3.title') || el.matches?.('button.cell')) {
+        bump(el);
+        continue;
+      }
       const blob = [
         el.getAttribute('href') || '',
         el.outerHTML || '',
       ].join(' ');
 
-      if (!CHAT_ID.test(blob)) continue;
+      if (!CHAT_ID.test(blob) && !/-?\d{5,}/.test(blob)) continue;
       bump(el);
     }
 
@@ -689,6 +695,92 @@ async function debugChatListState(page) {
   });
 }
 
+async function collectAllMaxChats(page) {
+  const byKey = new Map();
+
+  function merge(chats) {
+    for (const chat of chats || []) {
+      const titleKey = normalizeChatName(chat.title);
+      if (!titleKey && !chat.url) continue;
+      const existing = [...byKey.values()].find(
+        (item) =>
+          (chat.url && item.url === chat.url) ||
+          (titleKey && normalizeChatName(item.title) === titleKey)
+      );
+      if (existing) {
+        if (!existing.url && chat.url) existing.url = chat.url;
+        if (!existing.kind && chat.kind) existing.kind = chat.kind;
+        if (chat.title && (!existing.title || existing.title.length < chat.title.length)) {
+          existing.title = chat.title;
+        }
+        continue;
+      }
+      byKey.set(chat.url || `title:${titleKey}`, { ...chat });
+    }
+  }
+
+  merge(await extractMaxChatsFromPage(page));
+
+  let stagnant = 0;
+  for (let step = 0; step < 30; step++) {
+    const before = byKey.size;
+    const moved = await page.evaluate(() => {
+      const nodes = [
+        document.querySelector('.scrollListScrollable'),
+        document.querySelector('.scrollListContent'),
+      ].filter(Boolean);
+
+      let scroller = null;
+      for (const el of nodes) {
+        let cur = el;
+        for (let i = 0; i < 8 && cur; i++) {
+          if (cur.scrollHeight > cur.clientHeight + 24) {
+            scroller = cur;
+            break;
+          }
+          cur = cur.parentElement;
+        }
+        if (scroller) break;
+      }
+      if (!scroller) return false;
+
+      const prev = scroller.scrollTop;
+      scroller.scrollBy(0, Math.max(scroller.clientHeight - 48, 180));
+      if (scroller.scrollTop <= prev + 2) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+      return scroller.scrollTop > prev + 2;
+    });
+
+    await page.waitForTimeout(400);
+    merge(await extractMaxChatsFromPage(page));
+
+    if (byKey.size <= before && !moved) stagnant += 1;
+    else stagnant = 0;
+    if (stagnant >= 2) break;
+  }
+
+  await page.evaluate(() => {
+    const nodes = [
+      document.querySelector('.scrollListScrollable'),
+      document.querySelector('.scrollListContent'),
+    ].filter(Boolean);
+    for (const el of nodes) {
+      let cur = el;
+      for (let i = 0; i < 8 && cur; i++) {
+        if (cur.scrollHeight > cur.clientHeight + 24) {
+          cur.scrollTop = 0;
+          return;
+        }
+        cur = cur.parentElement;
+      }
+    }
+  });
+  await page.waitForTimeout(250);
+
+  return [...byKey.values()];
+}
+
 async function listMaxChats(page) {
   if (!page || page.isClosed()) {
     throw new Error('Браузер MAX недоступен. Перезапустите бота.');
@@ -706,7 +798,7 @@ async function listMaxChats(page) {
     await waitForChatListDom(page);
     await page.waitForTimeout(attempt === 0 ? 1500 : 2500);
 
-    chats = await extractMaxChatsFromPage(page);
+    chats = await collectAllMaxChats(page);
     if (chats.length) break;
 
     await ensureChatListVisible(page);
@@ -791,12 +883,12 @@ async function discoverMaxChatsForMonitor(page) {
   }
 
   await waitForChatListDom(page);
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(800);
 
-  let chats = await extractMaxChatsFromPage(page);
+  let chats = await collectAllMaxChats(page);
   if (!chats.length) {
     await page.waitForTimeout(1500);
-    chats = await extractMaxChatsFromPage(page);
+    chats = await collectAllMaxChats(page);
   }
 
   mergeChatTitles(chats.filter((chat) => chat.url && chat.title));

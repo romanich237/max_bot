@@ -210,12 +210,17 @@ async function clearMaxChatAddPrompt(chatId, userMessageId) {
   if (cache?.photoMessageId) {
     await deleteMessageQuiet(chatId, cache.photoMessageId);
   }
+  if (cache?.pickMessageId) {
+    await deleteMessageQuiet(chatId, cache.pickMessageId);
+  }
   maxChatAddCache.delete(key);
   await clearInputPrompt(chatId, userMessageId);
 }
 
-function buildMaxChatAddCaption() {
-  return CHATS.addPrompt;
+function buildMaxChatAddCaption(chats = []) {
+  const count = Array.isArray(chats) ? chats.length : 0;
+  if (!count) return CHATS.addPromptNoScreenshot;
+  return `${CHATS.addPrompt}\n\nНайдено чатов: <b>${count}</b>`;
 }
 
 async function beginMaxChatAdd(chatId) {
@@ -234,18 +239,22 @@ async function beginMaxChatAdd(chatId) {
 
   try {
     const { chats, screenshot } = await maxChatPickerHandler();
-    const keyboard = buildMaxChatPickKeyboard(chats);
-    const result = await sendPhotoBuffer(chatId, screenshot, buildMaxChatAddCaption(), undefined, {
-      reply_markup: keyboard,
-    });
+    const keyboard = buildMaxChatPickKeyboard(chats, 0);
+    const caption = buildMaxChatAddCaption(chats);
+    let photoMessageId = null;
+
+    if (screenshot) {
+      const result = await sendPhotoBuffer(chatId, screenshot, 'Чаты в MAX');
+      photoMessageId = result?.result?.message_id || null;
+    }
+
+    const sent = await sendInputPrompt(chatId, caption, { reply_markup: keyboard });
     maxChatAddCache.set(key, {
       chats,
-      photoMessageId: result?.result?.message_id || null,
+      photoMessageId,
+      pickMessageId: sent?.result?.message_id || null,
+      pickPage: 0,
     });
-    if (!result?.ok) {
-      await sendInputPrompt(chatId, CHATS.addPromptNoScreenshot, { reply_markup: keyboard });
-      maxChatAddCache.set(key, { chats, photoMessageId: null });
-    }
   } catch (err) {
     await sendInputPrompt(chatId, CHATS.addPickerFail(escapeHtml(err.message)));
   }
@@ -1062,8 +1071,18 @@ async function restoreMaxChatPickPrompt(chatId) {
   maxChatAddCache.set(key, next);
 
   const chats = cache.chats || [];
-  const keyboard = buildMaxChatPickKeyboard(chats);
-  const text = chats.length ? buildMaxChatAddCaption() : CHATS.addPromptNoScreenshot;
+  const page = cache.pickPage || 0;
+  const keyboard = buildMaxChatPickKeyboard(chats, page);
+  const text = buildMaxChatAddCaption(chats);
+
+  if (cache.pickMessageId) {
+    try {
+      await editMessageText(chatId, cache.pickMessageId, text, { reply_markup: keyboard });
+      return;
+    } catch (err) {
+      console.warn('maxchat pickback edit:', err.message);
+    }
+  }
 
   if (cache.photoMessageId) {
     try {
@@ -1854,6 +1873,29 @@ async function handleCallback(query) {
     await answerCallback(query.id, 'Отменено');
     await clearMaxChatAddPrompt(chatId, query.message?.message_id);
     await sendMessage(chatId, buildMaxChatsText(), { reply_markup: buildMaxChatsKeyboard() });
+    return;
+  }
+
+  if (data === 'maxchat:noop') {
+    await answerCallback(query.id);
+    return;
+  }
+
+  if (data.startsWith('maxchat:pickpage:')) {
+    const page = Number.parseInt(data.slice('maxchat:pickpage:'.length), 10) || 0;
+    const key = String(chatId);
+    const cache = maxChatAddCache.get(key);
+    if (!cache?.chats?.length) {
+      await answerCallback(query.id, 'Список устарел');
+      return;
+    }
+    maxChatAddCache.set(key, {
+      ...cache,
+      pickPage: page,
+      pickMessageId: query.message?.message_id || cache.pickMessageId,
+    });
+    await answerCallback(query.id, `Страница ${page + 1}`);
+    await restoreMaxChatPickPrompt(chatId);
     return;
   }
 

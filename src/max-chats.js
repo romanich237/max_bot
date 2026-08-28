@@ -660,7 +660,7 @@ function buildMaxChatsKeyboard() {
 }
 
 const TG_BUTTON_TEXT_MAX = 64;
-const MAX_CHAT_PICK_BUTTONS = 40;
+const MAX_CHAT_PICK_PAGE = 15;
 
 function truncateButtonText(text, max = TG_BUTTON_TEXT_MAX) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -669,10 +669,8 @@ function truncateButtonText(text, max = TG_BUTTON_TEXT_MAX) {
   return `${value.slice(0, max - 1)}…`;
 }
 
-function buildMaxChatPickKeyboard(chats = []) {
-  const rows = [];
+function uniquePickItems(chats = []) {
   const chosen = new Map();
-
   for (let i = 0; i < chats.length; i++) {
     const title = truncateButtonText(chats[i]?.title);
     if (!title) continue;
@@ -682,10 +680,23 @@ function buildMaxChatPickKeyboard(chats = []) {
       chosen.set(key, { i, title, url: chats[i].url });
     }
   }
+  return [...chosen.values()];
+}
 
-  for (const item of chosen.values()) {
-    rows.push([{ text: item.title, callback_data: `maxchat:pick:${item.i}` }]);
-    if (rows.length >= MAX_CHAT_PICK_BUTTONS) break;
+function buildMaxChatPickKeyboard(chats = [], page = 0) {
+  const all = uniquePickItems(chats);
+  const totalPages = Math.max(1, Math.ceil(all.length / MAX_CHAT_PICK_PAGE));
+  const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
+  const slice = all.slice(safePage * MAX_CHAT_PICK_PAGE, (safePage + 1) * MAX_CHAT_PICK_PAGE);
+
+  const rows = slice.map((item) => [{ text: item.title, callback_data: `maxchat:pick:${item.i}` }]);
+
+  if (totalPages > 1) {
+    const nav = [];
+    if (safePage > 0) nav.push({ text: '◀️', callback_data: `maxchat:pickpage:${safePage - 1}` });
+    nav.push({ text: `${safePage + 1}/${totalPages}`, callback_data: 'maxchat:noop' });
+    if (safePage < totalPages - 1) nav.push({ text: '▶️', callback_data: `maxchat:pickpage:${safePage + 1}` });
+    rows.push(nav);
   }
 
   rows.push([{ text: '« Отмена', callback_data: 'maxchat:canceladd' }]);
