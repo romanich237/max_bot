@@ -336,7 +336,6 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
   }
 
   rows.push(
-    [{ text: BUTTONS.discoverId, callback_data: 'discover:page:0' }],
     [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }]
   );
 

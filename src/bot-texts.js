@@ -28,12 +28,20 @@ const BUTTONS = {
   addAdmin: '➕ Добавить в админы',
   docs: '📄 Документация',
   notifyDmOnly: '💬 Только личные сообщения',
-  discoverId: '🔍 Узнать ID',
   authQr: '📷 QR-код',
   authPhone: '📱 Номер телефона',
   authSwitchQr: '📷 Войти по QR',
   refreshQr: '🔄 Обновить',
   checkUpdates: 'Проверить обновления',
+  ourChannel: 'Наш канал',
+  support: 'Тех поддержка',
+  github: 'GitHub',
+};
+
+const LINKS = {
+  channel: 'https://t.me/notificationsmax_in_tg',
+  support: 'https://t.me/notificationsmax_in_tg?direct',
+  github: 'https://github.com/romanich237/max_bot',
 };
 
 const TOGGLES = {
@@ -77,8 +85,6 @@ const START = {
     '',
     'Бот пересылает сообщения из мессенджера MAX в Telegram.',
     'Все настройки — в меню ниже.',
-    '',
-    `Чтобы узнать ID чата, нажмите «${BUTTONS.discoverId}» и выберите чат в списке.`,
   ].join('\n'),
   panel: 'Панель управления',
   help: 'Все команды и настройки — в /menu.',
@@ -340,17 +346,14 @@ const MONITORING = {
 
 const CHATS = {
   discoverEmpty: [
-    '<b>Узнать ID чата</b>',
+    '<b>Чаты Telegram</b>',
     '',
-    `Нажмите «${BUTTONS.discoverId}» внизу — откроется список ваших чатов.`,
-    'Выберите чат, и бот пришлёт его ID и название.',
-    'Бот должен быть участником выбранного чата.',
+    'Пока нет известных чатов. Добавьте группу через «Куда слать в Telegram».',
   ].join('\n'),
   discoverHint: [
     'Выберите чат — бот покажет ID и название.',
     'Можно привязать чат для уведомлений из MAX.',
   ].join('\n'),
-  discoverPrompt: `Нажмите «${BUTTONS.discoverId}» внизу и выберите чат в списке Telegram.`,
   infoHeader: 'Информация о чате',
   infoFooter: [
     'Скопируйте ID или нажмите «Привязать» — сюда будут приходить уведомления из MAX.',
@@ -525,4 +528,5 @@ module.exports = {
   SAVED,
   UPDATES,
   ERRORS,
+  LINKS,
 };

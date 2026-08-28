@@ -106,6 +106,7 @@ const {
   ERRORS,
   UPDATES,
   BOT_ABOUT,
+  LINKS,
 } = require('./bot-texts');
 const {
   buildBrowserPasswordAcceptedMessage,
@@ -412,30 +413,10 @@ function buildStatusText() {
   return lines.filter((line) => line != null).join('\n');
 }
 
-const DISCOVER_ID_BUTTON = BUTTONS.discoverId;
-const DISCOVER_CHAT_REQUEST_ID = 1;
-
-function buildDiscoverReplyKeyboard() {
-  return {
-    keyboard: [
-      [
-        {
-          text: DISCOVER_ID_BUTTON,
-          request_chat: {
-            request_id: DISCOVER_CHAT_REQUEST_ID,
-            chat_is_channel: false,
-          },
-        },
-      ],
-    ],
-    resize_keyboard: true,
-    is_persistent: true,
-  };
-}
-
-function isDiscoverIdRequest(text) {
-  const normalized = String(text || '').trim();
-  return normalized === DISCOVER_ID_BUTTON || /^узнать\s*id$/i.test(normalized);
+function hideReplyKeyboard(chatId) {
+  return sendMessage(chatId, '\u2060', { reply_markup: { remove_keyboard: true } })
+    .then((sent) => deleteMessageQuiet(chatId, sent?.result?.message_id))
+    .catch(() => {});
 }
 
 function buildMenuKeyboard() {
@@ -469,6 +450,11 @@ function buildMenuKeyboard() {
   }
   rows.push(statusRow);
   rows.push([{ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }]);
+  rows.push([
+    { text: BUTTONS.ourChannel, url: LINKS.channel },
+    { text: BUTTONS.support, url: LINKS.support },
+    { text: BUTTONS.github, url: LINKS.github },
+  ]);
 
   return { inline_keyboard: rows };
 }
@@ -1421,22 +1407,10 @@ async function handleMessage(message) {
     return;
   }
 
-  if (isDiscoverIdRequest(text)) {
-    await sendMessage(
-      chatId,
-      START.discoverPrompt,
-      { reply_markup: buildDiscoverReplyKeyboard() }
-    );
-    return;
-  }
-
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await sendMessage(
-      chatId,
-      START.welcome,
-      { reply_markup: buildDiscoverReplyKeyboard() }
-    );
+    await hideReplyKeyboard(chatId);
+    await sendMessage(chatId, START.welcome);
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1445,6 +1419,7 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    await hideReplyKeyboard(chatId);
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
