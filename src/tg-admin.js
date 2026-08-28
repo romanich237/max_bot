@@ -413,10 +413,31 @@ function buildStatusText() {
   return lines.filter((line) => line != null).join('\n');
 }
 
-function hideReplyKeyboard(chatId) {
-  return sendMessage(chatId, '\u2060', { reply_markup: { remove_keyboard: true } })
-    .then((sent) => deleteMessageQuiet(chatId, sent?.result?.message_id))
-    .catch(() => {});
+function buildLinksReplyKeyboard() {
+  return {
+    keyboard: [
+      [
+        { text: BUTTONS.ourChannel },
+        { text: BUTTONS.support },
+        { text: BUTTONS.github },
+      ],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+function linkUrlForButton(text) {
+  const normalized = String(text || '').trim();
+  if (normalized === BUTTONS.ourChannel) return LINKS.channel;
+  if (normalized === BUTTONS.support) return LINKS.support;
+  if (normalized === BUTTONS.github) return LINKS.github;
+  return '';
+}
+
+async function showLinksReplyKeyboard(chatId) {
+  const sent = await sendMessage(chatId, '\u2060', { reply_markup: buildLinksReplyKeyboard() });
+  await deleteMessageQuiet(chatId, sent?.result?.message_id);
 }
 
 function buildMenuKeyboard() {
@@ -450,11 +471,6 @@ function buildMenuKeyboard() {
   }
   rows.push(statusRow);
   rows.push([{ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }]);
-  rows.push([
-    { text: BUTTONS.ourChannel, url: LINKS.channel },
-    { text: BUTTONS.support, url: LINKS.support },
-    { text: BUTTONS.github, url: LINKS.github },
-  ]);
 
   return { inline_keyboard: rows };
 }
@@ -1252,7 +1268,7 @@ async function handleChatShared(adminChatId, shared) {
     const statuses = await refreshNotificationChatStatuses();
     const known = getKnownChat(targetChatId);
     await sendMessage(adminChatId, 'Группа добавлена.', {
-      reply_markup: { remove_keyboard: true },
+      reply_markup: buildLinksReplyKeyboard(),
     });
     await sendMessage(
       adminChatId,
@@ -1354,6 +1370,13 @@ async function handleMessage(message) {
 
   if (await handleAuthInput(chatId, text, message.message_id)) return;
 
+  const linkUrl = linkUrlForButton(text);
+  if (linkUrl) {
+    await deleteMessageQuiet(chatId, message.message_id);
+    await sendMessage(chatId, linkUrl);
+    return;
+  }
+
   const waitKey = waitingInput.get(String(chatId));
   const userMessageId = message.message_id;
 
@@ -1409,8 +1432,9 @@ async function handleMessage(message) {
 
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await hideReplyKeyboard(chatId);
-    await sendMessage(chatId, START.welcome);
+    await sendMessage(chatId, START.welcome, {
+      reply_markup: buildLinksReplyKeyboard(),
+    });
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1419,7 +1443,7 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await hideReplyKeyboard(chatId);
+    await showLinksReplyKeyboard(chatId);
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
