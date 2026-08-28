@@ -180,12 +180,84 @@ async function extractMaxChatsFromPage(page) {
     const JUNK_TITLE_RE =
       /^(группа|group|groups|канал|channel|чаты|chats|чат|личные|personal|online|в сети)$/i;
 
+    function looksLikeChatId(value) {
+      const text = String(value || '');
+      if (!/^-?\d{5,16}$/.test(text)) return false;
+      const abs = Math.abs(Number(text));
+      if (!Number.isFinite(abs) || abs < 10000) return false;
+      if (abs >= 1e12 && abs < 2e13) return false;
+      return true;
+    }
+
+    function idFromValue(value) {
+      if (value == null) return '';
+      if (typeof value === 'number' && looksLikeChatId(String(Math.trunc(value)))) {
+        return String(Math.trunc(value));
+      }
+      const text = String(value);
+      const href = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,16})(?:["'/?#\s]|$)/);
+      if (href && looksLikeChatId(href[1])) return href[1];
+      if (looksLikeChatId(text)) return text;
+      return '';
+    }
+
     function chatIdFromBlob(blob) {
-      const text = String(blob || '');
-      const fromHref = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/);
-      if (fromHref) return fromHref[1];
-      const negative = text.match(/-\d{5,}/);
-      return negative ? negative[0] : '';
+      return idFromValue(blob);
+    }
+
+    function visitForId(value, depth, seen) {
+      if (value == null || depth > 6) return '';
+      const direct = idFromValue(value);
+      if (direct) return direct;
+      if (typeof value !== 'object') return '';
+      if (seen.has(value)) return '';
+      seen.add(value);
+      try {
+        const entries = Object.entries(value);
+        for (const [key, val] of entries) {
+          if (!/id|peer|dialog|chat|cid/i.test(key)) continue;
+          const found = idFromValue(val) || visitForId(val, depth + 1, seen);
+          if (found) return found;
+        }
+        if (depth < 3) {
+          for (const val of Object.values(value)) {
+            const found = visitForId(val, depth + 1, seen);
+            if (found) return found;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return '';
+    }
+
+    function chatIdFromSvelte(el) {
+      let node = el;
+      for (let i = 0; i < 10 && node; i++) {
+        let names = [];
+        try {
+          names = Object.getOwnPropertyNames(node);
+        } catch {
+          names = [];
+        }
+        for (const key of names) {
+          if (!key.startsWith('__') && !key.startsWith('$') && key !== '$$') continue;
+          try {
+            const found = visitForId(node[key], 0, new Set());
+            if (found) return found;
+          } catch {
+            /* ignore */
+          }
+        }
+        if (node.dataset) {
+          for (const val of Object.values(node.dataset)) {
+            const found = idFromValue(val);
+            if (found) return found;
+          }
+        }
+        node = node.parentElement;
+      }
+      return '';
     }
 
     function chatUrlFromId(chatId) {
@@ -281,7 +353,9 @@ async function extractMaxChatsFromPage(page) {
       const item = row.closest?.('div.item') || row;
       const cell = item.querySelector?.('button.cell') || (item.matches?.('button.cell') ? item : row);
       const blob = [nodeBlob(item), nodeBlob(cell)].join(' ');
-      const url = chatUrlFromId(chatIdFromBlob(blob)) || null;
+      const chatId =
+        chatIdFromBlob(blob) || chatIdFromSvelte(cell) || chatIdFromSvelte(item) || '';
+      const url = chatUrlFromId(chatId) || null;
       addChat(rowTitle(cell) || rowTitle(item), url, cell);
     }
 

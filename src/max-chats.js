@@ -720,7 +720,10 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
     const label = selected
       ? truncateButtonText(`✅ ${item.title}`)
       : item.title || `Чат ${item.i + 1}`;
-    const button = { text: label, callback_data: `maxchat:pick:${item.i}` };
+    const button = {
+      text: label,
+      callback_data: chatIdFromUrl(item.url) ? `maxchat:p:${chatIdFromUrl(item.url)}` : `maxchat:pick:${item.i}`,
+    };
     if (selected) button.style = 'success';
     return [button];
   });

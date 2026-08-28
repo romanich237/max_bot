@@ -22,6 +22,7 @@ const {
   buildMaxChatPickWhereKeyboard,
   buildMaxChatViewKeyboard,
   chatLabelFromUrl,
+  chatIdFromUrl,
   isRequiredChatUrl,
   isPersonalMaxChat,
   isGroupMaxChat,
@@ -1187,14 +1188,20 @@ async function handleMaxChatPick(chatId, chat) {
   const title = String(chat?.title || '').trim();
   const kind = chat?.kind === 'personal' || chat?.kind === 'group' ? chat.kind : '';
 
+  if (url) {
+    if (title && !/^https:\/\/web\.max\.ru\//i.test(title)) setChatTitle(url, title);
+    if (kind) setChatKind(url, kind);
+    waitingInput.set(String(chatId), 'maxchat:add');
+    await proceedMaxChatAdd(chatId, { url, title, kind });
+    return true;
+  }
+
   await editMaxChatPickMessage(
     chatId,
     [
       '<b>Добавить чат MAX</b>',
       '',
-      url
-        ? `Выбран: <b>${escapeHtml(title || url)}</b>`
-        : `Ищу в MAX: <b>${escapeHtml(title || 'чат')}</b>…`,
+      `Ищу в MAX: <b>${escapeHtml(title || 'чат')}</b>…`,
     ].join('\n'),
     {
       reply_markup: {
@@ -1203,7 +1210,7 @@ async function handleMaxChatPick(chatId, chat) {
     }
   );
 
-  if (!url && title && maxChatResolveHandler) {
+  if (title && maxChatResolveHandler) {
     try {
       url = String((await maxChatResolveHandler(title)) || '').trim();
     } catch (err) {
@@ -1949,6 +1956,42 @@ async function handleCallback(query) {
     });
     await answerCallback(query.id, `Страница ${page + 1}`);
     await restoreMaxChatPickPrompt(chatId);
+    return;
+  }
+
+  if (data.startsWith('maxchat:p:')) {
+    const id = data.slice('maxchat:p:'.length);
+    const key = String(chatId);
+    if (!/^-?\d{5,}$/.test(id)) {
+      await answerCallback(query.id, 'Чат не найден, откройте список заново');
+      return;
+    }
+
+    const url = `https://web.max.ru/${id}`;
+    const cache = maxChatAddCache.get(key);
+    const fromCache = cache?.chats?.find((item) => chatIdFromUrl(item.url) === id);
+    const chat = {
+      url,
+      title: fromCache?.title || '',
+      kind: fromCache?.kind,
+    };
+
+    waitingInput.set(key, 'maxchat:add');
+    if (cache) {
+      maxChatAddCache.set(key, {
+        ...cache,
+        pickMessageId: query.message?.message_id || cache.pickMessageId,
+      });
+    }
+    try {
+      await answerCallback(query.id, chat.title || url);
+    } catch (err) {
+      console.warn('maxchat pick answer:', err.message);
+    }
+    void handleMaxChatPick(chatId, chat).catch(async (err) => {
+      console.warn('maxchat pick:', err.message);
+      await sendMessage(chatId, CHATS.addPickerFail(escapeHtml(err.message))).catch(() => {});
+    });
     return;
   }
 
