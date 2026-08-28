@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { CHATS, BUTTONS, withTgEmoji } = require('./bot-texts');
+const { CHATS, BUTTONS, withTgEmoji, tgEmojiHtml } = require('./bot-texts');
 const path = require('path');
 const { store, resolveFromRoot, getNotificationChatIds, isPrivateChatId } = require('./config');
 
@@ -290,11 +290,11 @@ function buildNotifyChatText(adminByChat = {}) {
     }
 
     if (groups.length) {
-      lines.push('', `<b>Группы (${groups.length})</b>`);
+      lines.push('', `${tgEmojiHtml('group')} <b>Группы (${groups.length})</b>`);
       for (const chat of groups) {
         const title = chat.title || 'Без названия';
         const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
-        lines.push(`• <b>${escapeHtml(title)}</b> (<code>${chat.id}</code>) ${mark}`);
+        lines.push(`${tgEmojiHtml('group')} <b>${escapeHtml(title)}</b> (<code>${chat.id}</code>) ${mark}`);
       }
     }
   }
@@ -310,12 +310,16 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
 
   for (const chat of groups) {
     const title = chat.title || 'Без названия';
-    const mark = adminMark(Boolean(adminByChat[chat.id]?.admin));
+    const isAdmin = Boolean(adminByChat[chat.id]?.admin);
     rows.push([
-      {
-        text: truncateButtonLabel(`${title} ${mark}`, 28),
-        callback_data: `notify:chat:${chat.id}`,
-      },
+      withTgEmoji(
+        {
+          text: truncateButtonLabel(title, 28),
+          callback_data: `notify:chat:${chat.id}`,
+          style: isAdmin ? 'success' : 'danger',
+        },
+        'group'
+      ),
       withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chat.id}` }, 'trash'),
     ]);
   }
@@ -346,7 +350,7 @@ function buildNotifyGroupViewText(chatId, status = {}) {
   const known = getKnownChat(chatId);
   const title = known?.title || 'Без названия';
   return [
-    '<b>Группа уведомлений</b>',
+    `${tgEmojiHtml('group')} <b>Группа уведомлений</b>`,
     '',
     `Название: <b>${escapeHtml(title)}</b>`,
     `ID: <code>${escapeHtml(String(chatId))}</code>`,

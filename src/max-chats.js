@@ -606,6 +606,10 @@ function buildNotifyTargetButtons(url, index) {
       text: item.text,
       callback_data: `maxchat:where:${index}:${item.id}`,
     };
+    if (item.id === 'group') {
+      if (active) button.style = 'success';
+      return withTgEmoji(button, 'group');
+    }
     if (active) {
       button.style = 'success';
       return withTgEmoji(button, 'check');
@@ -614,11 +618,27 @@ function buildNotifyTargetButtons(url, index) {
   });
 }
 
-function buildMaxChatActionButtons(url, index, urls) {
-  const actions = [];
-  const forwardOn = isChatForwardEnabled(url);
+function canRemoveMaxChat(url, urls) {
+  return Boolean(url) && !isRequiredChatUrl(url) && urls.length > 1;
+}
 
-  actions.push(
+function maxChatNameButton(url, index) {
+  const button = {
+    text: chatMenuLabel(url),
+    callback_data: `maxchat:view:${index}`,
+  };
+  if (isRequiredChatUrl(url)) return withTgEmoji(button, 'pin');
+  if (isGroupMaxChat(url)) return withTgEmoji(button, 'group');
+  return button;
+}
+
+function maxChatDeleteButton(index) {
+  return withTgEmoji({ text: 'Удалить', callback_data: `maxchat:remove:${index}` }, 'trash');
+}
+
+function buildMaxChatActionButtons(url, index) {
+  const forwardOn = isChatForwardEnabled(url);
+  return [
     withOnOffEmoji(
       {
         text: 'Слать',
@@ -626,14 +646,8 @@ function buildMaxChatActionButtons(url, index, urls) {
         style: forwardOn ? 'success' : 'danger',
       },
       forwardOn
-    )
-  );
-
-  if (!isRequiredChatUrl(url) && urls.length > 1) {
-    actions.push(withTgEmoji({ text: 'Удалить', callback_data: `maxchat:remove:${index}` }, 'trash'));
-  }
-
-  return actions;
+    ),
+  ];
 }
 
 function buildMaxChatsKeyboard() {
@@ -662,12 +676,12 @@ function buildMaxChatsKeyboard() {
   ];
 
   urls.forEach((url, index) => {
-    const chatButton = {
-      text: chatMenuLabel(url),
-      callback_data: `maxchat:view:${index}`,
-    };
-    rows.push([isRequiredChatUrl(url) ? withTgEmoji(chatButton, 'pin') : chatButton]);
-    rows.push(buildMaxChatActionButtons(url, index, urls));
+    const row = [maxChatNameButton(url, index)];
+    if (canRemoveMaxChat(url, urls)) {
+      row.push(maxChatDeleteButton(index));
+    }
+    rows.push(row);
+    rows.push(buildMaxChatActionButtons(url, index));
   });
 
   rows.push([
@@ -759,7 +773,7 @@ function buildMaxChatPickWhereKeyboard() {
     inline_keyboard: [
       [
         { text: '💬 ЛС', callback_data: 'maxchat:addwhere:dm' },
-        { text: '📣 Группа', callback_data: 'maxchat:addwhere:group' },
+        withTgEmoji({ text: 'Группа', callback_data: 'maxchat:addwhere:group' }, 'group'),
         { text: '💬📣 Оба', callback_data: 'maxchat:addwhere:both' },
       ],
       [{ text: '« Назад', callback_data: 'maxchat:pickback' }],
@@ -772,7 +786,8 @@ function buildMaxChatViewKeyboard(index) {
   const url = urls[index];
   const rows = [];
   if (url) rows.push(buildNotifyTargetButtons(url, index));
-  const actions = url ? buildMaxChatActionButtons(url, index, urls) : [];
+  const actions = url ? [...buildMaxChatActionButtons(url, index)] : [];
+  if (url && canRemoveMaxChat(url, urls)) actions.push(maxChatDeleteButton(index));
   if (actions.length) rows.push(actions);
   rows.push([{ text: '« К списку', callback_data: 'maxchat:list' }]);
   return { inline_keyboard: rows };

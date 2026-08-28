@@ -70,24 +70,33 @@ const TG_EMOJI = {
   plus: { id: '5397916757333654639', fallback: '➕' },
   camera: { id: '5972273671446727832', fallback: '📷' },
   phone: { id: '5407025283456835913', fallback: '📱' },
+  group: { id: '4960891456869893259', fallback: '💠' },
 };
 
 function withTgEmoji(button, kind) {
   const spec = TG_EMOJI[kind];
   if (!button || !spec) return button;
 
+  const next = { ...button, icon_custom_emoji_id: spec.id };
+  const text = String(button.text || '').trim();
+
   if (isPremiumEmojiUser()) {
-    return { ...button, icon_custom_emoji_id: spec.id };
+    return { ...next, text: text || spec.fallback };
   }
 
-  const text = String(button.text || '').trim();
-  if (!text) return { ...button, text: spec.fallback };
-  if (text.startsWith(spec.fallback) || text.endsWith(spec.fallback)) return { ...button, text };
-  return { ...button, text: `${spec.fallback} ${text}` };
+  if (!text) return { ...next, text: spec.fallback };
+  if (text.startsWith(spec.fallback) || text.endsWith(spec.fallback)) return { ...next, text };
+  return { ...next, text: `${spec.fallback} ${text}` };
 }
 
 function withOnOffEmoji(button, on) {
   return withTgEmoji(button, on ? 'check' : 'cross');
+}
+
+function tgEmojiHtml(kind) {
+  const spec = TG_EMOJI[kind];
+  if (!spec) return '';
+  return `<tg-emoji emoji-id="${spec.id}">${spec.fallback}</tg-emoji>`;
 }
 
 const TOGGLES = {
@@ -584,5 +593,6 @@ module.exports = {
   TG_EMOJI,
   withTgEmoji,
   withOnOffEmoji,
+  tgEmojiHtml,
   runWithPremiumEmoji,
 };
