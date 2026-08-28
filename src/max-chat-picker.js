@@ -175,7 +175,7 @@ async function waitForChatListDom(page) {
 
 async function extractMaxChatsFromPage(page) {
   return page.evaluate((groupSubtitlePattern) => {
-    const ANY_CHAT_ID = /(?:web\.max\.ru\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/;
+    const ANY_CHAT_ID = /(?:web\.max\.ru\/|["'/])(-?\d{5,})(?:["'/?#\s]|$)/g;
     const GROUP_SUBTITLE_RE = new RegExp(groupSubtitlePattern, 'i');
     const JUNK_TITLE_RE =
       /^(группа|group|groups|канал|channel|чаты|chats|чат|личные|personal|online|в сети)$/i;

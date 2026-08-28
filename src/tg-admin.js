@@ -1906,7 +1906,8 @@ async function handleCallback(query) {
 
   if (data === 'maxchat:add') {
     waitingInput.set(String(chatId), 'maxchat:add');
-    await answerCallback(query.id, 'Готовлю список…');
+    await answerCallback(query.id);
+    await sendInputPrompt(chatId, CHATS.addPickerWait);
     void beginMaxChatAdd(chatId);
     return;
   }
