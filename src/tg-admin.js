@@ -462,9 +462,9 @@ function buildMenuKeyboard() {
 
   const statusRow = [{ text: BUTTONS.refreshStatus, callback_data: 'status' }];
   if (isMonitoringEnabled()) {
-    statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax' });
+    statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax', style: 'danger' });
   } else {
-    statusRow.push({ text: BUTTONS.startMax, callback_data: 'action:startMax' });
+    statusRow.push({ text: BUTTONS.startMax, callback_data: 'action:startMax', style: 'success' });
   }
   rows.push(statusRow);
   rows.push([{ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }]);
