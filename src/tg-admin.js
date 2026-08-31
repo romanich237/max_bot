@@ -414,12 +414,6 @@ function buildStatusText() {
   return lines.filter((line) => line != null).join('\n');
 }
 
-function hideReplyKeyboard(chatId) {
-  return sendMessage(chatId, '\u2060', { reply_markup: { remove_keyboard: true } })
-    .then((sent) => deleteMessageQuiet(chatId, sent?.result?.message_id))
-    .catch(() => {});
-}
-
 function buildLinksInlineRow() {
   return [
     { text: BUTTONS.ourChannel, url: LINKS.channel },
@@ -475,8 +469,32 @@ function buildMenuKeyboard() {
   return { inline_keyboard: rows };
 }
 
-function isAdmin(chatId) {
-  return getAdminChatIds().includes(String(chatId));
+function isAdmin(chatId, userId) {
+  const ids = getAdminChatIds();
+  if (userId != null && ids.includes(String(userId))) return true;
+  if (chatId != null && isPrivateChatId(chatId) && ids.includes(String(chatId))) return true;
+  return false;
+}
+
+function isGroupChat(chat) {
+  const type = chat?.type;
+  return type === 'group' || type === 'supergroup';
+}
+
+const noAccessSent = new Set();
+
+async function rejectUnauthorized(chat, userId, { callbackId } = {}) {
+  if (callbackId) {
+    await answerCallback(callbackId, 'Нет доступа').catch(() => {});
+  }
+  if (isGroupChat(chat)) return;
+
+  const key = String(userId || chat?.id || '');
+  if (!key || noAccessSent.has(key)) return;
+  noAccessSent.add(key);
+  if (chat?.id) {
+    await sendMessage(chat.id, ERRORS.noAccess).catch(() => {});
+  }
 }
 
 function parseSetCommand(text) {
@@ -1356,8 +1374,9 @@ async function showChatInfo(chatId, messageId, targetChatId) {
 
 async function handleMessage(message) {
   const chatId = message.chat.id;
-  if (!isAdmin(chatId)) {
-    await sendMessage(chatId, ERRORS.noAccess);
+  const userId = message.from?.id;
+  if (!isAdmin(chatId, userId)) {
+    await rejectUnauthorized(message.chat, userId);
     return;
   }
 
@@ -1425,8 +1444,9 @@ async function handleMessage(message) {
 
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await hideReplyKeyboard(chatId);
-    await sendMessage(chatId, START.welcome);
+    await sendMessage(chatId, START.welcome, {
+      reply_markup: { remove_keyboard: true },
+    });
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1435,7 +1455,6 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await hideReplyKeyboard(chatId);
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1658,11 +1677,9 @@ async function handleManualUpdateCheck(chatId) {
 
 async function handleCallback(query) {
   const chatId = query.message?.chat?.id;
-  if (!chatId || !isAdmin(chatId)) {
-    await answerCallback(query.id, 'Нет доступа');
-    if (chatId) {
-      await sendMessage(chatId, ERRORS.noAccess).catch(() => {});
-    }
+  const userId = query.from?.id;
+  if (!chatId || !isAdmin(chatId, userId)) {
+    await rejectUnauthorized(query.message?.chat, userId, { callbackId: query.id });
     return;
   }
 
