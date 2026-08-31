@@ -10,6 +10,7 @@ const {
 const { resolveServerPublicIp, buildPortalUrl, getLocalIpv4Addresses } = require('../server-ip');
 const { createPortalServer, ensurePortalSsl } = require('../portal-ssl');
 const { isPortalSslEnabled } = require('../config');
+const { bindPortalPort, savePortalPort } = require('../portal-port');
 
 function getPublicUrls(port, token, publicIp, ssl = isPortalSslEnabled()) {
   const urls = [];
@@ -84,9 +85,9 @@ function startSitePortal(options = {}) {
   }
 
   const token = ensureSiteToken();
-  const port = options.port || getSitePort();
+  const preferredPort = options.port || getSitePort();
 
-  return new Promise(async (resolve, reject) => {
+  return (async () => {
     let tlsOptions = null;
     if (isPortalSslEnabled()) {
       const publicIp = options.publicIp || (await resolveServerPublicIp());
@@ -97,27 +98,18 @@ function startSitePortal(options = {}) {
     }
 
     const server = createPortalServer(createSiteHandler(token), tlsOptions);
+    const port = await bindPortalPort(server, preferredPort, options.host || '0.0.0.0');
+    savePortalPort(port);
 
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.warn(`Site portal: порт ${port} занят`);
-        resolve(null);
-        return;
-      }
-      reject(err);
-    });
-
-    server.listen(port, options.host || '0.0.0.0', async () => {
-      const publicIp = await resolveServerPublicIp();
-      const ssl = Boolean(tlsOptions);
-      const urls = getPublicUrls(port, token, publicIp, ssl);
-      portalInstance = { server, port, token, publicIp, ssl, urls };
-      console.log('MAX Site portal:');
-      console.log(`  ${urls[0]}`);
-      for (const u of urls.slice(1)) console.log(`  ${u}`);
-      resolve(portalInstance);
-    });
-  });
+    const publicIp = await resolveServerPublicIp();
+    const ssl = Boolean(tlsOptions);
+    const urls = getPublicUrls(port, token, publicIp, ssl);
+    portalInstance = { server, port, token, publicIp, ssl, urls };
+    console.log('MAX Site portal:');
+    console.log(`  ${urls[0]}`);
+    for (const u of urls.slice(1)) console.log(`  ${u}`);
+    return portalInstance;
+  })();
 }
 
 function getSiteUrls() {

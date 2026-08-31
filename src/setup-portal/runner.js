@@ -12,6 +12,8 @@ const { captureLoginScreenshot } = require('../auth-qr');
 const { provisionDatabase } = require('../database-provision');
 const { setupPm2 } = require('../pm2');
 const { resolveServerPublicIp, buildPortalUrl } = require('../server-ip');
+const { getPortalPort } = require('../portal-port');
+const { openPortalPort } = require('../open-firewall-port');
 const { getAdminChatIds } = require('../config');
 const { sendMessage } = require('../tg-api');
 const {
@@ -210,10 +212,11 @@ async function runWebSetup(options = {}) {
 
   const publicIp = await resolveServerPublicIp();
   const portal = await startSetupServer(state, handlers, {
-    port: options.port || Number(process.env.SETUP_PORT) || DEFAULT_PORT,
+    port: options.port || getPortalPort() || DEFAULT_PORT,
     host: options.host || '0.0.0.0',
     publicIp,
   });
+  openPortalPort(portal.port);
 
   const useSsl = portal.ssl;
   const primaryUrl = buildPortalUrl(publicIp, portal.port, 'setup', state.token, { ssl: useSsl });

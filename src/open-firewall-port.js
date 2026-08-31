@@ -1,25 +1,7 @@
 const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const { getPortalPort, PORT_RANGE_MIN } = require('./portal-port');
 
-const DEFAULT_PORT = 3847;
-
-function getPortalPort() {
-  const fromEnv = Number(process.env.SETUP_PORT || process.env.SITE_PORT);
-  if (fromEnv > 0) return fromEnv;
-
-  const configPath = path.join(__dirname, '..', 'config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      return Number(cfg.sitePortal?.port || cfg.setupPortal?.port || DEFAULT_PORT);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return DEFAULT_PORT;
-}
+const DEFAULT_PORT = PORT_RANGE_MIN;
 
 function commandExists(cmd) {
   try {

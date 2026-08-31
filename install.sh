@@ -334,8 +334,72 @@ ensure_node() {
   fail "не удалось поставить Node.js 18+"
 }
 
+remember_existing_port() {
+  [ -z "${SETUP_PORT:-}" ] || return 0
+  local port="" complete=""
+  if [ -f "$INSTALL_DIR/data/portal-port.json" ]; then
+    port="$(grep -oE '[0-9]{2,5}' "$INSTALL_DIR/data/portal-port.json" | head -n1 || true)"
+    if [ -n "$port" ] && [ "$port" -ge 1 ] 2>/dev/null && [ "$port" -le 65535 ] 2>/dev/null; then
+      SETUP_PORT="$port"
+      export SETUP_PORT
+      return 0
+    fi
+  fi
+
+  local cfg="$INSTALL_DIR/config.json"
+  [ -f "$cfg" ] || return 0
+  complete="$(awk '/"setupComplete"/ { if ($0 ~ /true/) print "1"; exit }' "$cfg" 2>/dev/null || true)"
+  port="$(awk '/"sitePortal"/,0 { if ($0 ~ /"port"/) { gsub(/[^0-9]/,""); print; exit } }' "$cfg" 2>/dev/null || true)"
+  [ -n "$port" ] && [ "$port" -ge 1 ] 2>/dev/null || return 0
+
+  if [ "$complete" = "1" ] || { [ "$port" -ge 10000 ] && [ "$port" -le 15000 ]; }; then
+    SETUP_PORT="$port"
+    export SETUP_PORT
+  fi
+}
+
+pick_setup_port() {
+  if [ -n "${SETUP_PORT:-}" ]; then
+    export SETUP_PORT
+    echo "портал: порт ${SETUP_PORT}"
+    return 0
+  fi
+
+  local node_bin port
+  node_bin="$(resolve_node_bin)"
+  if [ -n "$node_bin" ] && [ -f "$INSTALL_DIR/src/portal-port.js" ]; then
+    port="$("$node_bin" "$INSTALL_DIR/src/portal-port.js" 2>/dev/null || true)"
+    if [ -n "$port" ] && [ "$port" -ge 10000 ] 2>/dev/null && [ "$port" -le 15000 ] 2>/dev/null; then
+      SETUP_PORT="$port"
+      export SETUP_PORT
+      echo "портал: порт ${SETUP_PORT} (10000–15000)"
+      return 0
+    fi
+  fi
+
+  local i
+  for i in $(seq 1 80); do
+    port=$((10000 + RANDOM % 5001))
+    if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -qE ":${port}[[:space:]]"; then
+      continue
+    fi
+    if command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -qE ":${port}[[:space:]]"; then
+      continue
+    fi
+    SETUP_PORT="$port"
+    export SETUP_PORT
+    echo "портал: порт ${SETUP_PORT} (10000–15000)"
+    return 0
+  done
+
+  SETUP_PORT=$((10000 + RANDOM % 5001))
+  export SETUP_PORT
+  echo "портал: порт ${SETUP_PORT} (10000–15000)"
+}
+
 open_portal_port() {
-  local port="${SETUP_PORT:-3847}"
+  local port="${SETUP_PORT:-}"
+  [ -n "$port" ] || { echo "порт портала не выбран"; return 0; }
   can_sudo || { echo "порт ${port}/tcp: нет sudo — открой в панели"; return 0; }
 
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi 'Status: active'; then
@@ -466,9 +530,11 @@ refresh_path
 
 command -v npm >/dev/null 2>&1 || fail "npm не найден после установки Node"
 
+remember_existing_port
 clone_or_update_repo
 cd "$INSTALL_DIR"
 refresh_path
+pick_setup_port
 open_portal_port
 
 echo ""
@@ -507,4 +573,5 @@ exec env \
   TG_TOKEN="$TG_TOKEN" \
   TG_CHAT_ID="$TG_CHAT_ID" \
   DB_DRIVER="$DB_DRIVER" \
+  SETUP_PORT="${SETUP_PORT:-}" \
   npm run setup

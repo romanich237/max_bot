@@ -9,6 +9,7 @@ const {
   rejectWebInput,
   DEFAULT_PORT,
 } = require('./state');
+const { bindPortalPort, getPortalPort } = require('../portal-port');
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -113,36 +114,32 @@ function createSetupHandler(state, handlers) {
   };
 }
 
-function startSetupServer(state, handlers, options = {}) {
-  const port = options.port || DEFAULT_PORT;
+async function startSetupServer(state, handlers, options = {}) {
   const host = options.host || '0.0.0.0';
   const handler = createSetupHandler(state, handlers);
 
-  return new Promise(async (resolve, reject) => {
-    let tlsOptions = null;
-    if (isPortalSslEnabled()) {
-      const { resolveServerPublicIp } = require('../server-ip');
-      const publicIp = options.publicIp || (await resolveServerPublicIp());
-      const ssl = await ensurePortalSsl(publicIp);
-      if (ssl) {
-        tlsOptions = { cert: ssl.cert, key: ssl.key };
-      }
+  let tlsOptions = null;
+  if (isPortalSslEnabled()) {
+    const { resolveServerPublicIp } = require('../server-ip');
+    const publicIp = options.publicIp || (await resolveServerPublicIp());
+    const ssl = await ensurePortalSsl(publicIp);
+    if (ssl) {
+      tlsOptions = { cert: ssl.cert, key: ssl.key };
     }
+  }
 
-    const server = createPortalServer(handler, tlsOptions);
-    server.on('error', reject);
-    server.listen(port, host, () => {
-      resolve({
-        server,
-        port,
-        ssl: Boolean(tlsOptions),
-        close: () =>
-          new Promise((closeResolve) => {
-            server.close(() => closeResolve());
-          }),
-      });
-    });
-  });
+  const server = createPortalServer(handler, tlsOptions);
+  const port = await bindPortalPort(server, options.port || getPortalPort() || DEFAULT_PORT, host);
+
+  return {
+    server,
+    port,
+    ssl: Boolean(tlsOptions),
+    close: () =>
+      new Promise((closeResolve) => {
+        server.close(() => closeResolve());
+      }),
+  };
 }
 
 function getSetupUrls(port, token, publicIp, ssl = isPortalSslEnabled()) {

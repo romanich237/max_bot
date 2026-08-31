@@ -177,6 +177,12 @@ async function main() {
   ensureConfigFile();
   ensureDirs();
 
+  const { ensureInstallPortalPort } = require('../src/portal-port');
+  const { openPortalPort } = require('../src/open-firewall-port');
+  const portalPort = await ensureInstallPortalPort();
+  console.log(`Портал: порт ${portalPort} (диапазон 10000–15000)`);
+  openPortalPort(portalPort);
+
   run('npm install --omit=dev');
   require('../src/force-ipv4');
 
@@ -199,13 +205,10 @@ async function main() {
     console.log('playwright install-deps пропущен (не критично)');
   }
 
-  const { openPortalPort } = require('../src/open-firewall-port');
-
   if (process.env.SETUP_WEB === '1') {
-    openPortalPort();
     const { runWebSetup } = require('../src/setup-portal');
     const result = await runWebSetup({
-      port: Number(process.env.SETUP_PORT) || undefined,
+      port: portalPort,
     });
 
     console.log('\nГотово! Бот запущен 24/7.');

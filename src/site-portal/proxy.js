@@ -2,9 +2,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { ROOT, store } = require('../config');
+const { getPortalPort } = require('../portal-port');
 
 const COOKIES_PATH = path.join(ROOT, 'data', 'site-cookies.json');
-const DEFAULT_PORT = 3847;
 
 const TARGETS = {
   max: { host: 'web.max.ru', protocol: 'https:' },
@@ -21,7 +21,7 @@ function ensureSiteToken() {
 }
 
 function getSitePort() {
-  return Number(store.getPath(['sitePortal', 'port']) || DEFAULT_PORT);
+  return getPortalPort() || Number(store.getPath(['sitePortal', 'port'])) || 0;
 }
 
 function isEnabled() {
@@ -246,7 +246,6 @@ async function syncCookiesToPlaywright() {
 }
 
 module.exports = {
-  DEFAULT_PORT,
   TARGETS,
   ensureSiteToken,
   getSitePort,

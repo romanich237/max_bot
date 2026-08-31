@@ -1,6 +1,7 @@
 const crypto = require('crypto');
+const { PORT_RANGE_MIN } = require('../portal-port');
 
-const DEFAULT_PORT = 3847;
+const DEFAULT_PORT = PORT_RANGE_MIN;
 
 function createToken() {
   return crypto.randomBytes(24).toString('hex');

@@ -91,5 +91,10 @@ if [ -z "${DB_DRIVER:-}" ]; then
   echo "DB_DRIVER=$DB_DRIVER (авто)"
 fi
 
+if [ -z "${SETUP_PORT:-}" ] && [ -f "$INSTALL_DIR/src/portal-port.js" ]; then
+  SETUP_PORT="$("$node_bin" "$INSTALL_DIR/src/portal-port.js" 2>/dev/null || true)"
+  [ -n "${SETUP_PORT:-}" ] && export SETUP_PORT && echo "портал: порт ${SETUP_PORT}"
+fi
+
 echo ""
-exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" DB_DRIVER="$DB_DRIVER" npm run setup
+exec env PATH="$PATH" NVM_DIR="${NVM_DIR:-$HOME/.nvm}" TG_TOKEN="$TG_TOKEN" TG_CHAT_ID="$TG_CHAT_ID" DB_DRIVER="$DB_DRIVER" SETUP_PORT="${SETUP_PORT:-}" npm run setup
