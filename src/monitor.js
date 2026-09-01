@@ -38,7 +38,7 @@ const { AUTH } = require('./bot-texts');
 const { sendReplyInMax } = require('./max-sender');
 const { sendToTelegram, flushTelegramOutbox } = require('./telegram');
 const { loadState, saveState } = require('./state');
-const { downloadMessageMedia } = require('./media');
+const { downloadMessageMedia, enrichVoiceTranscript } = require('./media');
 const db = require('./db');
 const {
   MESSAGE_WRAPPER_SELECTOR,
@@ -171,14 +171,15 @@ async function forwardMessage(page, message, isCatchUp, maxChatUrl) {
     await persistMessage(message, { forwarded: false });
     return;
   }
+  const messageToSend = await enrichVoiceTranscript(page, message, MESSAGE_WRAPPER_SELECTOR);
   const mediaFiles = await downloadMessageMedia(
     page,
-    message,
+    messageToSend,
     MESSAGE_WRAPPER_SELECTOR
   );
 
-  await sendToTelegram(message, { isCatchUp, mediaFiles, maxChatUrl });
-  await persistMessage(message, { forwarded: true, mediaFiles });
+  await sendToTelegram(messageToSend, { isCatchUp, mediaFiles, maxChatUrl });
+  await persistMessage(messageToSend, { forwarded: true, mediaFiles });
 }
 
 function scopeMessages(chatUrl, messages) {

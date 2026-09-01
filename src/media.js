@@ -372,6 +372,198 @@ async function findWrapperIndex(page, message, wrapperSelector) {
   return index;
 }
 
+function voiceDurationOf(message) {
+  return String((message.media || []).find((item) => item.duration)?.duration || '').trim();
+}
+
+function isVoicePlaceholder(text) {
+  return /^\s*\[голосовое(?:\s+\d{1,2}:\d{2})?\]\s*$/i.test(String(text || '').trim());
+}
+
+function transcriptTimeoutMs(message) {
+  const match = voiceDurationOf(message).match(/(\d+):(\d{2})/);
+  const sec = match ? Number(match[1]) * 60 + Number(match[2]) : 20;
+  return Math.min(90000, Math.max(25000, 12000 + sec * 800));
+}
+
+async function resolveVoiceWrapperIndex(page, message, wrapperSelector) {
+  const sel = wrapperSelector || '.messageWrapper';
+  const hinted = Number.isInteger(message.index) ? message.index : -1;
+  const duration = voiceDurationOf(message);
+  return page.evaluate(
+    ({ hinted, author, duration, body, sel }) => {
+      const opened = document.querySelector('.openedChat');
+      const wrappers = opened?.querySelectorAll('.messageWrapper')?.length
+        ? opened.querySelectorAll('.messageWrapper')
+        : document.querySelectorAll(sel);
+      const hasAudio = (node) => Boolean(node?.querySelector('.attachAudio, [class*="attachAudio"]'));
+      if (hinted >= 0 && hasAudio(wrappers[hinted])) return hinted;
+
+      const norm = (value) =>
+        String(value || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+      const authorNeedle = norm(author);
+      const durationNeedle = norm(duration).replace(/^0/, '');
+      const bodyNeedle = norm(body);
+
+      for (let i = wrappers.length - 1; i >= 0; i--) {
+        if (!hasAudio(wrappers[i])) continue;
+        const text = norm(wrappers[i].innerText || '');
+        if (authorNeedle && !text.includes(authorNeedle)) continue;
+        if (durationNeedle && text.includes(durationNeedle)) return i;
+        if (bodyNeedle && /голосовое/.test(bodyNeedle) && /голосовое|\d+:\d{2}/.test(text)) return i;
+        if (authorNeedle) return i;
+      }
+      return -1;
+    },
+    {
+      hinted,
+      author: message.author,
+      duration,
+      body: message.body,
+      sel,
+    }
+  );
+}
+
+async function readVoiceTranscript(page, wrapperIndex, wrapperSelector, duration) {
+  return page.evaluate(
+    ({ idx, sel, duration }) => {
+      const opened = document.querySelector('.openedChat');
+      const wrappers = opened?.querySelectorAll('.messageWrapper')?.length
+        ? opened.querySelectorAll('.messageWrapper')
+        : document.querySelectorAll(sel);
+      const wrapper = wrappers[idx];
+      if (!wrapper) return '';
+
+      const noise = (value) => {
+        const text = String(value || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (!text) return true;
+        if (/^голосовое(\s+сообщение)?$/i.test(text)) return true;
+        if (/^\[\s*голосовое/i.test(text)) return true;
+        if (/^\d{1,2}:\d{2}(\s*(AM|PM))?$/i.test(text)) return true;
+        if (duration && text === String(duration).trim()) return true;
+        if (/^(расшифровк|распознаван|загрузк|секунду|подождите|транскрип)/i.test(text)) return true;
+        return false;
+      };
+
+      const bubble = wrapper.querySelector('.bubbleContent') || wrapper;
+      const audio = wrapper.querySelector('.attachAudio, [class*="attachAudio"]');
+      const chunks = [];
+
+      for (const el of bubble.querySelectorAll('.text, [class*="transcript"], [class*="Transcript"], p')) {
+        if (el.closest('.meta, .header, .mark, button, .wave, .duration')) continue;
+        const text = String(el.innerText || '').trim();
+        if (!noise(text)) chunks.push(text);
+      }
+
+      if (!chunks.length) {
+        const lines = String(bubble.innerText || '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line && !noise(line));
+        if (lines.length) return lines.join('\n').trim();
+      }
+
+      return [...new Set(chunks)].join('\n').trim();
+    },
+    { idx: wrapperIndex, sel: wrapperSelector || '.messageWrapper', duration: duration || '' }
+  );
+}
+
+async function clickVoiceTranscribe(page, wrapperIndex, wrapperSelector) {
+  const sel = wrapperSelector || '.messageWrapper';
+  const opened = page.locator('.openedChat .messageWrapper');
+  const list = (await opened.count()) > 0 ? opened : page.locator(sel);
+  const wrap = list.nth(wrapperIndex);
+  await wrap.scrollIntoViewIfNeeded().catch(() => {});
+
+  const transcribe = wrap.locator('.attachAudio button.button--inside, [class*="attachAudio"] button.button--inside').first();
+  if (await transcribe.count()) {
+    try {
+      await transcribe.click({ force: true, timeout: 2500 });
+      return true;
+    } catch {
+      /* evaluate fallback */
+    }
+  }
+
+  return page.evaluate(
+    ({ idx, sel }) => {
+      const opened = document.querySelector('.openedChat');
+      const wrappers = opened?.querySelectorAll('.messageWrapper')?.length
+        ? opened.querySelectorAll('.messageWrapper')
+        : document.querySelectorAll(sel);
+      const audio = wrappers[idx]?.querySelector('.attachAudio, [class*="attachAudio"]');
+      const btn =
+        audio?.querySelector('button.button--inside') ||
+        audio?.querySelector('button.button--start') ||
+        [...(audio?.querySelectorAll('button') || [])].find(
+          (el) => !el.querySelector('use[href*="play"]') && !el.querySelector('[href*="icon_play"]')
+        );
+      if (!btn) return false;
+      btn.click();
+      return true;
+    },
+    { idx: wrapperIndex, sel }
+  );
+}
+
+async function transcribeVoiceMessage(page, message, wrapperSelector) {
+  const hasVoice = (message.media || []).some((item) => item.type === 'voice' || item.type === 'audio');
+  if (!hasVoice && !isVoicePlaceholder(message.body)) return '';
+
+  const sel = wrapperSelector || '.messageWrapper';
+  const idx = await resolveVoiceWrapperIndex(page, message, sel);
+  if (idx < 0) {
+    console.warn('голосовое: сообщение не найдено в DOM');
+    return '';
+  }
+
+  const duration = voiceDurationOf(message);
+  const existing = await readVoiceTranscript(page, idx, sel, duration);
+  if (existing) return existing;
+
+  const clicked = await clickVoiceTranscribe(page, idx, sel);
+  if (!clicked) {
+    console.warn('голосовое: кнопка расшифровки не найдена');
+    return '';
+  }
+
+  const deadline = Date.now() + transcriptTimeoutMs(message);
+  while (Date.now() < deadline) {
+    const text = await readVoiceTranscript(page, idx, sel, duration);
+    if (text) {
+      console.log(`  📝 расшифровка: ${text.slice(0, 120)}`);
+      return text;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  console.warn('голосовое: расшифровка не появилась');
+  return '';
+}
+
+async function enrichVoiceTranscript(page, message, wrapperSelector) {
+  const hasVoice = (message.media || []).some((item) => item.type === 'voice');
+  if (!hasVoice) return message;
+
+  try {
+    const text = await transcribeVoiceMessage(page, message, wrapperSelector);
+    if (!text) return message;
+    const duration = voiceDurationOf(message);
+    const tag = duration ? `[голосовое ${duration}]` : '[голосовое]';
+    return { ...message, body: `${tag}\n${text}` };
+  } catch (err) {
+    console.warn('голосовое: расшифровка —', err.message);
+    return message;
+  }
+}
+
 async function downloadMediaItem(page, message, media, index, wrapperSelector) {
   const filePath = buildFilePath(message, media, index);
 
@@ -415,6 +607,7 @@ async function downloadMessageMedia(page, message, wrapperSelector) {
   const saved = [];
 
   for (let i = 0; i < message.media.length; i++) {
+    if (message.media[i].type === 'voice') continue;
     try {
       const item = await downloadMediaItem(page, message, message.media[i], i, wrapperSelector);
       saved.push(item);
@@ -433,4 +626,7 @@ module.exports = {
   downloadMessageMedia,
   mediaLabel,
   findWrapperIndex,
+  transcribeVoiceMessage,
+  enrichVoiceTranscript,
+  isVoicePlaceholder,
 };
