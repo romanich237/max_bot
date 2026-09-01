@@ -14,6 +14,7 @@ const COMMANDS = {
 const BUTTONS = {
   bioTemplate: 'Шаблон описания',
   bioCity: 'Город для погоды',
+  bioEvent: 'Дата события',
   maxChats: 'Чаты MAX',
   notifyChat: 'Куда слать в Telegram',
   refreshStatus: 'Обновить статус',
@@ -107,7 +108,7 @@ const TOGGLES = {
   forwarding: 'Отправлять в Telegram',
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
-  profileBio: 'Менять описание',
+  profileBio: 'Смена описания',
 };
 
 const HINTS = {
@@ -124,6 +125,9 @@ const HINTS = {
     '<code>{час}</code> <code>{минута}</code> <code>{день}</code> <code>{месяц}</code> <code>{погода}</code>',
     '<code>{непрочитанные_чаты}</code> <code>{непрочитанные_сообщения}</code>',
     'Коротко: <code>{чаты}</code> <code>{сообщения}</code>',
+    '<code>{дни_до}</code> — сколько дней осталось до события',
+    '',
+    'Дату события задайте кнопкой ниже.',
     '',
     `По умолчанию: <code>${DEFAULT_BIO_TEMPLATE}</code>`,
   ].join('\n'),
@@ -160,7 +164,7 @@ const STATUS = {
   monitoring: 'Следит за MAX',
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
-  profileBio: 'Менять описание',
+  profileBio: 'Смена описания',
   namesUnset: 'Имена для смены не заданы',
   cityUnset: 'Город не задан',
   nameAuto: 'Имя в MAX пока не считано',

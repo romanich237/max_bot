@@ -80,6 +80,7 @@ function getProfileBio() {
     intervalMs: b.intervalMs ?? 60000,
     template: b.template || '{час}:{минута} · {день}.{месяц} · {погода}',
     city: b.city || '',
+    eventDate: b.eventDate || '',
     weatherApiKey: process.env.OPENWEATHER_API_KEY || b.weatherApiKey || '',
   };
 }

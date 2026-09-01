@@ -21,6 +21,7 @@ const DNS_CACHE_FILE = path.join(ROOT, 'data', '.github-dns-cache.json');
 const UPDATE_SHA_FILE = path.join(ROOT, 'data', '.update-sha');
 const UPDATE_LOCK_FILE = path.join(ROOT, 'data', '.update-lock');
 const UPDATE_NOTICES_FILE = path.join(ROOT, 'data', '.update-notices.json');
+const UPDATE_PENDING_DONE_FILE = path.join(ROOT, 'data', '.update-pending-done.json');
 const UPDATE_LOCK_MS = 3 * 60 * 1000;
 
 // DoH по IP — когда DNS в ахуе и github.com не резолвится
@@ -255,7 +256,7 @@ function releaseUpdateLock() {
 
 async function markUpToDate(version, sha, reason) {
   if (isGitSha(sha)) writeStoredSha(sha);
-  await pruneUpdateNotices({ kinds: ['progress', 'done', 'notice', 'fail'] });
+  await pruneUpdateNotices({ kinds: ['progress', 'notice', 'fail'] });
   console.log(`auto-update: актуально ${version || String(sha || '').slice(0, 7)}${reason ? ` (${reason})` : ''}`);
   return {
     status: 'up-to-date',
@@ -383,6 +384,83 @@ async function pruneUpdateNotices({ keep = [], kinds = null, chatId = null } = {
   }
 
   saveUpdateNotices(leftover);
+}
+
+async function deleteUpdatePosts(posts) {
+  for (const post of posts || []) {
+    if (!post?.chatId || !post?.messageId) continue;
+    try {
+      await deleteMessage(post.chatId, post.messageId);
+    } catch {
+      /* nop */
+    }
+  }
+}
+
+function writePendingDoneNotice(fromVersion, toVersion) {
+  try {
+    fs.mkdirSync(path.dirname(UPDATE_PENDING_DONE_FILE), { recursive: true });
+    fs.writeFileSync(
+      UPDATE_PENDING_DONE_FILE,
+      `${JSON.stringify({ fromVersion: fromVersion || '', toVersion: toVersion || '', at: Date.now() })}\n`
+    );
+  } catch (err) {
+    console.warn(`auto-update: pending done не записался (${err.message})`);
+  }
+}
+
+function clearPendingDoneNotice() {
+  try {
+    fs.unlinkSync(UPDATE_PENDING_DONE_FILE);
+  } catch {
+    /* nop */
+  }
+}
+
+function readPendingDoneNotice() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(UPDATE_PENDING_DONE_FILE, 'utf8'));
+    if (!raw || typeof raw !== 'object') return null;
+    if (!raw.fromVersion && !raw.toVersion) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+async function announceUpdateDone(fromVersion, toVersion, extraChatIds = []) {
+  const text = buildEventMessage({
+    ...UPDATES.done(fromVersion, toVersion),
+    status: 'done',
+  });
+  const ids = [
+    ...getAdminChatIds().map(String),
+    ...extraChatIds.map((id) => String(id || '')),
+  ].filter(Boolean);
+  const unique = [...new Set(ids)];
+  const posts = [];
+
+  for (const chatId of unique) {
+    try {
+      const data = await sendMessage(chatId, text);
+      if (data?.ok && data.result?.message_id) {
+        posts.push({ chatId, messageId: data.result.message_id });
+      }
+    } catch (err) {
+      console.error(`auto-update: не удалось отправить «Готово» в ${chatId}:`, err.message);
+    }
+  }
+
+  rememberUpdateNotices(posts, 'done');
+  return posts;
+}
+
+async function flushPendingDoneNotice() {
+  const pending = readPendingDoneNotice();
+  if (!pending) return false;
+  const posts = await announceUpdateDone(pending.fromVersion, pending.toVersion);
+  if (posts.length) clearPendingDoneNotice();
+  return posts.length > 0;
 }
 
 async function editAdminPosts(posts, text) {
@@ -849,41 +927,36 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) 
   writeStoredSha(toSha);
   releaseUpdateLock();
 
-  schedulePm2Restarts([APP_NAME], { delayMs: 2000 });
-  schedulePm2Restarts([UPDATE_APP_NAME], { delayMs: 20000 });
-
   const versionChanged = Boolean(fromVersion && toVersion && fromVersion !== toVersion);
+  const extraChatIds = (progressPosts || []).map((post) => post.chatId);
 
-  await pruneUpdateNotices({ keep: versionChanged ? progressPosts || [] : [] });
-
-  if (notify && versionChanged) {
-    const posts = await editAdminPosts(
-      progressPosts,
-      buildEventMessage({
-        ...UPDATES.done(fromVersion, toVersion),
-        status: 'done',
-      })
-    );
-    rememberUpdateNotices(posts || progressPosts || [], 'done');
-  } else {
-    if (progressPosts?.length) {
-      for (const post of progressPosts) {
-        try {
-          await deleteMessage(post.chatId, post.messageId);
-        } catch {
-          /* nop */
-        }
-      }
-    }
-    await pruneUpdateNotices({ kinds: ['progress', 'done', 'notice', 'fail'] });
+  if (versionChanged) {
+    writePendingDoneNotice(fromVersion, toVersion);
   }
+
+  await deleteUpdatePosts(progressPosts);
+  await pruneUpdateNotices({ kinds: ['progress', 'notice', 'fail'] });
+
+  let doneSent = false;
+  if (versionChanged && (notify || extraChatIds.length)) {
+    try {
+      const posts = await announceUpdateDone(fromVersion, toVersion, extraChatIds);
+      doneSent = posts.length > 0;
+      if (doneSent) clearPendingDoneNotice();
+    } catch (err) {
+      console.warn(`auto-update: не отправил «Готово»: ${err.message}`);
+    }
+  }
+
+  schedulePm2Restarts([APP_NAME], { delayMs: 2500 });
+  schedulePm2Restarts([UPDATE_APP_NAME], { delayMs: 20000 });
 
   console.log(
     versionChanged
       ? `auto-update: код обновлён ${fromVersion} → ${toVersion}, перезапуск PM2 запланирован`
       : 'auto-update: код тот же, уведомление не шлю, перезапуск PM2 запланирован'
   );
-  return { status: 'updated', fromSha, toSha, fromVersion, toVersion };
+  return { status: 'updated', fromSha, toSha, fromVersion, toVersion, doneSent };
 }
 
 async function applyUpdate(fromSha, toSha, notify, branch, fromVersion, progressPosts) {
@@ -918,6 +991,9 @@ async function checkForUpdates(options = {}) {
   const performUpdate = options.performUpdate !== false;
 
   store.reload();
+  await flushPendingDoneNotice().catch((err) => {
+    console.warn('auto-update: pending done:', err.message);
+  });
   const cfg = getAutoUpdate();
   const fromVersion = readLocalPackageVersion();
   let progressPosts = Array.isArray(options.progressPosts) ? [...options.progressPosts] : [];
@@ -1063,6 +1139,12 @@ function scheduleAutoUpdate() {
         ? 'каждую минуту'
         : `каждые ${Math.round(intervalMs / 60000)} мин`;
   console.log(`auto-update: проверка репозитория ${intervalLabel}`);
+
+  setTimeout(() => {
+    flushPendingDoneNotice().catch((err) => {
+      console.warn('auto-update: pending done:', err.message);
+    });
+  }, 4000);
 
   let tickBusy = false;
   const tick = async () => {

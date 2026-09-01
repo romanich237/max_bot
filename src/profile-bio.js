@@ -8,6 +8,50 @@ function pad2(value) {
   return String(value).padStart(2, '0');
 }
 
+function normalizeEventDate(value) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return '';
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function zonedTodayIso(timezone = 'Europe/Moscow') {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone || 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(new Date());
+}
+
+function formatEventDateRu(value) {
+  const iso = normalizeEventDate(value);
+  if (!iso) return '';
+  const [year, month, day] = iso.split('-');
+  return `${day}.${month}.${year}`;
+}
+
+function daysUntilEvent(eventDate, timezone = 'Europe/Moscow') {
+  const iso = normalizeEventDate(eventDate);
+  if (!iso) return '';
+  const todayIso = zonedTodayIso(timezone);
+  const diff = Math.round(
+    (Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${todayIso}T00:00:00Z`)) / 86400000
+  );
+  return String(Math.max(0, diff));
+}
+
 function getDateParts(now, timezone) {
   const formatter = new Intl.DateTimeFormat('ru-RU', {
     timeZone: timezone,
@@ -30,7 +74,11 @@ function getDateParts(now, timezone) {
 }
 
 function applyTemplate(template, values) {
+  const daysUntil = values.daysUntil ?? '';
   return String(template || '')
+    .replace(/\{дни_до_события\}/gi, daysUntil)
+    .replace(/\{дней_до\}/gi, daysUntil)
+    .replace(/\{дни_до\}/gi, daysUntil)
     .replace(/\{час\}/gi, values.hour)
     .replace(/\{минута\}/gi, values.minute)
     .replace(/\{день\}/gi, values.day)
@@ -71,7 +119,9 @@ async function renderBioDescription(options = {}) {
   const weather = await fetchWeatherText(city, apiKey);
   const { resolveCity } = require('./weather');
   const geo = await resolveCity(city, apiKey);
-  const parts = getDateParts(new Date(), geo.timezone);
+  const timezone = geo.timezone || 'Europe/Moscow';
+  const parts = getDateParts(new Date(), timezone);
+  const daysUntil = daysUntilEvent(settings.eventDate, timezone);
 
   let unread = unreadValues(options);
   if (options.page && templateNeedsUnread(template)) {
@@ -87,7 +137,7 @@ async function renderBioDescription(options = {}) {
     }
   }
 
-  let text = applyTemplate(template, { ...parts, weather, ...unread });
+  let text = applyTemplate(template, { ...parts, weather, daysUntil, ...unread });
 
   if (text.length > MAX_BIO_LENGTH) {
     text = text.slice(0, MAX_BIO_LENGTH);
@@ -96,13 +146,16 @@ async function renderBioDescription(options = {}) {
   return text;
 }
 
-function previewBioTemplate(template, city, timezone = 'Europe/Moscow') {
+function previewBioTemplate(template, city, timezone = 'Europe/Moscow', eventDate = '') {
+  const settings = getProfileBio();
   const parts = getDateParts(new Date(), timezone);
+  const daysUntil = daysUntilEvent(eventDate || settings.eventDate, timezone) || '0';
   let text = applyTemplate(template || DEFAULT_BIO_TEMPLATE, {
     ...parts,
     weather: '+5°C, облачно',
     unreadChats: '2',
     unreadMessages: '7',
+    daysUntil,
   });
 
   if (text.length > MAX_BIO_LENGTH) {
@@ -118,4 +171,7 @@ module.exports = {
   renderBioDescription,
   previewBioTemplate,
   applyTemplate,
+  daysUntilEvent,
+  formatEventDateRu,
+  normalizeEventDate,
 };

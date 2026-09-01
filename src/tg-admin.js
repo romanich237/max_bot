@@ -73,11 +73,17 @@ const {
   buildToggleButton,
   saveProfileBioCity,
   saveProfileBioTemplate,
+  saveProfileBioEventDate,
+  buildBioTemplatePromptText,
+  buildBioTemplateKeyboard,
+  buildEventCalendarKeyboard,
+  eventCalendarTitle,
+  parseYearMonth,
   PROFILE_BIO_CITY_HINT,
   PROFILE_BIO_TEMPLATE_HINT,
   MAX_BIO_LENGTH,
 } = require('./tg-settings');
-const { previewBioTemplate } = require('./profile-bio');
+const { previewBioTemplate, formatEventDateRu, daysUntilEvent } = require('./profile-bio');
 const replyStore = require('./reply-store');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
@@ -551,6 +557,11 @@ function buildStatusText() {
   if (profileBio.enabled) {
     lines.push(profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : STATUS.cityUnset);
     lines.push(`Шаблон: <code>${escapeHtml(profileBio.template)}</code>`);
+    if (profileBio.eventDate) {
+      lines.push(
+        `Событие: <code>${escapeHtml(formatEventDateRu(profileBio.eventDate))}</code> · дней до: <code>${daysUntilEvent(profileBio.eventDate)}</code>`
+      );
+    }
   }
 
   lines.push(maxName ? `Сейчас имя: <code>${escapeHtml(maxName)}</code>` : STATUS.nameAuto);
@@ -907,7 +918,9 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
   const template = String(text || '').trim();
   if (!template) {
     await deleteMessageQuiet(chatId, userMessageId);
-    await sendInputPrompt(chatId, ERRORS.templateNotRecognized + PROFILE_BIO_TEMPLATE_HINT);
+    await sendInputPrompt(chatId, ERRORS.templateNotRecognized + PROFILE_BIO_TEMPLATE_HINT, {
+      reply_markup: buildBioTemplateKeyboard(),
+    });
     return false;
   }
 
@@ -916,7 +929,8 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
     await deleteMessageQuiet(chatId, userMessageId);
     await sendInputPrompt(
       chatId,
-      `Слишком длинный результат (${preview.length} симв.). Сократите шаблон до ${MAX_BIO_LENGTH} символов.`
+      `Слишком длинный результат (${preview.length} симв.). Сократите шаблон до ${MAX_BIO_LENGTH} символов.`,
+      { reply_markup: buildBioTemplateKeyboard() }
     );
     return false;
   }
@@ -924,6 +938,10 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
   saveProfileBioTemplate(template);
   waitingInput.delete(String(chatId));
   await clearInputPrompt(chatId, userMessageId);
+  const bio = getProfileBio();
+  const eventLine = bio.eventDate
+    ? `Событие: <code>${escapeHtml(formatEventDateRu(bio.eventDate))}</code> · дней до: <code>${daysUntilEvent(bio.eventDate)}</code>`
+    : null;
   await sendMessage(
     chatId,
     buildEventMessage({
@@ -932,9 +950,10 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
       lines: [
         `Шаблон: <code>${escapeHtml(template)}</code>`,
         `Пример: <code>${escapeHtml(preview.text)}</code> (${preview.length} симв.)`,
+        eventLine,
         '',
         buildStatusText(),
-      ],
+      ].filter((line) => line != null),
     }),
     { reply_markup: buildMenuKeyboard() }
   );
@@ -2140,29 +2159,23 @@ async function handleManualUpdateCheck(chatId) {
         performUpdate: true,
         progressPosts,
       });
-      const doneText =
-        result.status === 'updated'
-          ? buildEventMessage({
-              ...UPDATES.done(result.fromVersion, result.toVersion),
-              status: 'done',
-            })
-          : result.status === 'error'
-            ? buildEventMessage({ ...UPDATES.fail(result.message), status: 'fail' })
-            : null;
-      if (!doneText) return;
-
-      const messageId = sent?.ok ? sent.result?.message_id : null;
-      if (messageId) {
-        try {
-          await editMessageText(chatId, messageId, doneText);
-          rememberUpdateNotices([{ chatId, messageId }], 'done');
-          return;
-        } catch (err) {
-          console.warn('update message edit:', err.message);
+      if (result.status === 'updated') {
+        if (result.doneSent) return;
+        if (result.fromVersion && result.toVersion && result.fromVersion !== result.toVersion) {
+          const doneText = buildEventMessage({
+            ...UPDATES.done(result.fromVersion, result.toVersion),
+            status: 'done',
+          });
+          const fallback = await sendMessage(chatId, doneText);
+          track(fallback, 'done');
         }
+        return;
       }
-      const fallback = await sendMessage(chatId, doneText);
-      track(fallback, result.status === 'updated' ? 'done' : 'fail');
+      if (result.status === 'error') {
+        const failText = buildEventMessage({ ...UPDATES.fail(result.message), status: 'fail' });
+        const fallback = await sendMessage(chatId, failText);
+        track(fallback, 'fail');
+      }
       return;
     }
 
@@ -2349,7 +2362,72 @@ async function handleCallback(query) {
   if (data === 'action:profileBioTemplate') {
     waitingInput.set(String(chatId), 'profileBioTemplate');
     await answerCallback(query.id, 'Жду шаблон');
-    await sendInputPrompt(chatId, PROFILE_BIO_TEMPLATE_HINT);
+    await sendInputPrompt(chatId, buildBioTemplatePromptText(), {
+      reply_markup: buildBioTemplateKeyboard(),
+    });
+    return;
+  }
+
+  if (data === 'bioevent:noop') {
+    await answerCallback(query.id);
+    return;
+  }
+
+  if (data === 'bioevent:open' || data === 'bioevent:back' || data.startsWith('bioevent:')) {
+    waitingInput.set(String(chatId), 'profileBioTemplate');
+    const messageId = query.message?.message_id;
+
+    if (data === 'bioevent:back') {
+      await answerCallback(query.id, 'Шаблон');
+      await editMessageText(chatId, messageId, buildBioTemplatePromptText(), {
+        reply_markup: buildBioTemplateKeyboard(),
+      }).catch(() => {});
+      return;
+    }
+
+    if (data === 'bioevent:clear') {
+      saveProfileBioEventDate('');
+      await answerCallback(query.id, 'Дата сброшена');
+      await editMessageText(chatId, messageId, buildBioTemplatePromptText(), {
+        reply_markup: buildBioTemplateKeyboard(),
+      }).catch(() => {});
+      return;
+    }
+
+    if (data.startsWith('bioevent:set:')) {
+      const iso = data.slice('bioevent:set:'.length);
+      saveProfileBioEventDate(iso);
+      await answerCallback(query.id, 'Дата сохранена');
+      await editMessageText(chatId, messageId, buildBioTemplatePromptText(), {
+        reply_markup: buildBioTemplateKeyboard(),
+      }).catch(() => {});
+      return;
+    }
+
+    let year;
+    let month;
+    if (data.startsWith('bioevent:nav:')) {
+      const parsed = parseYearMonth(data.slice('bioevent:nav:'.length));
+      year = parsed?.year;
+      month = parsed?.month;
+    }
+    if (!year || !month) {
+      const current = getProfileBio().eventDate || '';
+      const now = new Date();
+      if (current) {
+        const [y, m] = current.split('-');
+        year = Number(y) || now.getFullYear();
+        month = Number(m) || now.getMonth() + 1;
+      } else {
+        year = now.getFullYear();
+        month = now.getMonth() + 1;
+      }
+    }
+
+    await answerCallback(query.id, 'Календарь');
+    await editMessageText(chatId, messageId, eventCalendarTitle(year, month), {
+      reply_markup: buildEventCalendarKeyboard(year, month, getProfileBio().eventDate),
+    }).catch(() => {});
     return;
   }
 
