@@ -5,6 +5,7 @@ const {
   formatEventDateRu,
   normalizeEventDate,
   daysUntilEvent,
+  previewBioTemplate,
 } = require('./profile-bio');
 const { TOGGLES, HINTS, BUTTONS, withOnOffEmoji } = require('./bot-texts');
 
@@ -104,13 +105,39 @@ function parseYearMonth(value) {
   return { year, month };
 }
 
-function buildBioTemplatePromptText() {
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function buildBioTemplatePromptText(templateOverride) {
   const bio = getProfileBio();
+  const template = String(templateOverride || bio.template || DEFAULT_BIO_TEMPLATE).trim();
+  let previewText = template;
+  try {
+    previewText = previewBioTemplate(template, bio.city, 'Europe/Moscow', bio.eventDate).text;
+  } catch {
+    /* keep raw template if preview is unavailable */
+  }
   const eventIso = normalizeEventDate(bio.eventDate);
   const eventLine = eventIso
     ? `Событие: <b>${formatEventDateRu(eventIso)}</b> · осталось дней: <code>${daysUntilEvent(eventIso)}</code>`
     : 'Событие не задано — нажмите кнопку и выберите дату.';
-  return [HINTS.profileBioTemplate, '', eventLine, '', 'Отправьте новый шаблон или /cancel.'].join('\n');
+  return [
+    HINTS.profileBioTemplate,
+    '',
+    eventLine,
+    '',
+    'Шаблон:',
+    `<code>${escapeHtml(template)}</code>`,
+    '',
+    'Как выглядит:',
+    `<code>${escapeHtml(previewText)}</code>`,
+    '',
+    'Отправьте новый шаблон или /cancel.',
+  ].join('\n');
 }
 
 function buildBioTemplateKeyboard() {

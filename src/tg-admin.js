@@ -970,11 +970,12 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
 
   let preview;
   try {
-    preview = previewBioTemplate(template, getProfileBio().city);
+    const bioSettings = getProfileBio();
+    preview = previewBioTemplate(template, bioSettings.city, 'Europe/Moscow', bioSettings.eventDate);
   } catch (err) {
     await sendInputPrompt(
       chatId,
-      `Не удалось разобрать шаблон: ${escapeHtml(err.message)}\n\n${buildBioTemplatePromptText()}`,
+      `Не удалось разобрать шаблон: ${escapeHtml(err.message)}\n\n${buildBioTemplatePromptText(template)}`,
       { reply_markup: buildBioTemplateKeyboard() }
     );
     return false;
@@ -1001,8 +1002,12 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
       title: SAVED.template(escapeHtml(preview.text)).title,
       status: 'done',
       lines: [
-        `Шаблон: <code>${escapeHtml(template)}</code>`,
-        `Пример: <code>${escapeHtml(preview.text)}</code> (${preview.length} симв.)`,
+        'Шаблон:',
+        `<code>${escapeHtml(template)}</code>`,
+        '',
+        'Как выглядит:',
+        `<code>${escapeHtml(preview.text)}</code>`,
+        `(${preview.length} симв.)`,
         eventLine,
       ].filter((line) => line != null),
     });
@@ -1016,7 +1021,7 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
     if (!sent?.ok) {
       sent = await sendMessage(
         chatId,
-        `✅ Шаблон сохранён.\n<pre>${escapeHtml(template)}</pre>`,
+        `✅ Шаблон сохранён.\n\nКак выглядит:\n<pre>${escapeHtml(preview.text)}</pre>`,
         { reply_markup: buildMenuKeyboard() }
       ).catch((err) => ({ ok: false, description: err.message }));
     }

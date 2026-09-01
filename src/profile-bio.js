@@ -1,5 +1,13 @@
-const { getProfileBio } = require('./config');
 const { fetchWeatherParts } = require('./weather');
+
+function readProfileBio() {
+  try {
+    const { getProfileBio } = require('./config');
+    return typeof getProfileBio === 'function' ? getProfileBio() : {};
+  } catch {
+    return {};
+  }
+}
 
 const MAX_BIO_LENGTH = 400;
 const DEFAULT_BIO_TEMPLATE = '{час}:{минута} · {день}.{месяц} · {температура}, {погода}';
@@ -107,7 +115,7 @@ function unreadValues(options = {}) {
 }
 
 async function renderBioDescription(options = {}) {
-  const settings = { ...getProfileBio(), ...options };
+  const settings = { ...readProfileBio(), ...options };
   const template = settings.template || DEFAULT_BIO_TEMPLATE;
   const city = String(settings.city || '').trim();
 
@@ -154,7 +162,7 @@ async function renderBioDescription(options = {}) {
 }
 
 function previewBioTemplate(template, city, timezone = 'Europe/Moscow', eventDate = '') {
-  const settings = getProfileBio();
+  const settings = readProfileBio();
   const parts = getDateParts(new Date(), timezone);
   const daysUntil = daysUntilEvent(eventDate || settings.eventDate, timezone) || '0';
   let text = applyTemplate(template || DEFAULT_BIO_TEMPLATE, {
