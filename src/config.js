@@ -110,17 +110,6 @@ function getAlwaysOnline() {
   };
 }
 
-function getStories() {
-  const s = getRaw().stories || {};
-  return {
-    enabled: s.enabled ?? false,
-    intervalMs: s.intervalMs ?? 30 * 60 * 1000,
-    autoLike: s.autoLike !== false,
-    storyDurationMs: s.storyDurationMs ?? 5500,
-    maxPacksPerRun: s.maxPacksPerRun ?? 30,
-  };
-}
-
 function resolveDatabaseDriver(d) {
   if (d.driver === 'sqlite' || d.driver === 'mysql') return d.driver;
   if (d.file) return 'sqlite';
@@ -203,7 +192,6 @@ module.exports = {
   getProfileRotate,
   getProfileBio,
   getAlwaysOnline,
-  getStories,
   getDatabase,
   getAutoUpdate,
   isPortalSslEnabled,

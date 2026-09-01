@@ -6,7 +6,6 @@ const {
   getMaxDisplayName,
   getProfileBio,
   getAlwaysOnline,
-  getStories,
   getMonitorChatUrls,
   getNotificationChatIds,
   isPrivateChatId,
@@ -69,12 +68,6 @@ const {
   MAX_BIO_LENGTH,
 } = require('./tg-settings');
 const { previewBioTemplate } = require('./profile-bio');
-const {
-  buildStoriesMenuText,
-  buildStoriesKeyboard,
-  toggleStoriesSetting,
-  setStoriesInterval,
-} = require('./stories-menu');
 const replyStore = require('./reply-store');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
@@ -357,7 +350,6 @@ function formatNotifyTarget(id) {
 function buildStatusText() {
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
-  const stories = getStories();
   const maxName = getMaxDisplayName();
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
@@ -369,7 +361,6 @@ function buildStatusText() {
     `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}${isMonitoringEnabled() ? '' : ' · на паузе'}`,
     `${STATUS.forwarding}: ${onFlag(getMax().forwardingEnabled !== false)}`,
     `${STATUS.alwaysOnline}: ${onFlag(online.enabled)}${online.enabled ? ` · ${formatInterval(online.intervalMs)}` : ''}`,
-    `${STATUS.stories}: ${onFlag(stories.enabled)}${stories.enabled ? ` · ${formatInterval(stories.intervalMs)}${stories.autoLike ? ' · лайк' : ''}` : ''}`,
     '',
     '<b>Профиль MAX</b>',
   ];
@@ -467,7 +458,6 @@ function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
     [buildToggleButton(prefix, TOGGLES[0]), buildToggleButton(prefix, TOGGLES[1])],
-    [{ text: BUTTONS.stories, callback_data: 'stories:menu' }],
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
@@ -890,20 +880,6 @@ async function showMaxChats(chatId, messageId) {
       return;
     } catch (err) {
       console.warn('showMaxChats edit:', err.message);
-    }
-  }
-  await sendMessage(chatId, text, extra);
-}
-
-async function showStoriesMenu(chatId, messageId) {
-  const text = buildStoriesMenuText();
-  const extra = { reply_markup: buildStoriesKeyboard() };
-  if (messageId) {
-    try {
-      await editMessageText(chatId, messageId, text, extra);
-      return;
-    } catch (err) {
-      console.warn('showStoriesMenu edit:', err.message);
     }
   }
   await sendMessage(chatId, text, extra);
@@ -2031,32 +2007,6 @@ async function handleCallback(query) {
   if (data === 'maxchat:list') {
     await answerCallback(query.id, 'Чаты MAX');
     await showMaxChats(chatId, query.message.message_id);
-    return;
-  }
-
-  if (data === 'stories:menu') {
-    await answerCallback(query.id, 'Истории');
-    await showStoriesMenu(chatId, query.message.message_id);
-    return;
-  }
-
-  if (data.startsWith('stories:toggle:')) {
-    const key = data.slice('stories:toggle:'.length);
-    const next = toggleStoriesSetting(key);
-    const label = key === 'autoLike' ? 'Автолайк' : 'Просмотр';
-    await answerCallback(query.id, next ? `${label}: вкл` : `${label}: выкл`);
-    await showStoriesMenu(chatId, query.message.message_id);
-    return;
-  }
-
-  if (data.startsWith('stories:interval:')) {
-    const intervalMs = Number.parseInt(data.slice('stories:interval:'.length), 10);
-    if (!setStoriesInterval(intervalMs)) {
-      await answerCallback(query.id, 'Некорректный интервал', true);
-      return;
-    }
-    await answerCallback(query.id, 'Интервал обновлён');
-    await showStoriesMenu(chatId, query.message.message_id);
     return;
   }
 

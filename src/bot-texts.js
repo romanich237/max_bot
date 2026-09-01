@@ -15,7 +15,6 @@ const BUTTONS = {
   bioTemplate: 'Шаблон описания',
   bioCity: 'Город для погоды',
   maxChats: 'Чаты MAX',
-  stories: 'Истории',
   notifyChat: 'Куда слать в Telegram',
   refreshStatus: 'Обновить статус',
   stopMax: 'Остановить бота',
@@ -105,7 +104,6 @@ const TOGGLES = {
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
-  stories: 'Истории',
 };
 
 const HINTS = {
@@ -159,7 +157,6 @@ const STATUS = {
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
-  stories: 'Истории',
   namesUnset: 'Имена для смены не заданы',
   cityUnset: 'Город не задан',
   nameAuto: 'Имя в MAX пока не считано',

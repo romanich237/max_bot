@@ -5,7 +5,6 @@ const {
   getProfileRotate,
   getProfileBio,
   getAlwaysOnline,
-  getStories,
   getAdminChatIds,
   getNotificationChatIds,
   isSetupComplete,
@@ -36,7 +35,6 @@ const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
 const { sendReplyInMax } = require('./max-sender');
-const { runStoriesAutomation } = require('./stories');
 const { sendToTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
 const { downloadMessageMedia } = require('./media');
@@ -413,7 +411,6 @@ async function startMonitor() {
   let profileIndex = 0;
   let profileTimer = null;
   let bioTimer = null;
-  let storiesTimer = null;
   let monitorTimer = null;
   const reauthPromptIds = {};
   const defaultChatUrl = getDefaultChatUrl();
@@ -491,19 +488,11 @@ async function startMonitor() {
     }
   }
 
-  function clearStoriesTimer() {
-    if (storiesTimer) {
-      clearTimeout(storiesTimer);
-      storiesTimer = null;
-    }
-  }
-
   function pauseMonitoring() {
     store.setPath(['max', 'monitoringEnabled'], false);
     clearMonitorTimer();
     clearProfileTimer();
     clearBioTimer();
-    clearStoriesTimer();
     console.log('Мониторинг MAX остановлен');
   }
 
@@ -511,7 +500,6 @@ async function startMonitor() {
     store.setPath(['max', 'monitoringEnabled'], true);
     scheduleProfileRotate();
     scheduleProfileBio();
-    scheduleStories();
     scheduleMonitor();
     console.log('Мониторинг MAX запущен');
   }
@@ -955,51 +943,9 @@ async function startMonitor() {
     bioTimer = setTimeout(tick, 5000);
   }
 
-  function scheduleStories() {
-    clearStoriesTimer();
-
-    if (!isMonitoringEnabled()) return;
-
-    const stories = getStories();
-    if (!stories.enabled) return;
-
-    console.log(`Истории: каждые ${stories.intervalMs / 1000} с`);
-
-    const tick = async () => {
-      const current = getStories();
-      storiesTimer = setTimeout(tick, current.intervalMs);
-
-      if (!current.enabled || !isMonitoringEnabled()) return;
-
-      if (authBusy) {
-        storiesTimer = setTimeout(tick, 60000);
-        return;
-      }
-
-      profileBusy = true;
-      try {
-        const result = await runStoriesAutomation(page, current);
-        if (result.skipped) {
-          console.log(`Истории: ${result.reason === 'no_stories' ? 'новых нет' : 'пропуск'}`);
-        } else {
-          console.log(
-            `Истории: просмотрено ${result.packs} авторов, ${result.slides} слайдов, лайков ${result.liked}`
-          );
-        }
-      } catch (err) {
-        console.error('Ошибка автоисторий:', err.message);
-      } finally {
-        profileBusy = false;
-      }
-    };
-
-    storiesTimer = setTimeout(tick, 15000);
-  }
-
   if (isMonitoringEnabled()) {
     scheduleProfileRotate();
     scheduleProfileBio();
-    scheduleStories();
   }
 
   async function monitorTick() {

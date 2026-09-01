@@ -52,13 +52,6 @@
     "enabled": false,
     "intervalMs": 30000
   },
-  "stories": {
-    "enabled": false,
-    "intervalMs": 1800000,
-    "autoLike": true,
-    "storyDurationMs": 5500,
-    "maxPacksPerRun": 30
-  },
   "autoUpdate": {
     "intervalMs": 60000,
     "branch": "main",
