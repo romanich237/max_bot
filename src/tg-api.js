@@ -135,6 +135,18 @@ async function sendMessage(chatId, text, extra = {}, tokenOverride) {
   );
 }
 
+async function pinChatMessage(chatId, messageId, extra = {}, tokenOverride) {
+  return api(
+    'pinChatMessage',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      disable_notification: extra.disable_notification !== false,
+    },
+    tokenOverride
+  );
+}
+
 async function sendPhotoBuffer(chatId, buffer, caption = '', tokenOverride, extra = {}) {
   const token = resolveToken(tokenOverride);
   const url = `${TELEGRAM_API}/bot${token}/sendPhoto`;
@@ -263,6 +275,7 @@ module.exports = {
   setBotDescription,
   setBotShortDescription,
   sendMessage,
+  pinChatMessage,
   sendPhotoBuffer,
   editPhotoBuffer,
   answerCallback,

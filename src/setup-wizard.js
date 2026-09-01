@@ -8,9 +8,11 @@ const {
 } = require('./tg-api');
 const {
   buildToggleRows,
+  buildToggleButton,
   parseNameList,
   saveProfileNames,
   PROFILE_NAMES_HINT,
+  FORWARDING_TOGGLE,
 } = require('./tg-settings');
 const { registerBotCommands } = require('./tg-admin');
 const { buildEventMessage, buildPipeline } = require('./tg-events');
@@ -23,7 +25,7 @@ const MAX_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
 function buildWizardKeyboard() {
   const rows = buildToggleRows('wizard:toggle:');
-  rows.push([{ text: '✏️ Список имён', callback_data: 'wizard:profileNames' }]);
+  rows.unshift([buildToggleButton('wizard:toggle:', FORWARDING_TOGGLE)]);
   rows.push([withTgEmoji({ text: 'Завершить настройку', callback_data: 'wizard:finish' }, 'check')]);
   return { inline_keyboard: rows };
 }

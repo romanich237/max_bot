@@ -12,7 +12,6 @@ const COMMANDS = {
 };
 
 const BUTTONS = {
-  profileNames: 'Список имён',
   bioTemplate: 'Шаблон описания',
   bioCity: 'Город для погоды',
   maxChats: 'Чаты MAX',
@@ -71,6 +70,7 @@ const TG_EMOJI = {
   camera: { id: '5972273671446727832', fallback: '📷' },
   phone: { id: '5407025283456835913', fallback: '📱' },
   group: { id: '4960891456869893259', fallback: '💠' },
+  refresh: { id: '5264988176652445119', fallback: '🔄' },
 };
 
 function withTgEmoji(button, kind) {
@@ -100,7 +100,7 @@ function tgEmojiHtml(kind) {
 }
 
 const TOGGLES = {
-  forwarding: 'Слать в Telegram',
+  forwarding: 'Отправлять в Telegram',
   alwaysOnline: 'Всегда в сети',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
@@ -163,7 +163,7 @@ const STATUS = {
   chatsHeader: 'Чаты MAX',
   chatsUnset: 'Чаты MAX не выбраны',
   notifyUnset: 'Куда слать в Telegram — не настроено',
-  forwarding: 'Слать в Telegram',
+  forwarding: 'Отправлять в Telegram',
   on: 'да',
   off: 'нет',
 };
@@ -391,14 +391,14 @@ const MONITORING = {
     title: 'Бот остановлен',
     lines: [
       'Полная пауза: MAX не проверяется, имя и описание не меняются.',
-      'Чтобы только не слать уведомления, но оставить бота работать — выключите «Слать в Telegram».',
+      'Чтобы только не слать уведомления, но оставить бота работать — выключите «Отправлять в Telegram».',
     ],
   },
   started: {
     title: 'Бот запущен',
     lines: [
       'Снова следит за MAX.',
-      'Уведомления в Telegram зависят от кнопки «Слать в Telegram».',
+      'Уведомления в Telegram зависят от кнопки «Отправлять в Telegram».',
     ],
   },
   stopUnavailable: 'Остановка недоступна. Перезапустите: <code>pm2 restart max-tg</code>',

@@ -4,6 +4,7 @@
     "token": "",
     "chatIds": [],
     "adminChatIds": [],
+    "aboutPinnedChatIds": [],
     "showTime": false,
     "showServiceHeader": false
   },

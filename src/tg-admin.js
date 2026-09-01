@@ -49,6 +49,7 @@ const {
   setBotDescription,
   setBotShortDescription,
   sendMessage,
+  pinChatMessage,
   answerCallback,
   editMessageText,
   getChat,
@@ -58,6 +59,7 @@ const {
 } = require('./tg-api');
 const {
   TOGGLES,
+  FORWARDING_TOGGLE,
   buildToggleButton,
   parseNameList,
   saveProfileNames,
@@ -112,6 +114,7 @@ const {
   BOT_ABOUT,
   LINKS,
   runWithPremiumEmoji,
+  withTgEmoji,
 } = require('./bot-texts');
 const {
   buildBrowserPasswordAcceptedMessage,
@@ -425,6 +428,10 @@ function buildLinksInlineRow() {
   ];
 }
 
+function buildAboutLinksKeyboard() {
+  return { inline_keyboard: [buildLinksInlineRow()] };
+}
+
 function buildAboutKeyboard() {
   return {
     inline_keyboard: [
@@ -434,19 +441,37 @@ function buildAboutKeyboard() {
   };
 }
 
+function hasPinnedAbout(chatId) {
+  const ids = store.getPath(['telegram', 'aboutPinnedChatIds']) || [];
+  return ids.map(String).includes(String(chatId));
+}
+
+function markPinnedAbout(chatId) {
+  const ids = [...new Set([...(store.getPath(['telegram', 'aboutPinnedChatIds']) || []).map(String), String(chatId)])];
+  store.setPath(['telegram', 'aboutPinnedChatIds'], ids);
+}
+
+async function sendPinnedAboutOnce(chat) {
+  const chatId = chat?.id;
+  if (!chatId || !isPrivateChatId(chatId) || hasPinnedAbout(chatId)) return false;
+
+  const sent = await sendMessage(chatId, START.about, {
+    reply_markup: buildAboutLinksKeyboard(),
+  });
+  if (!sent?.ok || !sent.result?.message_id) return false;
+
+  await pinChatMessage(chatId, sent.result.message_id).catch((err) => {
+    console.warn('pin about:', err.message);
+  });
+  markPinnedAbout(chatId);
+  return true;
+}
+
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
     [buildToggleButton(prefix, TOGGLES[0])],
-    [buildToggleButton(prefix, TOGGLES[1])],
-    [buildToggleButton(prefix, TOGGLES[2]), buildToggleButton(prefix, TOGGLES[3])],
-  ];
-
-  if (getProfileRotate().enabled) {
-    rows.push([{ text: BUTTONS.profileNames, callback_data: 'action:profileNames' }]);
-  }
-
-  rows.push(
+    [buildToggleButton(prefix, TOGGLES[1]), buildToggleButton(prefix, TOGGLES[2])],
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
@@ -454,10 +479,13 @@ function buildMenuKeyboard() {
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
       { text: BUTTONS.notifyChat, callback_data: 'action:notifyChat' },
-    ]
-  );
+    ],
+  ];
 
-  const statusRow = [{ text: BUTTONS.refreshStatus, callback_data: 'status' }];
+  const statusRow = [
+    buildToggleButton(prefix, FORWARDING_TOGGLE),
+    withTgEmoji({ text: BUTTONS.refreshStatus, callback_data: 'status' }, 'refresh'),
+  ];
   if (isMonitoringEnabled()) {
     statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax', style: 'danger' });
   } else {
@@ -1466,9 +1494,12 @@ async function handleMessage(message) {
 
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
-    await sendMessage(chatId, START.welcome, {
-      reply_markup: { remove_keyboard: true },
-    });
+    const firstVisit = await sendPinnedAboutOnce(message.chat);
+    if (!firstVisit) {
+      await sendMessage(chatId, START.welcome, {
+        reply_markup: { remove_keyboard: true },
+      });
+    }
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1850,13 +1881,6 @@ async function handleCallback(query) {
     await editMessageText(chatId, query.message.message_id, START.about, {
       reply_markup: buildAboutKeyboard(),
     });
-    return;
-  }
-
-  if (data === 'action:profileNames') {
-    waitingInput.set(String(chatId), 'profileNames');
-    await answerCallback(query.id, 'Жду имена');
-    await sendInputPrompt(chatId, PROFILE_NAMES_HINT);
     return;
   }
 

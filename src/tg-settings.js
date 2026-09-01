@@ -2,8 +2,13 @@ const { store } = require('./config');
 const { DEFAULT_BIO_TEMPLATE, MAX_BIO_LENGTH } = require('./profile-bio');
 const { TOGGLES, HINTS, withOnOffEmoji } = require('./bot-texts');
 
+const FORWARDING_TOGGLE = {
+  label: TOGGLES.forwarding,
+  path: ['max', 'forwardingEnabled'],
+  defaultOn: true,
+};
+
 const TOGGLE_ITEMS = [
-  { label: TOGGLES.forwarding, path: ['max', 'forwardingEnabled'], defaultOn: true },
   { label: TOGGLES.alwaysOnline, path: ['alwaysOnline', 'enabled'] },
   { label: TOGGLES.profileRotate, path: ['profileRotate', 'enabled'] },
   { label: TOGGLES.profileBio, path: ['profileBio', 'enabled'] },
@@ -59,6 +64,7 @@ function saveProfileBioTemplate(template) {
 
 module.exports = {
   TOGGLES: TOGGLE_ITEMS,
+  FORWARDING_TOGGLE,
   buildToggleButton,
   buildToggleRows,
   parseNameList,
