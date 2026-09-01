@@ -11,7 +11,6 @@ const FORWARDING_TOGGLE = {
 const TOGGLE_ITEMS = [
   { label: TOGGLES.alwaysOnline, path: ['alwaysOnline', 'enabled'] },
   { label: TOGGLES.profileBio, path: ['profileBio', 'enabled'] },
-  { label: TOGGLES.stories, path: ['stories', 'enabled'] },
 ];
 
 function isToggleOn(item) {

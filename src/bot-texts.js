@@ -15,6 +15,7 @@ const BUTTONS = {
   bioTemplate: 'Шаблон описания',
   bioCity: 'Город для погоды',
   maxChats: 'Чаты MAX',
+  stories: 'Истории',
   notifyChat: 'Куда слать в Telegram',
   refreshStatus: 'Обновить статус',
   stopMax: 'Остановить бота',

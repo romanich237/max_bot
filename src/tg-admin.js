@@ -69,6 +69,12 @@ const {
   MAX_BIO_LENGTH,
 } = require('./tg-settings');
 const { previewBioTemplate } = require('./profile-bio');
+const {
+  buildStoriesMenuText,
+  buildStoriesKeyboard,
+  toggleStoriesSetting,
+  setStoriesInterval,
+} = require('./stories-menu');
 const replyStore = require('./reply-store');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
@@ -460,11 +466,8 @@ async function sendPinnedAboutOnce(chat) {
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
-    [
-      buildToggleButton(prefix, TOGGLES[0]),
-      buildToggleButton(prefix, TOGGLES[1]),
-      buildToggleButton(prefix, TOGGLES[2]),
-    ],
+    [buildToggleButton(prefix, TOGGLES[0]), buildToggleButton(prefix, TOGGLES[1])],
+    [{ text: BUTTONS.stories, callback_data: 'stories:menu' }],
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
@@ -887,6 +890,20 @@ async function showMaxChats(chatId, messageId) {
       return;
     } catch (err) {
       console.warn('showMaxChats edit:', err.message);
+    }
+  }
+  await sendMessage(chatId, text, extra);
+}
+
+async function showStoriesMenu(chatId, messageId) {
+  const text = buildStoriesMenuText();
+  const extra = { reply_markup: buildStoriesKeyboard() };
+  if (messageId) {
+    try {
+      await editMessageText(chatId, messageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('showStoriesMenu edit:', err.message);
     }
   }
   await sendMessage(chatId, text, extra);
@@ -2014,6 +2031,32 @@ async function handleCallback(query) {
   if (data === 'maxchat:list') {
     await answerCallback(query.id, 'Чаты MAX');
     await showMaxChats(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data === 'stories:menu') {
+    await answerCallback(query.id, 'Истории');
+    await showStoriesMenu(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data.startsWith('stories:toggle:')) {
+    const key = data.slice('stories:toggle:'.length);
+    const next = toggleStoriesSetting(key);
+    const label = key === 'autoLike' ? 'Автолайк' : 'Просмотр';
+    await answerCallback(query.id, next ? `${label}: вкл` : `${label}: выкл`);
+    await showStoriesMenu(chatId, query.message.message_id);
+    return;
+  }
+
+  if (data.startsWith('stories:interval:')) {
+    const intervalMs = Number.parseInt(data.slice('stories:interval:'.length), 10);
+    if (!setStoriesInterval(intervalMs)) {
+      await answerCallback(query.id, 'Некорректный интервал', true);
+      return;
+    }
+    await answerCallback(query.id, 'Интервал обновлён');
+    await showStoriesMenu(chatId, query.message.message_id);
     return;
   }
 
