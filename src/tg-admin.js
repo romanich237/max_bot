@@ -14,6 +14,7 @@ const {
   setDefaultChatUrl,
   addMonitorChatUrl,
   removeMonitorChatUrl,
+  extractMaxChatUrlsFromText,
   setChatTitle,
   buildMaxChatsText,
   buildMaxChatsKeyboard,
@@ -1274,6 +1275,80 @@ async function sendMissingAdminNotice(adminChatId, groupChatId) {
   return true;
 }
 
+function collectMessageLinkText(message) {
+  const chunks = [message.text, message.caption].filter(Boolean);
+  const entitySources = [
+    [message.text, message.entities],
+    [message.caption, message.caption_entities],
+  ];
+
+  for (const [source, entities] of entitySources) {
+    if (!source || !Array.isArray(entities)) continue;
+    for (const entity of entities) {
+      if (entity.type === 'url') {
+        chunks.push(source.slice(entity.offset, entity.offset + entity.length));
+      } else if (entity.type === 'text_link' && entity.url) {
+        chunks.push(entity.url);
+      }
+    }
+  }
+
+  return chunks.join('\n');
+}
+
+async function handleAutoMaxChatLinks(chatId, message) {
+  const blob = collectMessageLinkText(message);
+  if (!blob.trim()) return false;
+
+  const urls = extractMaxChatUrlsFromText(blob);
+  if (!urls.length) return false;
+
+  const added = [];
+  const duplicates = [];
+  const errors = [];
+
+  for (const url of urls) {
+    const result = addMonitorChatUrl(url);
+    if (result.error) {
+      errors.push({ url, error: result.error });
+      continue;
+    }
+    if (result.duplicate) duplicates.push(url);
+    else added.push(url);
+  }
+
+  if (!added.length && !duplicates.length && !errors.length) return false;
+
+  const lines = [];
+  if (added.length) {
+    lines.push('Добавлено в мониторинг:');
+    for (const url of added) lines.push(`• <code>${escapeHtml(url)}</code>`);
+    lines.push('', 'Маршрут в Telegram — в «Чаты MAX».');
+  }
+  if (duplicates.length) {
+    if (lines.length) lines.push('');
+    lines.push('Уже отслеживаются:');
+    for (const url of duplicates) lines.push(`• <code>${escapeHtml(url)}</code>`);
+  }
+  if (errors.length) {
+    if (lines.length) lines.push('');
+    for (const item of errors) {
+      lines.push(`• <code>${escapeHtml(item.url)}</code>: ${item.error}`);
+    }
+  }
+
+  await sendMessage(
+    chatId,
+    buildEventMessage({
+      title: added.length ? CHATS.added.title : duplicates.length ? CHATS.duplicate.title : 'Не удалось добавить чат',
+      status: errors.length && !added.length ? 'fail' : 'done',
+      lines,
+    }),
+    { reply_markup: buildMaxChatsKeyboard() }
+  );
+  return true;
+}
+
 async function handleChatShared(adminChatId, shared) {
   const targetChatId = String(shared.chat_id);
   const title = shared.title || null;
@@ -1425,6 +1500,10 @@ async function handleMessage(message) {
   if (waitKey === 'browserPassword' && text && !text.startsWith('/')) {
     await handleBrowserPasswordInput(chatId, text, userMessageId);
     return;
+  }
+
+  if (!waitKey && !(text && text.startsWith('/'))) {
+    if (await handleAutoMaxChatLinks(chatId, message)) return;
   }
 
   if (waitKey === 'maxchat:add' && text && !text.startsWith('/')) {

@@ -39,6 +39,22 @@ function isMaxChatUrl(url) {
   return MAX_CHAT_URL_RE.test(normalizeMaxChatUrl(url));
 }
 
+function extractMaxChatUrlsFromText(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return [];
+
+  const urls = new Set();
+  for (const match of raw.matchAll(/https?:\/\/web\.max\.ru\/[^\s<>"']+/gi)) {
+    const normalized = normalizeMaxChatUrl(match[0].replace(/[),.;!?]+$/g, ''));
+    if (isMaxChatUrl(normalized)) urls.add(normalized);
+  }
+  for (const match of raw.matchAll(/(?:^|[\s(])web\.max\.ru\/([-\w]+)/gi)) {
+    const normalized = normalizeMaxChatUrl(`https://web.max.ru/${match[1]}`);
+    if (isMaxChatUrl(normalized)) urls.add(normalized);
+  }
+  return [...urls];
+}
+
 function normalizeChatTitle(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -1012,6 +1028,7 @@ Object.assign(module.exports, {
   BUILTIN_REQUIRED_CHATS,
   isMaxChatUrl,
   normalizeMaxChatUrl,
+  extractMaxChatUrlsFromText,
   chatIdFromUrl,
   chatLabelFromUrl,
   chatMenuLabel,

@@ -850,7 +850,9 @@ async function readUnreadCounts(page) {
     await ensureChatListVisible(page);
     await page.waitForTimeout(600);
 
-    return await page.evaluate(() => {
+    return await page.evaluate((groupSubtitlePattern) => {
+      const GROUP_SUBTITLE_RE = new RegExp(groupSubtitlePattern, 'i');
+
       function parseCount(text) {
         const raw = String(text || '')
           .trim()
@@ -862,23 +864,53 @@ async function readUnreadCounts(page) {
         return 0;
       }
 
-      function chatIdFromEl(el) {
-        if (!el) return '';
-        const blob = [el.getAttribute?.('href') || '', el.outerHTML || ''].join(' ');
-        const match = blob.match(/web\.max\.ru\/(-?\d{5,})/) || blob.match(/["'\/](-?\d{5,})["'/?#\s]/);
-        return match ? match[1] : '';
+      function looksLikeChatId(value) {
+        const text = String(value || '');
+        if (!/^-?\d{5,16}$/.test(text)) return false;
+        const abs = Math.abs(Number(text));
+        if (!Number.isFinite(abs) || abs < 10000) return false;
+        if (abs >= 1e12 && abs < 2e13) return false;
+        return true;
       }
 
-      function unreadFromRow(row) {
+      function chatIdFromBlob(blob) {
+        const text = String(blob || '');
+        const href = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,16})(?:["'/?#\s]|$)/);
+        if (href && looksLikeChatId(href[1])) return href[1];
+        return '';
+      }
+
+      function listRoot() {
+        return (
+          document.querySelector('aside .scrollListContent') ||
+          document.querySelector('aside .scrollListScrollable') ||
+          document.querySelector('aside') ||
+          document.querySelector('.scrollListContent')
+        );
+      }
+
+      function unreadFromRow(row, cell) {
         if (!row) return 0;
 
-        const badges = row.querySelectorAll(
-          '[class*="counter" i], [class*="badge" i], [class*="unread" i], [class*="count" i], [class*="notif" i], [class*="indicator" i]'
-        );
+        const subtitle = row.querySelector('.subtitleWrapper');
+        const subtitleText = (subtitle?.innerText || '').replace(/\s+/g, ' ').trim();
+        if (GROUP_SUBTITLE_RE.test(subtitleText)) {
+          /* в подписи группы часто число подписчиков — не путать с непрочитанными */
+        }
+
+        const badgeSelectors = [
+          '[class*="unread" i]',
+          '[class*="counter" i]',
+          '[class*="badge" i]',
+          '[class*="notif" i]',
+        ].join(', ');
+
         let best = 0;
-        for (const badge of badges) {
+        for (const badge of row.querySelectorAll(badgeSelectors)) {
+          if (subtitle && subtitle.contains(badge)) continue;
+          if (badge.closest('.subtitleWrapper')) continue;
           const n = parseCount(badge.innerText || badge.textContent || '');
-          if (n > best) best = n;
+          if (n > 0 && n < 10000) best = Math.max(best, n);
         }
         if (best > 0) return best;
 
@@ -889,62 +921,70 @@ async function readUnreadCounts(page) {
           '';
         const fromAria = String(attr).match(/(\d{1,5})\s*(непрочит|unread|сообщ|message)/i);
         if (fromAria) return Number(fromAria[1]);
-        const fromAttr = parseCount(attr);
-        if (fromAttr > 0 && fromAttr < 10000) return fromAttr;
 
-        if (
-          row.querySelector(
-            '[class*="unread" i], [class*="dot" i], [class*="indicator" i], [class*="mention" i]'
-          )
-        ) {
+        const unreadDot = row.querySelector(
+          '[class*="unread" i]:not(.subtitleWrapper *), [class*="mention" i]:not(.subtitleWrapper *)'
+        );
+        if (unreadDot && !subtitle?.contains(unreadDot)) {
           return 1;
         }
 
         return 0;
       }
 
+      function readTabUnreadMessages() {
+        for (const btn of document.querySelectorAll(
+          'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
+        )) {
+          if (btn.querySelector('h3.title') || btn.closest('.scrollListContent, .scrollListScrollable')) {
+            continue;
+          }
+          const label = (btn.innerText || '').trim().split('\n')[0].trim();
+          if (!/^(чаты|chats)$/i.test(label)) continue;
+          const n = parseCount(btn.innerText || btn.textContent || '');
+          if (n > 0) return n;
+          for (const badge of btn.querySelectorAll('[class*="unread" i], [class*="counter" i], [class*="badge" i]')) {
+            const count = parseCount(badge.innerText || badge.textContent || '');
+            if (count > 0) return count;
+          }
+        }
+        return 0;
+      }
+
+      const root = listRoot();
+      const scope = root || document;
       const seen = new Set();
       let chats = 0;
       let messages = 0;
 
-      const cells = document.querySelectorAll('button.cell');
-      for (const cell of cells) {
-        const heading = cell.querySelector('h3.title');
-        if (!heading) continue;
+      for (const item of scope.querySelectorAll('div.item')) {
+        if (item.closest?.('.openedChat')) continue;
+        if (root && !root.contains(item)) continue;
 
-        const item = cell.closest('div.item') || cell;
-        const title = (heading.innerText || '').trim().split('\n')[0].trim();
-        const id = chatIdFromEl(item) || chatIdFromEl(cell) || (title ? `title:${title.toLowerCase()}` : '');
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
+        const cell = item.querySelector('button.cell');
+        if (!cell?.querySelector('h3.title')) continue;
 
-        const count = unreadFromRow(item);
+        const blob = [item.getAttribute?.('href') || '', cell.getAttribute?.('href') || '', item.outerHTML || ''].join(
+          ' '
+        );
+        const chatId = chatIdFromBlob(blob);
+        if (!chatId || seen.has(chatId)) continue;
+        seen.add(chatId);
+
+        const count = unreadFromRow(item, cell);
         if (count > 0) {
           chats += 1;
           messages += count;
         }
       }
 
-      let tabCount = 0;
-      for (const btn of document.querySelectorAll(
-        'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
-      )) {
-        if (btn.querySelector('h3.title') || btn.closest('.scrollListContent, .scrollListScrollable')) continue;
-        const label = (btn.innerText || '').trim().split('\n')[0].trim();
-        if (!/^(чаты|chats)$/i.test(label)) continue;
-        tabCount = unreadFromRow(btn);
-        break;
-      }
-
-      if (tabCount > 0 && chats === 0 && messages === 0) {
-        chats = tabCount;
-        messages = tabCount;
-      } else if (tabCount > 0 && messages > 0 && Math.abs(tabCount - messages) <= 1) {
-        messages = Math.max(messages, tabCount);
+      const tabMessages = readTabUnreadMessages();
+      if (tabMessages > messages) {
+        messages = tabMessages;
       }
 
       return { chats, messages };
-    });
+    }, GROUP_SUBTITLE_PATTERN);
   } catch (err) {
     console.warn('непрочитанные MAX:', err.message);
     return { chats: 0, messages: 0 };
