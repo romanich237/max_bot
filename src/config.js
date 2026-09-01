@@ -32,25 +32,7 @@ function isPrivateChatId(chatId) {
 }
 
 function getNotificationChatIds() {
-  const t = getTelegram();
-  const ids = (t.chatIds || []).map(String);
-  if (!ids.length) return [];
-
-  const groupIds = ids.filter((id) => !isPrivateChatId(id));
-  if (!groupIds.length) return [...new Set(ids)];
-
-  const admins = getAdminChatIds().map(String);
-  const privateFromIds = ids.filter(isPrivateChatId);
-  const privateFromAdmins = admins.filter(isPrivateChatId);
-  const dmId = privateFromIds[0] || privateFromAdmins[0];
-
-  const result = [];
-  if (dmId) result.push(dmId);
-  for (const groupId of groupIds) {
-    if (!result.includes(groupId)) result.push(groupId);
-  }
-
-  return [...new Set(result)];
+  return require('./max-chats').getBoundTelegramIds();
 }
 
 function getMax() {

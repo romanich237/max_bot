@@ -35,6 +35,7 @@ const {
   cycleNotifyTarget,
   setNotifyChatIds,
   toggleNotifyChatId,
+  addNotifyChatId,
   getDefaultNotifyChatIds,
   formatNotifyDestLabel,
   listNotifyDestTitles,
@@ -42,6 +43,7 @@ const {
   setMonitorAllChatsEnabled,
   isMonitorPersonalChatsEnabled,
   setMonitorPersonalChatsEnabled,
+  telegramChatTitle,
 } = require('./max-chats');
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
@@ -84,7 +86,10 @@ const {
   buildNotifyChatKeyboard,
   buildNotifyGroupViewText,
   buildNotifyGroupViewKeyboard,
+  buildNotifyUserViewText,
+  buildNotifyUserViewKeyboard,
   buildBindGroupReplyKeyboard,
+  buildBindUserReplyKeyboard,
   bindNotificationChat,
   unbindNotificationChat,
   setDmOnlyNotifications,
@@ -94,6 +99,9 @@ const {
   isBotAdminStatus,
   buildMissingAdminKeyboard,
   NOTIFY_GROUP_REQUEST_ID,
+  NOTIFY_USER_REQUEST_ID,
+  resolveTelegramPeerFromText,
+  hasWrittenToBot,
 } = require('./tg-chats');
 const { buildEventMessage } = require('./tg-events');
 const {
@@ -148,6 +156,7 @@ let maxChatKindHandler = null;
 let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 const maxChatAddCache = new Map();
+const bindUserContext = new Map();
 const pendingProfileBioEnable = new Set();
 
 let authInputWaiter = null;
@@ -915,7 +924,7 @@ async function showMaxChatView(chatId, messageId, index, destPage = 0) {
     isPersonalMaxChat(url)
       ? 'Личный чат MAX — по умолчанию в ЛС.'
       : isGroupMaxChat(url)
-        ? 'Группа или канал MAX — выберите ЛС и нужные группы ниже.'
+        ? 'Группа или канал MAX — выберите ЛС, пользователей и нужные группы ниже.'
         : 'Куда слать в Telegram — отметьте кнопками ниже.'
   );
   const destTitles = listNotifyDestTitles(url);
@@ -929,9 +938,17 @@ async function showMaxChatView(chatId, messageId, index, destPage = 0) {
   }
   lines.push('', CHATS.notifyDestHint);
 
-  await editMessageText(chatId, messageId, lines.join('\n'), {
-    reply_markup: buildMaxChatViewKeyboard(index, destPage),
-  });
+  const text = lines.join('\n');
+  const extra = { reply_markup: buildMaxChatViewKeyboard(index, destPage) };
+  if (messageId) {
+    try {
+      await editMessageText(chatId, messageId, text, extra);
+      return;
+    } catch (err) {
+      console.warn('showMaxChatView edit:', err.message);
+    }
+  }
+  await sendMessage(chatId, text, extra);
 }
 
 async function handleMaxChatUrlInput(chatId, text, userMessageId) {
@@ -1078,11 +1095,7 @@ async function showMaxChatWherePrompt(chatId, pending) {
     pending: { url, title, kind, destIds, destPage },
   });
 
-  const selectedNames = destIds.map((id) => {
-    const known = getKnownChat(id);
-    if (isPrivateChatId(id)) return 'ЛС';
-    return known?.title || `Группа ${id}`;
-  });
+  const selectedNames = destIds.map((id) => telegramChatTitle(id, 40));
   const text = [
     `<b>${CHATS.notifyDestWhereTitle}</b>`,
     '',
@@ -1396,6 +1409,120 @@ async function handleChatShared(adminChatId, shared) {
   await replyChatInfo(adminChatId, targetChatId, title);
 }
 
+function bindUserContextOf(chatId) {
+  return bindUserContext.get(String(chatId)) || { mode: 'notify' };
+}
+
+async function beginBindUser(chatId, context = { mode: 'notify' }) {
+  bindUserContext.set(String(chatId), context);
+  waitingInput.set(String(chatId), 'notify:bindUser');
+  await sendInputPrompt(chatId, CHATS.bindUserPrompt, {
+    reply_markup: buildBindUserReplyKeyboard(),
+  });
+}
+
+async function restoreAfterBindUser(adminChatId) {
+  const ctx = bindUserContextOf(adminChatId);
+  bindUserContext.delete(String(adminChatId));
+  waitingInput.delete(String(adminChatId));
+
+  if (ctx.mode === 'view') {
+    const urls = getMonitorChatUrls();
+    const index = Number(ctx.index) || 0;
+    if (urls[index]) {
+      await showMaxChatView(adminChatId, null, index, ctx.destPage || 0);
+      return;
+    }
+  }
+
+  if (ctx.mode === 'where') {
+    const cache = maxChatAddCache.get(String(adminChatId));
+    if (cache?.pending) {
+      waitingInput.set(String(adminChatId), 'maxchat:add');
+      await showMaxChatWherePrompt(adminChatId, cache.pending);
+      return;
+    }
+  }
+
+  await showNotifyChats(adminChatId);
+}
+
+async function finishBindNotifyPeer(adminChatId, peer, { userMessageId } = {}) {
+  if (!peer?.id) {
+    await sendInputPrompt(adminChatId, 'Не удалось определить пользователя. Попробуйте ещё раз или /cancel.');
+    return false;
+  }
+
+  const targetId = String(peer.id);
+  const isGroup = !isPrivateChatId(targetId);
+  bindNotificationChat(targetId, adminChatId);
+  if (!isGroup) await refreshTelegramChat(targetId);
+
+  const ctx = bindUserContextOf(adminChatId);
+  if (ctx.mode === 'view') {
+    const urls = getMonitorChatUrls();
+    const url = urls[Number(ctx.index) || 0];
+    if (url) addNotifyChatId(url, targetId);
+  } else if (ctx.mode === 'where') {
+    const cache = maxChatAddCache.get(String(adminChatId));
+    if (cache?.pending) {
+      const destIds = [...new Set([...(cache.pending.destIds || getDefaultNotifyChatIds()).map(String), targetId])];
+      maxChatAddCache.set(String(adminChatId), {
+        ...cache,
+        pending: { ...cache.pending, destIds },
+      });
+    }
+  }
+
+  const known = getKnownChat(targetId);
+  const title = known?.title || peer.title || targetId;
+  const wrote = !isGroup && hasWrittenToBot(targetId);
+  await clearInputPrompt(adminChatId, userMessageId);
+  await sendMessage(adminChatId, isGroup ? 'Группа добавлена.' : 'Пользователь добавлен.', {
+    reply_markup: { remove_keyboard: true },
+  });
+  await sendMessage(
+    adminChatId,
+    buildEventMessage({
+      title: CHATS.bound.title,
+      status: 'done',
+      lines: [
+        isGroup
+          ? `Группа: <b>${escapeHtml(title)}</b>`
+          : `Пользователь: <b>${escapeHtml(title)}</b>`,
+        `ID: <code>${targetId}</code>`,
+        isGroup ? null : wrote ? 'Уже писал в бота — сообщения дойдут.' : 'Ещё не писал в бота — пусть откроет бота через Start.',
+        isGroup ? CHATS.bound.lines(true)[0] : CHATS.bound.lines(false)[0],
+      ].filter(Boolean),
+    })
+  );
+  await restoreAfterBindUser(adminChatId);
+  if (isGroup) await sendMissingAdminNotice(adminChatId, targetId);
+  return true;
+}
+
+async function handleUsersShared(adminChatId, shared) {
+  const users = shared.users || (shared.user_id ? [shared] : []);
+  const first = users[0];
+  const userId = first?.user_id || first?.id;
+  if (!userId) return;
+
+  recordChat({
+    id: userId,
+    first_name: first.first_name,
+    last_name: first.last_name,
+    username: first.username || null,
+    type: 'private',
+  }, { resolved: true });
+
+  if (
+    shared.request_id === NOTIFY_USER_REQUEST_ID ||
+    waitingInput.get(String(adminChatId)) === 'notify:bindUser'
+  ) {
+    await finishBindNotifyPeer(adminChatId, { id: userId, title: getKnownChat(userId)?.title });
+  }
+}
+
 async function showDiscoverChats(chatId, messageId, page = 0) {
   const chats = listKnownChats();
   const keyboard = buildDiscoverKeyboard(page);
@@ -1471,6 +1598,11 @@ async function handleMessage(message) {
     return;
   }
 
+  if (message.users_shared || message.user_shared) {
+    await handleUsersShared(chatId, message.users_shared || message.user_shared);
+    return;
+  }
+
   if (await handleAuthInput(chatId, text, message.message_id)) return;
 
   const waitKey = waitingInput.get(String(chatId));
@@ -1493,6 +1625,18 @@ async function handleMessage(message) {
       }
       return;
     }
+  }
+
+  if (waitKey === 'notify:bindUser' && text && !text.startsWith('/')) {
+    const resolved = await resolveTelegramPeerFromText(text);
+    if (resolved.error) {
+      await sendInputPrompt(chatId, `${escapeHtml(resolved.error)}\n\n${CHATS.bindUserPrompt}`, {
+        reply_markup: buildBindUserReplyKeyboard(),
+      });
+      return;
+    }
+    await finishBindNotifyPeer(chatId, resolved.chat, { userMessageId });
+    return;
   }
 
   if (waitKey === 'profileBioCity' && text && !text.startsWith('/')) {
@@ -1521,8 +1665,26 @@ async function handleMessage(message) {
 
   if (/^\/cancel$/i.test(text)) {
     const key = String(chatId);
+    const bindCtx = bindUserContext.get(key);
     pendingProfileBioEnable.delete(key);
     waitingInput.delete(key);
+    bindUserContext.delete(key);
+    if (bindCtx) {
+      await clearInputPrompt(chatId, userMessageId);
+      await sendMessage(chatId, ERRORS.cancelled, { reply_markup: { remove_keyboard: true } });
+      if (bindCtx.mode === 'view') {
+        await showMaxChatView(chatId, null, Number(bindCtx.index) || 0, bindCtx.destPage || 0);
+      } else if (bindCtx.mode === 'where') {
+        const cache = maxChatAddCache.get(key);
+        if (cache?.pending) {
+          waitingInput.set(key, 'maxchat:add');
+          await showMaxChatWherePrompt(chatId, cache.pending);
+        }
+      } else {
+        await showNotifyChats(chatId);
+      }
+      return;
+    }
     await clearMaxChatAddPrompt(chatId, userMessageId);
     await sendMessage(chatId, ERRORS.cancelled);
     return;
@@ -1530,6 +1692,7 @@ async function handleMessage(message) {
 
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    bindUserContext.delete(String(chatId));
     const firstVisit = await sendPinnedAboutOnce(message.chat);
     if (!firstVisit) {
       await sendMessage(chatId, START.welcome, {
@@ -1544,6 +1707,7 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    bindUserContext.delete(String(chatId));
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
     });
@@ -1947,6 +2111,17 @@ async function handleCallback(query) {
 
   if (data.startsWith('notify:chat:')) {
     const targetId = data.slice('notify:chat:'.length);
+    if (isPrivateChatId(targetId)) {
+      await refreshTelegramChat(targetId);
+      await answerCallback(query.id, 'Пользователь');
+      await editMessageText(
+        chatId,
+        query.message.message_id,
+        buildNotifyUserViewText(targetId),
+        { reply_markup: buildNotifyUserViewKeyboard(targetId) }
+      );
+      return;
+    }
     await refreshTelegramChat(targetId);
     const status = await getBotAdminStatus(targetId);
     await answerCallback(query.id, 'Группа');
@@ -1966,7 +2141,7 @@ async function handleCallback(query) {
       await answerCallback(query.id, result.error);
       return;
     }
-    await answerCallback(query.id, 'Группа удалена из рассылки');
+    await answerCallback(query.id, isPrivateChatId(targetId) ? 'Пользователь убран' : 'Группа удалена из рассылки');
     await showNotifyChats(chatId, query.message.message_id);
     return;
   }
@@ -1976,6 +2151,12 @@ async function handleCallback(query) {
     await sendMessage(chatId, CHATS.bindGroupPrompt, {
       reply_markup: buildBindGroupReplyKeyboard(),
     });
+    return;
+  }
+
+  if (data === 'notify:bindUser') {
+    await answerCallback(query.id, 'Пользователь');
+    await beginBindUser(chatId, { mode: 'notify' });
     return;
   }
 
@@ -2129,6 +2310,21 @@ async function handleCallback(query) {
     waitingInput.set(String(chatId), 'maxchat:add');
     await answerCallback(query.id, 'Выберите чат');
     await restoreMaxChatPickPrompt(chatId);
+    return;
+  }
+
+  if (data === 'maxchat:adduser') {
+    await answerCallback(query.id, 'Пользователь');
+    await beginBindUser(chatId, { mode: 'where' });
+    return;
+  }
+
+  if (data.startsWith('maxchat:adduser:')) {
+    const parts = data.split(':');
+    const index = Number.parseInt(parts[2], 10) || 0;
+    const destPage = Number.parseInt(parts[3], 10) || 0;
+    await answerCallback(query.id, 'Пользователь');
+    await beginBindUser(chatId, { mode: 'view', index, destPage });
     return;
   }
 

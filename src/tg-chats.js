@@ -7,6 +7,21 @@ const KNOWN_CHATS_PATH = resolveFromRoot('data/known-chats.json');
 const CHATS_PER_PAGE = 8;
 const DISCOVER_CHAT_REQUEST_ID = 1;
 const NOTIFY_GROUP_REQUEST_ID = 2;
+const NOTIFY_USER_REQUEST_ID = 3;
+
+const TME_RESERVED = new Set([
+  'share',
+  'joinchat',
+  'addstickers',
+  'socks',
+  'proxy',
+  'iv',
+  'login',
+  'confirmphone',
+  'boost',
+  'c',
+  's',
+]);
 
 function loadKnownChats() {
   try {
@@ -42,7 +57,7 @@ function getChatTypeLabel(type) {
   return map[type] || type || 'чат';
 }
 
-function recordChat(chat) {
+function recordChat(chat, options = {}) {
   if (!chat?.id) return null;
 
   const id = String(chat.id);
@@ -62,6 +77,16 @@ function recordChat(chat) {
     updatedAt: Date.now(),
   };
 
+  if (options.inbound) {
+    entry.inboundAt = Date.now();
+  } else if (prev?.inboundAt) {
+    entry.inboundAt = prev.inboundAt;
+  } else if (options.resolved) {
+    entry.inboundAt = null;
+  } else if (prev && Object.prototype.hasOwnProperty.call(prev, 'inboundAt')) {
+    entry.inboundAt = prev.inboundAt;
+  }
+
   chats[id] = entry;
   saveKnownChats(chats);
   return entry;
@@ -78,13 +103,47 @@ function recordChatFromUpdate(update) {
     });
   }
 
+  const usersShared = update.message?.users_shared || update.message?.user_shared;
+  if (usersShared) {
+    const users = usersShared.users || (usersShared.user_id ? [usersShared] : []);
+    let last = null;
+    for (const user of users) {
+      const userId = user.user_id || user.id;
+      if (!userId) continue;
+        last = recordChat({
+          id: userId,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username || null,
+          type: 'private',
+        }, { resolved: true });
+    }
+    if (last) return last;
+  }
+
   const chat =
     update.message?.chat ||
     update.callback_query?.message?.chat ||
     update.my_chat_member?.chat ||
     update.chat_member?.chat;
 
-  return recordChat(chat);
+  const inbound =
+    Boolean(update.message?.chat) &&
+    update.message.chat.type === 'private' &&
+    update.message.from &&
+    !update.message.from.is_bot &&
+    String(update.message.chat.id) === String(update.message.from.id);
+
+  return recordChat(chat, inbound ? { inbound: true } : {});
+}
+
+function hasWrittenToBot(chatId) {
+  if (!isPrivateChatId(chatId)) return false;
+  const known = getKnownChat(chatId);
+  if (!known) return false;
+  if (known.inboundAt) return true;
+  if (known.inboundAt === null) return false;
+  return known.type === 'private';
 }
 
 function listKnownChats() {
@@ -93,6 +152,75 @@ function listKnownChats() {
 
 function getKnownChat(chatId) {
   return loadKnownChats()[String(chatId)] || null;
+}
+
+function parseTelegramPeerRef(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const idMatch =
+    raw.match(/tg:\/\/user\?id=(-?\d{5,})/i) ||
+    raw.match(/^(?:user:\/\/)?(-?\d{5,})$/);
+  if (idMatch) return { kind: 'id', id: idMatch[1] };
+
+  const at = raw.match(/^@([A-Za-z][A-Za-z0-9_]{3,31})$/);
+  if (at) return { kind: 'username', username: at[1] };
+
+  const tme = raw.match(
+    /(?:https?:\/\/)?(?:t\.me|telegram\.me|telegram\.dog)\/(?:s\/)?@?([A-Za-z][A-Za-z0-9_]{3,31})(?:[/?#]|$)/i
+  );
+  if (tme && !TME_RESERVED.has(tme[1].toLowerCase())) {
+    return { kind: 'username', username: tme[1] };
+  }
+
+  return null;
+}
+
+async function resolveTelegramPeer(ref) {
+  if (!ref) return { error: 'Пришлите ссылку, @username или id пользователя.' };
+
+  const { getChat } = require('./tg-api');
+  const query = ref.kind === 'username' ? `@${ref.username}` : ref.id;
+  try {
+    const data = await getChat(query);
+    if (data.ok && data.result?.id) {
+      return { ok: true, chat: recordChat(data.result, { resolved: true }) };
+    }
+  } catch (err) {
+    if (ref.kind !== 'id') {
+      return { error: err.message || 'Не удалось найти пользователя.' };
+    }
+  }
+
+  if (ref.kind === 'id' && isPrivateChatId(ref.id)) {
+    const known = getKnownChat(ref.id);
+    const chat =
+      known ||
+      recordChat(
+        {
+          id: ref.id,
+          type: 'private',
+          title: `id ${ref.id}`,
+        },
+        { resolved: true }
+      );
+    return { ok: true, chat };
+  }
+
+  return {
+    error:
+      ref.kind === 'username'
+        ? 'Пользователь не найден. Нужна публичная ссылка t.me/… или @username.'
+        : 'Не удалось найти пользователя.',
+  };
+}
+
+async function resolveTelegramPeerFromText(text) {
+  const ref = parseTelegramPeerRef(text);
+  if (!ref) {
+    return { error: 'Пришлите ссылку t.me/…, @username или tg://user?id=…' };
+  }
+  return resolveTelegramPeer(ref);
 }
 
 function truncateButtonLabel(text, max = 42) {
@@ -187,10 +315,27 @@ function listBoundGroupIds() {
   return getNotificationChatIds().filter((id) => !isPrivateChatId(id));
 }
 
+function listBoundNotifyUserIds() {
+  const { isAdminTelegramUser } = require('./max-chats');
+  return getNotificationChatIds().filter((id) => isPrivateChatId(id) && !isAdminTelegramUser(id));
+}
+
 function listKnownGroupChats() {
   return listBoundGroupIds().map((id) => {
     const known = getKnownChat(id) || { title: 'Без названия' };
     return { ...known, id: String(id), bound: true };
+  });
+}
+
+function listKnownNotifyUsers() {
+  return listBoundNotifyUserIds().map((id) => {
+    const known = getKnownChat(id) || { title: 'Без названия', type: 'private' };
+    return {
+      ...known,
+      id: String(id),
+      bound: true,
+      wrote: hasWrittenToBot(id),
+    };
   });
 }
 
@@ -257,7 +402,12 @@ async function refreshNotificationChatStatuses() {
   const statuses = {};
   for (const id of getNotificationChatIds()) {
     if (isPrivateChatId(id)) {
-      statuses[id] = { admin: true, member: true, status: 'private' };
+      statuses[id] = {
+        admin: true,
+        member: true,
+        status: 'private',
+        wrote: hasWrittenToBot(id),
+      };
       continue;
     }
     await refreshTelegramChat(id);
@@ -271,22 +421,38 @@ function isBotAdminStatus(member) {
   return status === 'administrator' || status === 'creator';
 }
 
+function wroteMark(wrote) {
+  return wrote ? '✅ писал в бота' : '❌ ещё не писал в бота';
+}
+
 function buildNotifyChatText(adminByChat = {}) {
   const chatIds = getNotificationChatIds();
   const lines = [`<b>${CHATS.notifyHeader}</b>`, ''];
   const groups = listKnownGroupChats();
-  const dmIds = chatIds.filter(isPrivateChatId);
+  const users = listKnownNotifyUsers();
+  const { isAdminTelegramUser } = require('./max-chats');
+  const dmIds = chatIds.filter((id) => isPrivateChatId(id) && isAdminTelegramUser(id));
 
-  if (!chatIds.length && !groups.length) {
+  if (!chatIds.length && !groups.length && !users.length) {
     lines.push(CHATS.notifyEmpty);
   } else {
     const hasGroup = groups.some((chat) => chat.bound);
-    lines.push(hasGroup ? CHATS.notifyDualMode : CHATS.notifyDmMode, '');
+    lines.push(hasGroup || users.length ? CHATS.notifyDualMode : CHATS.notifyDmMode, '');
 
     for (const id of dmIds) {
       const known = getKnownChat(id);
       const title = known?.title || 'Без названия';
       lines.push(`ЛС: <b>${escapeHtml(title)}</b> (<code>${id}</code>)`);
+    }
+
+    if (users.length) {
+      lines.push('', '<b>Пользователи</b>');
+      for (const user of users) {
+        const title = user.title || 'Без названия';
+        lines.push(
+          `• <b>${escapeHtml(title)}</b> (<code>${user.id}</code>) — ${wroteMark(user.wrote)}`
+        );
+      }
     }
 
     if (groups.length) {
@@ -305,8 +471,21 @@ function buildNotifyChatText(adminByChat = {}) {
 
 async function buildNotifyChatKeyboard(adminByChat = {}) {
   const groups = listKnownGroupChats();
+  const users = listKnownNotifyUsers();
   const hasGroup = groups.length > 0;
   const rows = [];
+
+  for (const user of users) {
+    const title = user.title || 'Без названия';
+    rows.push([
+      {
+        text: truncateButtonLabel(`${user.wrote ? '✅' : '❌'} ${title}`, 28),
+        callback_data: `notify:chat:${user.id}`,
+        style: user.wrote ? 'success' : 'danger',
+      },
+      withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${user.id}` }, 'trash'),
+    ]);
+  }
 
   for (const chat of groups) {
     const title = chat.title || 'Без названия';
@@ -325,6 +504,7 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
   }
 
   rows.push([withTgEmoji({ text: BUTTONS.bindGroup, callback_data: 'notify:bindGroup' }, 'plus')]);
+  rows.push([withTgEmoji({ text: BUTTONS.bindUser, callback_data: 'notify:bindUser' }, 'plus')]);
 
   if (hasGroup) {
     rows.push([withTgEmoji({ text: BUTTONS.notifyDmOnly, callback_data: 'notify:dmOnly' }, 'kiss')]);
@@ -344,6 +524,37 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
   );
 
   return { inline_keyboard: rows };
+}
+
+function buildNotifyUserViewText(chatId) {
+  const known = getKnownChat(chatId);
+  const title = known?.title || 'Без названия';
+  const wrote = hasWrittenToBot(chatId);
+  const lines = [
+    '<b>Пользователь для уведомлений</b>',
+    '',
+    `Имя: <b>${escapeHtml(title)}</b>`,
+    `ID: <code>${escapeHtml(String(chatId))}</code>`,
+  ];
+  if (known?.username) {
+    lines.push(`Username: @${escapeHtml(known.username)}`);
+    lines.push(`Ссылка: https://t.me/${encodeURIComponent(known.username)}`);
+  }
+  lines.push(`В бота: ${wroteMark(wrote)}`);
+  if (!wrote) {
+    lines.push('', 'Пока не писал боту — Telegram не даст отправить ему личное сообщение, пока он не нажмёт Start.');
+  }
+  lines.push('', '«Удалить» убирает пользователя из рассылки.');
+  return lines.join('\n');
+}
+
+function buildNotifyUserViewKeyboard(chatId) {
+  return {
+    inline_keyboard: [
+      [withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chatId}` }, 'trash')],
+      [{ text: '« К списку', callback_data: 'action:notifyChat' }],
+    ],
+  };
 }
 
 function buildNotifyGroupViewText(chatId, status = {}) {
@@ -393,22 +604,41 @@ function buildBindGroupReplyKeyboard() {
   };
 }
 
+function buildBindUserReplyKeyboard() {
+  return {
+    keyboard: [
+      [
+        {
+          ...withTgEmoji({ text: BUTTONS.pickUser }, 'plus'),
+          request_user: {
+            request_id: NOTIFY_USER_REQUEST_ID,
+            user_is_bot: false,
+          },
+        },
+      ],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true,
+  };
+}
+
 function setDmOnlyNotifications(adminChatId) {
   const adminId = String(adminChatId);
   const admins = new Set((store.getPath(['telegram', 'adminChatIds']) || []).map(String));
   admins.add(adminId);
-  const removed = (store.getPath(['telegram', 'chatIds']) || [])
-    .map(String)
-    .filter((id) => !isPrivateChatId(id));
+  const existing = (store.getPath(['telegram', 'chatIds']) || []).map(String);
+  const extraUsers = existing.filter((id) => isPrivateChatId(id) && id !== adminId);
+  const removed = existing.filter((id) => !isPrivateChatId(id));
+  const nextIds = [...new Set([adminId, ...extraUsers])];
   store.setPath(['telegram', 'adminChatIds'], [...admins]);
-  store.setPath(['telegram', 'chatIds'], [adminId]);
+  store.setPath(['telegram', 'chatIds'], nextIds);
   try {
     const { pruneNotifyChatId } = require('./max-chats');
     for (const id of removed) pruneNotifyChatId(id);
   } catch {
     /* ignore */
   }
-  return { chatIds: [adminId] };
+  return { chatIds: nextIds };
 }
 
 function bindNotificationChat(targetChatId, adminChatId) {
@@ -440,8 +670,9 @@ function bindNotificationChat(targetChatId, adminChatId) {
 
 function unbindNotificationChat(targetChatId) {
   const targetId = String(targetChatId);
-  if (isPrivateChatId(targetId)) {
-    return { error: 'Личные сообщения из списка убрать нельзя.' };
+  const { isAdminTelegramUser } = require('./max-chats');
+  if (isAdminTelegramUser(targetId)) {
+    return { error: 'Личные сообщения администратора убрать нельзя.' };
   }
 
   const chatIds = (store.getPath(['telegram', 'chatIds']) || [])
@@ -468,8 +699,13 @@ module.exports = {
   CHATS_PER_PAGE,
   DISCOVER_CHAT_REQUEST_ID,
   NOTIFY_GROUP_REQUEST_ID,
+  NOTIFY_USER_REQUEST_ID,
   recordChat,
   recordChatFromUpdate,
+  hasWrittenToBot,
+  parseTelegramPeerRef,
+  resolveTelegramPeer,
+  resolveTelegramPeerFromText,
   listKnownChats,
   getKnownChat,
   buildDiscoverKeyboard,
@@ -480,10 +716,13 @@ module.exports = {
   buildNotifyChatKeyboard,
   buildNotifyGroupViewText,
   buildNotifyGroupViewKeyboard,
+  buildNotifyUserViewText,
+  buildNotifyUserViewKeyboard,
   buildMissingAdminText,
   buildMissingAdminKeyboard,
   buildBotAdminInviteUrl,
   buildBindGroupReplyKeyboard,
+  buildBindUserReplyKeyboard,
   bindNotificationChat,
   unbindNotificationChat,
   listKnownGroupChats,

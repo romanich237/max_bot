@@ -248,25 +248,28 @@ function isPrivateTelegramId(chatId) {
   return Number(chatId) > 0;
 }
 
+function getAdminTelegramUserIds() {
+  const t = store.getPath(['telegram']) || {};
+  const admins = (t.adminChatIds || []).map(String).filter(isPrivateTelegramId);
+  if (admins.length) return [...new Set(admins)];
+  return [...new Set((t.chatIds || []).map(String).filter(isPrivateTelegramId))];
+}
+
+function isAdminTelegramUser(chatId) {
+  return getAdminTelegramUserIds().includes(String(chatId || ''));
+}
+
 function getBoundTelegramIds() {
   const t = store.getPath(['telegram']) || {};
-  const ids = (t.chatIds || []).map(String);
-  if (!ids.length) return [];
-
-  const groupIds = ids.filter((id) => !isPrivateTelegramId(id));
-  if (!groupIds.length) return [...new Set(ids)];
-
-  const admins = (t.adminChatIds || []).map(String);
-  const privateFromIds = ids.filter(isPrivateTelegramId);
-  const privateFromAdmins = admins.filter(isPrivateTelegramId);
-  const dmId = privateFromIds[0] || privateFromAdmins[0];
-
+  const ids = (t.chatIds || []).map(String).filter(Boolean);
   const result = [];
-  if (dmId) result.push(dmId);
-  for (const groupId of groupIds) {
-    if (!result.includes(groupId)) result.push(groupId);
+  for (const id of ids) {
+    if (!result.includes(id)) result.push(id);
   }
-  return [...new Set(result)];
+  for (const id of getAdminTelegramUserIds()) {
+    if (!result.includes(id)) result.unshift(id);
+  }
+  return result;
 }
 
 function notifyTargetLabel(target) {
@@ -333,9 +336,11 @@ function hasExplicitNotifyChatIds(url) {
 
 function idsForNotifyTarget(target) {
   const bound = getBoundTelegramIds();
-  if (target === 'dm') return bound.filter(isPrivateTelegramId);
-  if (target === 'group') return bound.filter((id) => !isPrivateTelegramId(id));
-  return bound;
+  const groups = bound.filter((id) => !isPrivateTelegramId(id));
+  const adminDm = bound.filter(isAdminTelegramUser);
+  if (target === 'dm') return adminDm;
+  if (target === 'group') return groups;
+  return [...adminDm, ...groups];
 }
 
 function inferNotifyTarget(ids) {
@@ -381,7 +386,16 @@ function toggleNotifyChatId(url, chatId) {
 }
 
 function getDefaultNotifyChatIds() {
-  return getBoundTelegramIds().filter(isPrivateTelegramId);
+  return getBoundTelegramIds().filter(isAdminTelegramUser);
+}
+
+function addNotifyChatId(url, chatId) {
+  const bound = getBoundTelegramIds();
+  const id = String(chatId || '');
+  if (!id || !bound.includes(id)) return { error: 'Чат Telegram не найден.' };
+  const selected = new Set(getNotifyChatIdsForMaxChat(url).map(String));
+  selected.add(id);
+  return setNotifyChatIds(url, bound.filter((item) => selected.has(item)));
 }
 
 function applyNotifyRouting(url, options = {}) {
@@ -426,75 +440,96 @@ function pruneNotifyChatId(chatId) {
   if (changed) store.setPath(['max', 'notifyChatIds'], map);
 }
 
-function telegramChatTitle(id, max = 28) {
-  if (isPrivateTelegramId(id)) return 'ЛС';
+function knownChatTitle(id) {
   try {
     const { getKnownChat } = require('./tg-chats');
     const known = getKnownChat(id);
-    if (known?.title && known.title !== 'Без названия') {
-      return truncateButtonText(known.title, max);
-    }
+    if (known?.title && known.title !== 'Без названия') return known.title;
+    if (known?.username) return `@${known.username}`;
   } catch {
     /* ignore */
   }
+  return '';
+}
+
+function userWroteToBot(id) {
+  try {
+    const { hasWrittenToBot } = require('./tg-chats');
+    return hasWrittenToBot(id);
+  } catch {
+    return false;
+  }
+}
+
+function telegramChatTitle(id, max = 28) {
+  if (isAdminTelegramUser(id)) return 'ЛС';
+  const known = knownChatTitle(id);
+  if (known) return truncateButtonText(known, max);
+  if (isPrivateTelegramId(id)) return truncateButtonText(`Пользователь ${id}`, max);
   return truncateButtonText(`Группа ${id}`, max);
+}
+
+function notifyDestTitle(id, max = 60) {
+  if (isAdminTelegramUser(id)) return 'ЛС';
+  const name = telegramChatTitle(id, max);
+  if (!isPrivateTelegramId(id)) return name;
+  return userWroteToBot(id) ? `${name} · писал в бота` : `${name} · ещё не писал в бота`;
+}
+
+function destButtonTitle(id) {
+  if (isAdminTelegramUser(id)) return 'ЛС';
+  if (!isPrivateTelegramId(id)) return telegramChatTitle(id, 28);
+  const name = telegramChatTitle(id, 20);
+  return truncateButtonText(`${userWroteToBot(id) ? '✅' : '❌'} ${name}`, 28);
+}
+
+function describeNotifyDest(id) {
+  const sid = String(id);
+  if (isAdminTelegramUser(sid)) return { id: sid, kind: 'admin', title: destButtonTitle(sid) };
+  if (isPrivateTelegramId(sid)) return { id: sid, kind: 'user', title: destButtonTitle(sid) };
+  return { id: sid, kind: 'group', title: destButtonTitle(sid) };
 }
 
 function formatNotifyDestLabel(url, max = 42) {
   const ids = getNotifyChatIdsForMaxChat(url);
   if (!ids.length) return 'никуда';
-  const names = [];
-  let listedDm = false;
-  for (const id of ids) {
-    if (isPrivateTelegramId(id)) {
-      if (!listedDm) {
-        names.push('ЛС');
-        listedDm = true;
-      }
-      continue;
-    }
-    names.push(telegramChatTitle(id, 18));
-  }
+  const names = ids.map((id) => telegramChatTitle(id, 18));
   return truncateButtonText(names.join(', ') || 'никуда', max);
 }
 
 function listNotifyDestTitles(url) {
-  return getNotifyChatIdsForMaxChat(url).map((id) => telegramChatTitle(id, 60));
+  return getNotifyChatIdsForMaxChat(url).map((id) => notifyDestTitle(id, 60));
 }
 
 function destToggleButton(item, on, callbackData) {
   const button = {
-    text: item.isDm ? 'ЛС' : item.title,
+    text: item.title,
     callback_data: callbackData,
   };
   if (on) button.style = 'success';
   if (on) return withTgEmoji(button, 'check');
-  if (!item.isDm) return withTgEmoji(button, 'group');
+  if (item.kind === 'group') return withTgEmoji(button, 'group');
   return button;
 }
 
 function buildTelegramDestRows(selectedIds, callbackForId, page = 0) {
   const selected = new Set((selectedIds || []).map(String));
-  const dests = getBoundTelegramIds().map((id) => ({
-    id: String(id),
-    isDm: isPrivateTelegramId(id),
-    title: telegramChatTitle(id, 28),
-  }));
-  const dm = dests.filter((item) => item.isDm);
-  const groups = dests.filter((item) => !item.isDm);
-  const totalPages = Math.max(1, Math.ceil(groups.length / DEST_PAGE_SIZE) || 1);
+  const dests = getBoundTelegramIds().map(describeNotifyDest);
+  const sticky = dests.filter((item) => item.kind === 'admin');
+  const rest = dests.filter((item) => item.kind !== 'admin');
+  const totalPages = Math.max(1, Math.ceil(rest.length / DEST_PAGE_SIZE) || 1);
   const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
-  const slice = groups.slice(safePage * DEST_PAGE_SIZE, (safePage + 1) * DEST_PAGE_SIZE);
+  const slice = rest.slice(safePage * DEST_PAGE_SIZE, (safePage + 1) * DEST_PAGE_SIZE);
   const rows = [];
 
-  for (const item of dm) {
+  for (const item of sticky) {
     rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
   }
   for (const item of slice) {
     rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
   }
 
-  return { rows, page: safePage, totalPages, groupsCount: groups.length, destCount: dests.length };
+  return { rows, page: safePage, totalPages, groupsCount: rest.length, destCount: dests.length };
 }
 function chatMenuLabel(url) {
   const title = chatLabelFromUrl(url) || truncateUrl(url, 22);
@@ -782,7 +817,7 @@ function buildMaxChatsText() {
   }
 
   lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «отправлять».', '');
-  lines.push('Нажмите чат MAX — там можно выбрать ЛС и нужные группы Telegram.', '');
+  lines.push('Нажмите чат MAX — там можно выбрать ЛС, пользователей и группы Telegram.', '');
 
   for (const url of urls) {
     const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
@@ -978,7 +1013,7 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
 
 function buildMaxChatPickWhereKeyboard(selectedIds = [], page = 0) {
   const selected = (selectedIds || []).map(String);
-  const { rows, totalPages, page: safePage, destCount } = buildTelegramDestRows(
+  const { rows, totalPages, page: safePage } = buildTelegramDestRows(
     selected,
     (id, destPage) => `maxchat:adddest:${destPage}:${id}`,
     page
@@ -991,9 +1026,8 @@ function buildMaxChatPickWhereKeyboard(selectedIds = [], page = 0) {
     `maxchat:adddestpage:${safePage + 1}`
   );
   if (nav) rows.push(nav);
-  if (!destCount) {
-    rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
-  }
+  rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
+  rows.push([{ text: 'Добавить пользователя', callback_data: 'maxchat:adduser' }]);
   rows.push([{ text: 'Готово', callback_data: 'maxchat:addwhere:done', style: 'success' }]);
   rows.push([{ text: '« Назад', callback_data: 'maxchat:pickback' }]);
   return { inline_keyboard: rows };
@@ -1019,6 +1053,7 @@ function buildMaxChatViewKeyboard(index, destPage = 0) {
     );
     if (nav) rows.push(nav);
     rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
+    rows.push([{ text: 'Добавить пользователя', callback_data: `maxchat:adduser:${index}:${safePage}` }]);
   }
   const actions = url ? [...buildMaxChatActionButtons(url, index)] : [];
   if (url && canRemoveMaxChat(url, urls)) actions.push(maxChatDeleteButton(index));
@@ -1070,6 +1105,8 @@ Object.assign(module.exports, {
   isChatForwardEnabled,
   setChatForwardEnabled,
   setRequiredChatForwardEnabled,
+  getBoundTelegramIds,
+  isAdminTelegramUser,
   getNotifyTarget,
   setNotifyTarget,
   cycleNotifyTarget,
@@ -1077,9 +1114,11 @@ Object.assign(module.exports, {
   getNotifyChatIdsForMaxChat,
   setNotifyChatIds,
   toggleNotifyChatId,
+  addNotifyChatId,
   getDefaultNotifyChatIds,
   formatNotifyDestLabel,
   listNotifyDestTitles,
+  telegramChatTitle,
   pruneNotifyChatId,
   ensureRequiredChats,
   scopedMessageKey,
