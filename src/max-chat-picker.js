@@ -7,6 +7,8 @@ const {
   setChatTitle,
   getChatTitle,
   getChatTitles,
+  findChatUrlByTitle,
+  hydrateChatsWithStoredTitles,
   isRequiredChatUrl,
   GROUP_SUBTITLE_SELECTOR,
   GROUP_SUBTITLE_PATTERN,
@@ -658,6 +660,9 @@ async function ensureChatTitleFromPage(page, chatUrl) {
 }
 
 async function resolveChatUrlByTitle(page, title) {
+  const stored = findChatUrlByTitle(title);
+  if (stored) return stored;
+
   const query = normalizeChatTitle(title);
   if (!query) return null;
 
@@ -699,6 +704,9 @@ async function resolveChatUrlByTitle(page, title) {
 
   const url = normalizePageChatUrl(page.url());
   if (!url || url === MAX_HOME_URL.replace(/\/$/, '')) return null;
+  if (query && !titleOwnedByOtherChat(query, url)) {
+    setChatTitle(url, query);
+  }
   return url;
 }
 
@@ -881,6 +889,7 @@ async function listMaxChats(page) {
   }
 
   const screenshot = await captureMaxChatListScreenshot(page);
+  chats = hydrateChatsWithStoredTitles(chats);
   mergeChatTitles(chats.filter((chat) => chat.url && chat.title));
   return { chats, screenshot };
 }
@@ -911,10 +920,16 @@ function resolveMaxChatInput(text, chats = []) {
   }
 
   if (isMaxChatUrl(trimmed)) {
-    return { url: normalizeMaxChatUrl(trimmed) };
+    const url = normalizeMaxChatUrl(trimmed);
+    return { url, title: getChatTitle(url) || '' };
   }
 
-  const match = resolveMaxChatByName(chats, trimmed);
+  const storedUrl = findChatUrlByTitle(trimmed);
+  if (storedUrl) {
+    return { url: storedUrl, title: getChatTitle(storedUrl) || trimmed };
+  }
+
+  const match = resolveMaxChatByName(hydrateChatsWithStoredTitles(chats), trimmed);
   if (!match) {
     return { error: 'not_found' };
   }
@@ -950,6 +965,7 @@ async function discoverMaxChatsForMonitor(page) {
     chats = await collectAllMaxChats(page);
   }
 
+  chats = hydrateChatsWithStoredTitles(chats);
   mergeChatTitles(chats.filter((chat) => chat.url && chat.title));
 
   const urls = [...new Set(chats.map((chat) => normalizeMaxChatUrl(chat.url)).filter(Boolean))];

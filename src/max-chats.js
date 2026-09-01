@@ -225,6 +225,53 @@ function removeChatTitle(url) {
   store.setPath(['max', 'chatTitles'], titles);
 }
 
+function findChatUrlByTitle(title) {
+  const needle = normalizeChatTitle(title).toLowerCase();
+  if (!needle || isJunkChatTitle(title) || /^https:\/\/web\.max\.ru\//i.test(title)) return '';
+
+  const matches = [];
+  for (const [url, stored] of Object.entries(getChatTitles())) {
+    if (normalizeChatTitle(stored).toLowerCase() === needle) matches.push(url);
+  }
+  return matches.length === 1 ? matches[0] : '';
+}
+
+function hydrateChatsWithStoredTitles(chats = []) {
+  const titles = getChatTitles();
+  const byName = new Map();
+  for (const [url, stored] of Object.entries(titles)) {
+    const key = normalizeChatTitle(stored).toLowerCase();
+    if (!key) continue;
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(url);
+  }
+
+  return (chats || []).map((chat) => {
+    const next = { ...chat };
+    const url = normalizeMaxChatUrl(next.url);
+    const listedTitle = normalizeChatTitle(next.title);
+    const listedIsUrl = !listedTitle || isJunkChatTitle(listedTitle) || /^https:\/\/web\.max\.ru\//i.test(listedTitle);
+
+    if (url) {
+      next.url = url;
+      if (listedTitle && !listedIsUrl) {
+        setChatTitle(url, listedTitle);
+        next.title = listedTitle;
+      } else if (titles[url]) {
+        next.title = titles[url];
+      }
+    } else if (listedTitle && !listedIsUrl) {
+      const urls = byName.get(listedTitle.toLowerCase()) || [];
+      if (urls.length === 1) {
+        next.url = urls[0];
+        next.title = titles[urls[0]] || listedTitle;
+      }
+    }
+
+    return next;
+  });
+}
+
 function mergeChatTitles(entries = []) {
   for (const entry of entries) {
     if (
@@ -951,10 +998,12 @@ function isJunkChatTitle(title) {
 }
 
 function pickButtonLabel(chat) {
-  const url = String(chat?.url || '').trim();
-  if (url) return truncateButtonText(url);
   const title = String(chat?.title || '').replace(/\s+/g, ' ').trim();
-  if (title && !isJunkChatTitle(title)) return truncateButtonText(title);
+  if (title && !isJunkChatTitle(title) && !/^https:\/\/web\.max\.ru\//i.test(title)) {
+    return truncateButtonText(title);
+  }
+  const url = String(chat?.url || '').trim();
+  if (url) return truncateButtonText(chatLabelFromUrl(url) || url);
   return '';
 }
 
@@ -966,9 +1015,10 @@ function isSelectedPickChat(url) {
 
 function uniquePickItems(chats = []) {
   const chosen = new Map();
-  for (let i = 0; i < chats.length; i++) {
-    const url = String(chats[i]?.url || '').trim();
-    const title = pickButtonLabel(chats[i]);
+  const hydrated = hydrateChatsWithStoredTitles(chats);
+  for (let i = 0; i < hydrated.length; i++) {
+    const url = String(hydrated[i]?.url || '').trim();
+    const title = pickButtonLabel(hydrated[i]);
     if (!title) continue;
     const key = url || title.toLowerCase();
     const prev = chosen.get(key);
@@ -1092,6 +1142,8 @@ Object.assign(module.exports, {
   setChatTitle,
   removeChatTitle,
   mergeChatTitles,
+  findChatUrlByTitle,
+  hydrateChatsWithStoredTitles,
   truncateUrl,
   getDefaultChatUrl,
   getMonitorChatUrls,

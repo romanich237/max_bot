@@ -16,6 +16,7 @@ const {
   removeMonitorChatUrl,
   extractMaxChatUrlsFromText,
   setChatTitle,
+  findChatUrlByTitle,
   buildMaxChatsText,
   buildMaxChatsKeyboard,
   buildMaxChatPickKeyboard,
@@ -1231,11 +1232,15 @@ async function handleMaxChatPick(chatId, chat) {
   const title = String(chat?.title || '').trim();
   const kind = chat?.kind === 'personal' || chat?.kind === 'group' ? chat.kind : '';
 
+  if (!url && title) {
+    url = findChatUrlByTitle(title) || '';
+  }
+
   if (url) {
     if (title && !/^https:\/\/web\.max\.ru\//i.test(title)) setChatTitle(url, title);
     if (kind) setChatKind(url, kind);
     waitingInput.set(String(chatId), 'maxchat:add');
-    await proceedMaxChatAdd(chatId, { url, title, kind });
+    await proceedMaxChatAdd(chatId, { url, title: title || chatLabelFromUrl(url), kind });
     return true;
   }
 
@@ -2254,9 +2259,12 @@ async function handleCallback(query) {
     const url = `https://web.max.ru/${id}`;
     const cache = maxChatAddCache.get(key);
     const fromCache = cache?.chats?.find((item) => chatIdFromUrl(item.url) === id);
+    const listed = String(fromCache?.title || '').trim();
+    const title =
+      listed && !/^https:\/\/web\.max\.ru\//i.test(listed) ? listed : chatLabelFromUrl(url);
     const chat = {
       url,
-      title: fromCache?.title || '',
+      title,
       kind: fromCache?.kind,
     };
 

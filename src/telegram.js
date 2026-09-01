@@ -43,9 +43,8 @@ function displayAuthor(author) {
 }
 
 function formatAuthorLine(author) {
-  const clean = displayAuthor(author);
-  if (!clean) return '';
-  return `<b>${escapeHtml(clean)}</b>`;
+  const clean = displayAuthor(author) || 'неизвестно';
+  return `Кто написал: <b>${escapeHtml(clean)}</b>`;
 }
 
 function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {}) {
@@ -54,9 +53,11 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
   const showServiceHeader = telegram.showServiceHeader ?? false;
   const parts = [];
 
-  if (meta.maxChatUrl) {
-    parts.push(`Чат: <b>${escapeHtml(chatLabelFromUrl(meta.maxChatUrl))}</b>`, '');
+  const chatName = meta.maxChatUrl ? chatLabelFromUrl(meta.maxChatUrl) : '';
+  if (chatName) {
+    parts.push(`Чат: <b>${escapeHtml(chatName)}</b>`);
   }
+  parts.push(formatAuthorLine(message.author));
 
   if (showServiceHeader) {
     const maxName = getMaxDisplayName();
@@ -64,27 +65,26 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
     parts.push(
       isCatchUp
         ? `📩 <b>Сообщение из MAX</b>${account}`
-        : `📩 <b>Новое сообщение из MAX</b>${account}`,
-      ''
+        : `📩 <b>Новое сообщение из MAX</b>${account}`
     );
   }
-
-  const authorLine = formatAuthorLine(message.author);
-  if (authorLine) parts.push(authorLine);
 
   if (!sendContext.useNativeReply) {
     const replyText = formatReply(message.reply);
     if (replyText) parts.push(replyText);
   }
 
-  if (message.body) parts.push(escapeHtml(message.body));
+  const header = parts.filter(Boolean).join('\n');
+  const tail = [];
+
+  if (message.body) tail.push(escapeHtml(message.body));
 
   if (showTime && (message.time || message.date)) {
     const when = [message.date, message.clock || message.time].filter(Boolean).join(' ');
-    parts.push(`<i>${escapeHtml(when)}</i>`);
+    tail.push(`<i>${escapeHtml(when)}</i>`);
   }
 
-  return parts.filter((p) => p !== '').join('\n');
+  return [header, ...tail].filter(Boolean).join('\n\n');
 }
 
 function replyMarkupForChat(chatId, replyMarkup) {
@@ -193,7 +193,10 @@ async function callTelegram(method, fields, files = {}, sendContext = {}) {
         if (markup) chatFields.reply_markup = stripReplyMarkup(markup);
 
         const replyTo = sendContext.replyToByChat?.[String(id)];
-        if (replyTo) chatFields.reply_to_message_id = replyTo;
+        if (replyTo) {
+          chatFields.reply_to_message_id = replyTo;
+          chatFields.allow_sending_without_reply = true;
+        }
 
         for (const [key, value] of Object.entries(chatFields)) {
           appendFormField(form, key, value);
@@ -261,7 +264,10 @@ async function sendPhotoGroup(message, photoFiles, isCatchUp, sendContext, meta 
         form.append('media', JSON.stringify(media));
 
         const replyTo = sendContext.replyToByChat?.[String(chatId)];
-        if (replyTo) form.append('reply_to_message_id', String(replyTo));
+        if (replyTo) {
+          form.append('reply_to_message_id', String(replyTo));
+          form.append('allow_sending_without_reply', 'true');
+        }
 
         const url = `https://api.telegram.org/bot${token}/sendMediaGroup`;
         const data = await postTelegramForm(url, form, sendContext, chatId);

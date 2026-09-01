@@ -515,8 +515,10 @@ async function parseMessages(page) {
           mark.querySelector('.name .text')?.innerText?.trim() ||
           '';
 
-        const replyBody =
-          mark.querySelector('.text.svelte-m3np2o')?.innerText?.trim() || '';
+        const texts = [...mark.querySelectorAll('.text')]
+          .map((el) => (el.innerText || '').trim())
+          .filter((t) => t && t !== replyAuthor && !/^\d{1,2}:\d{2}$/.test(t));
+        const replyBody = texts[texts.length - 1] || '';
 
         const isVoice = !!mark.querySelector('.attach, [class*="attach"]');
 
