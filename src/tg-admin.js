@@ -388,7 +388,7 @@ function buildStatusText() {
     for (const url of monitorUrls) {
       const title = escapeHtml(chatLabelFromUrl(url));
       const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
-      const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
+      const forward = isChatForwardEnabled(url) ? 'отправлять' : 'не отправлять';
       const where = escapeHtml(formatNotifyDestLabel(url));
       lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
     }
@@ -463,7 +463,6 @@ function buildMenuKeyboard() {
     ],
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
-      { text: BUTTONS.notifyChat, callback_data: 'action:notifyChat' },
     ],
   ];
 

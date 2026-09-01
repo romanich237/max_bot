@@ -761,13 +761,13 @@ function buildMaxChatsText() {
     return lines.join('\n');
   }
 
-  lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
+  lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «отправлять».', '');
   lines.push('Нажмите чат MAX — там можно выбрать ЛС и нужные группы Telegram.', '');
 
   for (const url of urls) {
     const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
     const title = escapeHtml(chatLabelFromUrl(url));
-    const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
+    const forward = isChatForwardEnabled(url) ? 'отправлять' : 'не отправлять';
     const where = escapeHtml(formatNotifyDestLabel(url));
     lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
   }
@@ -823,7 +823,7 @@ function maxChatForwardButton(url, index) {
   const forwardOn = isChatForwardEnabled(url);
   return withOnOffEmoji(
     {
-      text: 'Слать',
+      text: 'Отправлять',
       callback_data: `maxchat:forward:${index}`,
       style: forwardOn ? 'success' : 'danger',
     },
