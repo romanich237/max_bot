@@ -173,6 +173,50 @@ const bindUserContext = new Map();
 const userSettingsContext = new Map();
 const pendingProfileBioEnable = new Set();
 
+function waitingInputFile() {
+  return path.join(getSettings().dataDir, 'waiting-input.json');
+}
+
+function persistWaitingInput() {
+  try {
+    fs.mkdirSync(getSettings().dataDir, { recursive: true });
+    fs.writeFileSync(waitingInputFile(), `${JSON.stringify(Object.fromEntries(waitingInput))}\n`);
+  } catch (err) {
+    console.warn('waitingInput:', err.message);
+  }
+}
+
+const waitingInputSet = waitingInput.set.bind(waitingInput);
+const waitingInputDelete = waitingInput.delete.bind(waitingInput);
+waitingInput.set = (key, value) => {
+  const result = waitingInputSet(key, value);
+  persistWaitingInput();
+  return result;
+};
+waitingInput.delete = (key) => {
+  const result = waitingInputDelete(key);
+  persistWaitingInput();
+  return result;
+};
+
+function loadWaitingInput() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(waitingInputFile(), 'utf8'));
+    if (!raw || typeof raw !== 'object') return;
+    for (const [key, value] of Object.entries(raw)) {
+      if (key && value) waitingInputSet(String(key), String(value));
+    }
+  } catch {
+    /* nop */
+  }
+}
+
+function looksLikeBioTemplate(text) {
+  return /\{(час|минута|день|месяц|погода|температура|дни_до|дней_до|дни_до_события|непрочитанные_чаты|непрочитанные_сообщения|чаты|сообщения)\}/i.test(
+    String(text || '')
+  );
+}
+
 let authInputWaiter = null;
 
 function registerAuthInputWaiter(waiter) {
@@ -898,7 +942,6 @@ async function handleProfileBioCityInput(chatId, text, userMessageId) {
   }
 
   waitingInput.delete(key);
-  await clearInputPrompt(chatId, userMessageId);
 
   const saved = SAVED.city(escapeHtml(city));
   const lines = [...saved.lines];
@@ -908,9 +951,10 @@ async function handleProfileBioCityInput(chatId, text, userMessageId) {
 
   await sendMessage(
     chatId,
-    buildEventMessage({ ...saved, status: 'done', lines: [...lines, '', buildStatusText()] }),
+    buildEventMessage({ ...saved, status: 'done', lines }),
     { reply_markup: buildMenuKeyboard() }
   );
+  await clearInputPrompt(chatId, userMessageId);
   return true;
 }
 
@@ -924,7 +968,18 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
     return false;
   }
 
-  const preview = previewBioTemplate(template, getProfileBio().city);
+  let preview;
+  try {
+    preview = previewBioTemplate(template, getProfileBio().city);
+  } catch (err) {
+    await sendInputPrompt(
+      chatId,
+      `Не удалось разобрать шаблон: ${escapeHtml(err.message)}\n\n${buildBioTemplatePromptText()}`,
+      { reply_markup: buildBioTemplateKeyboard() }
+    );
+    return false;
+  }
+
   if (preview.length > MAX_BIO_LENGTH) {
     await deleteMessageQuiet(chatId, userMessageId);
     await sendInputPrompt(
@@ -935,29 +990,49 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
     return false;
   }
 
-  saveProfileBioTemplate(template);
-  waitingInput.delete(String(chatId));
-  await clearInputPrompt(chatId, userMessageId);
-  const bio = getProfileBio();
-  const eventLine = bio.eventDate
-    ? `Событие: <code>${escapeHtml(formatEventDateRu(bio.eventDate))}</code> · дней до: <code>${daysUntilEvent(bio.eventDate)}</code>`
-    : null;
-  await sendMessage(
-    chatId,
-    buildEventMessage({
+  try {
+    saveProfileBioTemplate(template);
+    waitingInput.delete(String(chatId));
+    const bio = getProfileBio();
+    const eventLine = bio.eventDate
+      ? `Событие: <code>${escapeHtml(formatEventDateRu(bio.eventDate))}</code> · дней до: <code>${daysUntilEvent(bio.eventDate)}</code>`
+      : null;
+    const payload = buildEventMessage({
       title: SAVED.template(escapeHtml(preview.text)).title,
       status: 'done',
       lines: [
         `Шаблон: <code>${escapeHtml(template)}</code>`,
         `Пример: <code>${escapeHtml(preview.text)}</code> (${preview.length} симв.)`,
         eventLine,
-        '',
-        buildStatusText(),
       ].filter((line) => line != null),
-    }),
-    { reply_markup: buildMenuKeyboard() }
-  );
-  return true;
+    });
+
+    let sent;
+    try {
+      sent = await sendMessage(chatId, payload, { reply_markup: buildMenuKeyboard() });
+    } catch (err) {
+      sent = { ok: false, description: err.message };
+    }
+    if (!sent?.ok) {
+      sent = await sendMessage(
+        chatId,
+        `✅ Шаблон сохранён.\n<pre>${escapeHtml(template)}</pre>`,
+        { reply_markup: buildMenuKeyboard() }
+      ).catch((err) => ({ ok: false, description: err.message }));
+    }
+    if (!sent?.ok) {
+      await sendMessage(chatId, 'Шаблон сохранён.').catch(() => {});
+    }
+    await clearInputPrompt(chatId, userMessageId);
+    return true;
+  } catch (err) {
+    console.error('profileBioTemplate:', err.message);
+    await sendMessage(
+      chatId,
+      `Не удалось сохранить шаблон: ${escapeHtml(err.message)}`
+    ).catch(() => {});
+    return false;
+  }
 }
 
 function buildAuthInputAcceptedMessage(waiter) {
@@ -1895,10 +1970,18 @@ async function handleMessage(message) {
   }
 
   const waitKeyPeek = waitingInput.get(String(chatId));
+  const settingsWait =
+    waitKeyPeek === 'profileBioTemplate' || waitKeyPeek === 'profileBioCity';
   const replyHasPhoto = Boolean(
     waitKeyPeek?.startsWith('reply:') && collectTelegramImageFileIds(message).length
   );
-  if (!replyHasPhoto && (await handleAuthInput(chatId, text, message.message_id))) return;
+  if (
+    !replyHasPhoto &&
+    !settingsWait &&
+    (await handleAuthInput(chatId, text, message.message_id))
+  ) {
+    return;
+  }
 
   const waitKey = waitingInput.get(String(chatId));
   const userMessageId = message.message_id;
@@ -1929,7 +2012,12 @@ async function handleMessage(message) {
     return;
   }
 
-  if (waitKey === 'profileBioTemplate' && text && !text.startsWith('/')) {
+  if (
+    text &&
+    !text.startsWith('/') &&
+    (waitKey === 'profileBioTemplate' ||
+      ((!waitKey || waitKey === 'maxchat:add') && looksLikeBioTemplate(text)))
+  ) {
     await handleProfileBioTemplateInput(chatId, text, userMessageId);
     return;
   }
@@ -3056,6 +3144,7 @@ function startTelegramAdmin() {
   }
 
   console.log('Панель управления в Telegram запущена (/menu)');
+  loadWaitingInput();
   deleteWebhook()
     .then(() => registerBotCommands())
     .catch((err) => {
