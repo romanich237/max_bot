@@ -397,8 +397,17 @@ function setDmOnlyNotifications(adminChatId) {
   const adminId = String(adminChatId);
   const admins = new Set((store.getPath(['telegram', 'adminChatIds']) || []).map(String));
   admins.add(adminId);
+  const removed = (store.getPath(['telegram', 'chatIds']) || [])
+    .map(String)
+    .filter((id) => !isPrivateChatId(id));
   store.setPath(['telegram', 'adminChatIds'], [...admins]);
   store.setPath(['telegram', 'chatIds'], [adminId]);
+  try {
+    const { pruneNotifyChatId } = require('./max-chats');
+    for (const id of removed) pruneNotifyChatId(id);
+  } catch {
+    /* ignore */
+  }
   return { chatIds: [adminId] };
 }
 
@@ -439,6 +448,12 @@ function unbindNotificationChat(targetChatId) {
     .map(String)
     .filter((id) => id !== targetId);
   store.setPath(['telegram', 'chatIds'], chatIds);
+  try {
+    const { pruneNotifyChatId } = require('./max-chats');
+    pruneNotifyChatId(targetId);
+  } catch {
+    /* ignore */
+  }
   return { ok: true, chatIds };
 }
 

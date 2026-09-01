@@ -30,9 +30,13 @@ const {
   setChatKind,
   isChatForwardEnabled,
   setChatForwardEnabled,
-  getNotifyTarget,
   setNotifyTarget,
   cycleNotifyTarget,
+  setNotifyChatIds,
+  toggleNotifyChatId,
+  getDefaultNotifyChatIds,
+  formatNotifyDestLabel,
+  listNotifyDestTitles,
   isMonitorAllChatsEnabled,
   setMonitorAllChatsEnabled,
   isMonitorPersonalChatsEnabled,
@@ -396,8 +400,7 @@ function buildStatusText() {
       const title = escapeHtml(chatLabelFromUrl(url));
       const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
       const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
-      const where =
-        getNotifyTarget(url) === 'dm' ? 'ЛС' : getNotifyTarget(url) === 'group' ? 'группа' : 'ЛС+группа';
+      const where = escapeHtml(formatNotifyDestLabel(url));
       lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
     }
   }
@@ -875,11 +878,11 @@ async function handleMyChatMember(memberUpdate) {
   }
 }
 
-async function refreshMaxChatPanel(chatId, query, index) {
+async function refreshMaxChatPanel(chatId, query, index, destPage = 0) {
   const rows = query.message?.reply_markup?.inline_keyboard || [];
   const onCard = rows.some((row) => row.some((btn) => btn.callback_data === 'maxchat:list'));
   if (onCard) {
-    await showMaxChatView(chatId, query.message.message_id, index);
+    await showMaxChatView(chatId, query.message.message_id, index, destPage);
     return;
   }
   await showMaxChats(chatId, query.message.message_id);
@@ -899,7 +902,7 @@ async function showMaxChats(chatId, messageId) {
   await sendMessage(chatId, text, extra);
 }
 
-async function showMaxChatView(chatId, messageId, index) {
+async function showMaxChatView(chatId, messageId, index, destPage = 0) {
   const urls = getMonitorChatUrls();
   const url = urls[index];
   if (!url) {
@@ -920,28 +923,26 @@ async function showMaxChatView(chatId, messageId, index) {
 
   lines.push('');
   lines.push(isChatForwardEnabled(url) ? CHATS.requiredForwardOn : CHATS.requiredForwardOff);
-  const target = getNotifyTarget(url);
   lines.push(
     isPersonalMaxChat(url)
       ? 'Личный чат MAX — по умолчанию в ЛС.'
       : isGroupMaxChat(url)
-        ? 'Группа или канал MAX — по умолчанию в ЛС и группу.'
-        : 'Куда слать в Telegram — выберите кнопками ниже.'
+        ? 'Группа или канал MAX — выберите ЛС и нужные группы ниже.'
+        : 'Куда слать в Telegram — отметьте кнопками ниже.'
   );
-  lines.push(
-    target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth
-  );
-  const destIds = getNotificationChatIds().filter((id) => {
-    if (target === 'dm') return isPrivateChatId(id);
-    if (target === 'group') return !isPrivateChatId(id);
-    return true;
-  });
-  if (isChatForwardEnabled(url) && !destIds.length) {
-    lines.push('Сейчас некуда слать — настройте ЛС или группу в «Куда слать в Telegram».');
+  const destTitles = listNotifyDestTitles(url);
+  if (!destTitles.length) {
+    lines.push(CHATS.notifyDestNone);
+  } else {
+    lines.push('Сейчас уходит:');
+    for (const name of destTitles) {
+      lines.push(`• <b>${escapeHtml(name)}</b>`);
+    }
   }
+  lines.push('', CHATS.notifyDestHint);
 
   await editMessageText(chatId, messageId, lines.join('\n'), {
-    reply_markup: buildMaxChatViewKeyboard(index),
+    reply_markup: buildMaxChatViewKeyboard(index, destPage),
   });
 }
 
@@ -1074,24 +1075,39 @@ async function proceedMaxChatAdd(chatId, pending) {
 async function showMaxChatWherePrompt(chatId, pending) {
   const key = String(chatId);
   const cache = maxChatAddCache.get(key) || {};
-  const url = String(pending?.url || '').trim();
-  const title = String(pending?.title || chatLabelFromUrl(url) || '').trim();
+  const url = String(pending?.url || cache.pending?.url || '').trim();
+  const title = String(pending?.title || cache.pending?.title || chatLabelFromUrl(url) || '').trim();
+  const kind = pending?.kind || cache.pending?.kind || '';
+  const destPage = pending?.destPage ?? cache.pending?.destPage ?? 0;
+  const destIds = Array.isArray(pending?.destIds)
+    ? pending.destIds.map(String)
+    : Array.isArray(cache.pending?.destIds)
+      ? cache.pending.destIds.map(String)
+      : getDefaultNotifyChatIds();
+
   maxChatAddCache.set(key, {
     ...cache,
-    pending: { url, title, kind: pending?.kind || cache.pending?.kind || '' },
+    pending: { url, title, kind, destIds, destPage },
   });
 
+  const selectedNames = destIds.map((id) => {
+    const known = getKnownChat(id);
+    if (isPrivateChatId(id)) return 'ЛС';
+    return known?.title || `Группа ${id}`;
+  });
   const text = [
-    '<b>Куда слать в Telegram</b>',
+    `<b>${CHATS.notifyDestWhereTitle}</b>`,
     '',
     title ? `Чат: <b>${escapeHtml(title)}</b>` : null,
     url ? `<code>${escapeHtml(url)}</code>` : null,
     '',
-    'Выберите направление для сообщений из этого чата.',
+    CHATS.notifyDestWhereHint,
+    selectedNames.length ? '' : null,
+    selectedNames.length ? `Выбрано: ${selectedNames.map(escapeHtml).join(', ')}` : 'Пока ничего не выбрано — будет ЛС.',
   ]
-    .filter(Boolean)
+    .filter((line) => line != null)
     .join('\n');
-  const extra = { reply_markup: buildMaxChatPickWhereKeyboard() };
+  const extra = { reply_markup: buildMaxChatPickWhereKeyboard(destIds, destPage) };
 
   if (await editMaxChatPickMessage(chatId, text, extra)) return;
 
@@ -1151,7 +1167,7 @@ async function restoreMaxChatPickPrompt(chatId) {
   await sendInputPrompt(chatId, text, { reply_markup: keyboard });
 }
 
-async function finishMaxChatAddWithTarget(chatId, target) {
+async function finishMaxChatAddWithTarget(chatId, routing) {
   const key = String(chatId);
   const cache = maxChatAddCache.get(key);
   const pending = cache?.pending;
@@ -1159,9 +1175,16 @@ async function finishMaxChatAddWithTarget(chatId, target) {
     return { error: 'Сначала выберите чат' };
   }
 
+  const options = typeof routing === 'string'
+    ? { notifyTarget: routing }
+    : routing && typeof routing === 'object'
+      ? routing
+      : {};
+
   const result = addMonitorChatUrl(pending.url, {
     title: pending.title,
-    notifyTarget: target,
+    notifyTarget: options.notifyTarget,
+    notifyChatIds: options.notifyChatIds || options.destIds,
   });
   if (result.error) return result;
 
@@ -1177,8 +1200,7 @@ async function finishMaxChatAddWithTarget(chatId, target) {
   waitingInput.delete(key);
   await clearMaxChatAddPrompt(chatId);
 
-  const where =
-    target === 'dm' ? CHATS.notifyTargetDm : target === 'group' ? CHATS.notifyTargetGroup : CHATS.notifyTargetBoth;
+  const destLabel = formatNotifyDestLabel(result.url);
   const lines = [
     result.duplicate
       ? CHATS.duplicate.lines[0]
@@ -1186,7 +1208,7 @@ async function finishMaxChatAddWithTarget(chatId, target) {
         ? `Чат: <b>${escapeHtml(pending.title)}</b>`
         : `Чат: <code>${escapeHtml(result.url)}</code>`,
     pending.title ? `<code>${escapeHtml(result.url)}</code>` : null,
-    where,
+    destLabel ? `Куда слать: ${escapeHtml(destLabel)}` : null,
     '',
     buildMaxChatsText(),
   ].filter(Boolean);
@@ -2045,8 +2067,61 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data.startsWith('maxchat:adddestpage:')) {
+    const page = Number.parseInt(data.slice('maxchat:adddestpage:'.length), 10) || 0;
+    const cache = maxChatAddCache.get(String(chatId));
+    if (!cache?.pending?.url) {
+      await answerCallback(query.id, 'Сначала выберите чат');
+      return;
+    }
+    await answerCallback(query.id);
+    await showMaxChatWherePrompt(chatId, { ...cache.pending, destPage: page });
+    return;
+  }
+
+  if (data.startsWith('maxchat:adddest:')) {
+    const rest = data.slice('maxchat:adddest:'.length);
+    const colon = rest.indexOf(':');
+    if (colon < 0) {
+      await answerCallback(query.id, 'Ошибка');
+      return;
+    }
+    const page = Number.parseInt(rest.slice(0, colon), 10) || 0;
+    const destId = rest.slice(colon + 1);
+    const cache = maxChatAddCache.get(String(chatId));
+    if (!cache?.pending?.url) {
+      await answerCallback(query.id, 'Сначала выберите чат');
+      return;
+    }
+    const bound = getNotificationChatIds().map(String);
+    if (!destId || !bound.includes(destId)) {
+      await answerCallback(query.id, 'Чат Telegram не найден');
+      return;
+    }
+    const current = new Set((cache.pending.destIds || getDefaultNotifyChatIds()).map(String));
+    if (current.has(destId)) current.delete(destId);
+    else current.add(destId);
+    const destIds = bound.filter((id) => current.has(id));
+    await answerCallback(query.id, current.has(destId) ? 'Добавлено' : 'Убрано');
+    await showMaxChatWherePrompt(chatId, { ...cache.pending, destIds, destPage: page });
+    return;
+  }
+
   if (data.startsWith('maxchat:addwhere:')) {
     const target = data.slice('maxchat:addwhere:'.length);
+    if (target === 'done') {
+      const cache = maxChatAddCache.get(String(chatId));
+      const destIds = cache?.pending?.destIds;
+      const result = await finishMaxChatAddWithTarget(chatId, {
+        destIds: destIds?.length ? destIds : getDefaultNotifyChatIds(),
+      });
+      if (result.error) {
+        await answerCallback(query.id, result.error);
+        return;
+      }
+      await answerCallback(query.id, 'Сохранено');
+      return;
+    }
     if (!['dm', 'group', 'both'].includes(target)) {
       await answerCallback(query.id, 'Ошибка');
       return;
@@ -2062,6 +2137,37 @@ async function handleCallback(query) {
       return;
     }
     await answerCallback(query.id, labels[target] || 'Сохранено');
+    return;
+  }
+
+  if (data.startsWith('maxchat:destpage:')) {
+    const parts = data.split(':');
+    const index = Number.parseInt(parts[2], 10) || 0;
+    const page = Number.parseInt(parts[3], 10) || 0;
+    await answerCallback(query.id);
+    await showMaxChatView(chatId, query.message.message_id, index, page);
+    return;
+  }
+
+  if (data.startsWith('maxchat:dest:')) {
+    const parts = data.split(':');
+    const index = Number.parseInt(parts[2], 10) || 0;
+    const page = Number.parseInt(parts[3], 10) || 0;
+    const destId = parts.slice(4).join(':');
+    const urls = getMonitorChatUrls();
+    const url = urls[index];
+    if (!url) {
+      await answerCallback(query.id, 'Чат не найден');
+      return;
+    }
+    const result = toggleNotifyChatId(url, destId);
+    if (result.error) {
+      await answerCallback(query.id, result.error);
+      return;
+    }
+    const on = (result.ids || []).map(String).includes(String(destId));
+    await answerCallback(query.id, on ? 'Добавлено' : 'Убрано');
+    await refreshMaxChatPanel(chatId, query, index, page);
     return;
   }
 
@@ -2105,6 +2211,14 @@ async function handleCallback(query) {
       await answerCallback(query.id, 'Ошибка');
       return;
     }
+    const bound = getNotificationChatIds();
+    const ids =
+      result.target === 'dm'
+        ? bound.filter(isPrivateChatId)
+        : result.target === 'group'
+          ? bound.filter((id) => !isPrivateChatId(id))
+          : bound;
+    setNotifyChatIds(url, ids);
 
     const labels = {
       dm: 'Только в ЛС',

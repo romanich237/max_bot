@@ -166,13 +166,8 @@ function isSetupComplete() {
 const maxChats = require('./max-chats');
 
 function getNotificationChatIdsForMaxChat(maxChatUrl) {
-  const ids = getNotificationChatIds();
-  if (!maxChatUrl) return ids;
-
-  const target = maxChats.getNotifyTarget(maxChatUrl);
-  if (target === 'dm') return ids.filter(isPrivateChatId);
-  if (target === 'group') return ids.filter((id) => !isPrivateChatId(id));
-  return ids;
+  if (!maxChatUrl) return getNotificationChatIds();
+  return require('./max-chats').getNotifyChatIdsForMaxChat(maxChatUrl);
 }
 
 module.exports = {

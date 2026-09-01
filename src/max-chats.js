@@ -222,6 +222,32 @@ function mergeChatTitles(entries = []) {
 }
 
 const NOTIFY_TARGETS = ['dm', 'group', 'both'];
+const DEST_PAGE_SIZE = 6;
+
+function isPrivateTelegramId(chatId) {
+  return Number(chatId) > 0;
+}
+
+function getBoundTelegramIds() {
+  const t = store.getPath(['telegram']) || {};
+  const ids = (t.chatIds || []).map(String);
+  if (!ids.length) return [];
+
+  const groupIds = ids.filter((id) => !isPrivateTelegramId(id));
+  if (!groupIds.length) return [...new Set(ids)];
+
+  const admins = (t.adminChatIds || []).map(String);
+  const privateFromIds = ids.filter(isPrivateTelegramId);
+  const privateFromAdmins = admins.filter(isPrivateTelegramId);
+  const dmId = privateFromIds[0] || privateFromAdmins[0];
+
+  const result = [];
+  if (dmId) result.push(dmId);
+  for (const groupId of groupIds) {
+    if (!result.includes(groupId)) result.push(groupId);
+  }
+  return [...new Set(result)];
+}
 
 function notifyTargetLabel(target) {
   if (target === 'dm') return 'ЛС';
@@ -263,6 +289,192 @@ function removeNotifyTarget(url) {
   if (!targets[normalized]) return;
   delete targets[normalized];
   store.setPath(['max', 'notifyTargets'], targets);
+}
+
+function getNotifyChatIdsMap() {
+  const raw = store.getPath(['max', 'notifyChatIds']);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const map = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const url = normalizeMaxChatUrl(key);
+    if (!url || !Array.isArray(value)) continue;
+    map[url] = [...new Set(value.map((id) => String(id || '')).filter(Boolean))];
+  }
+  return map;
+}
+
+function hasExplicitNotifyChatIds(url) {
+  const raw = store.getPath(['max', 'notifyChatIds']);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const normalized = normalizeMaxChatUrl(url);
+  if (Object.prototype.hasOwnProperty.call(raw, normalized)) return true;
+  return Object.keys(raw).some((key) => normalizeMaxChatUrl(key) === normalized);
+}
+
+function idsForNotifyTarget(target) {
+  const bound = getBoundTelegramIds();
+  if (target === 'dm') return bound.filter(isPrivateTelegramId);
+  if (target === 'group') return bound.filter((id) => !isPrivateTelegramId(id));
+  return bound;
+}
+
+function inferNotifyTarget(ids) {
+  const list = (ids || []).map(String);
+  const hasDm = list.some(isPrivateTelegramId);
+  const hasGroup = list.some((id) => !isPrivateTelegramId(id));
+  if (hasDm && hasGroup) return 'both';
+  if (hasGroup) return 'group';
+  return 'dm';
+}
+
+function getNotifyChatIdsForMaxChat(url) {
+  const bound = getBoundTelegramIds();
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized) return bound;
+  if (hasExplicitNotifyChatIds(normalized)) {
+    const wanted = new Set((getNotifyChatIdsMap()[normalized] || []).map(String));
+    return bound.filter((id) => wanted.has(String(id)));
+  }
+  return idsForNotifyTarget(getNotifyTarget(normalized));
+}
+
+function setNotifyChatIds(url, ids) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized) return { error: 'Чат не найден.' };
+  const bound = new Set(getBoundTelegramIds());
+  const next = [...new Set((ids || []).map(String))].filter((id) => bound.has(id));
+  const map = getNotifyChatIdsMap();
+  map[normalized] = next;
+  store.setPath(['max', 'notifyChatIds'], map);
+  setNotifyTarget(normalized, inferNotifyTarget(next));
+  return { ok: true, url: normalized, ids: next };
+}
+
+function toggleNotifyChatId(url, chatId) {
+  const bound = getBoundTelegramIds();
+  const id = String(chatId || '');
+  if (!id || !bound.includes(id)) return { error: 'Чат Telegram не найден.' };
+  const selected = new Set(getNotifyChatIdsForMaxChat(url).map(String));
+  if (selected.has(id)) selected.delete(id);
+  else selected.add(id);
+  return setNotifyChatIds(url, bound.filter((item) => selected.has(item)));
+}
+
+function getDefaultNotifyChatIds() {
+  return getBoundTelegramIds().filter(isPrivateTelegramId);
+}
+
+function applyNotifyRouting(url, options = {}) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized) return;
+
+  if (Array.isArray(options.notifyChatIds)) {
+    setNotifyChatIds(normalized, options.notifyChatIds);
+    return;
+  }
+
+  if (options.notifyTarget && NOTIFY_TARGETS.includes(options.notifyTarget)) {
+    setNotifyChatIds(normalized, idsForNotifyTarget(options.notifyTarget));
+    return;
+  }
+
+  if (!getNotifyTargets()[normalized] && !hasExplicitNotifyChatIds(normalized)) {
+    setNotifyTarget(normalized, defaultNotifyTarget(normalized));
+  }
+}
+
+function removeNotifyChatIds(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  const map = getNotifyChatIdsMap();
+  if (!Object.prototype.hasOwnProperty.call(map, normalized)) return;
+  delete map[normalized];
+  store.setPath(['max', 'notifyChatIds'], map);
+}
+
+function pruneNotifyChatId(chatId) {
+  const id = String(chatId || '');
+  if (!id) return;
+  const map = getNotifyChatIdsMap();
+  let changed = false;
+  for (const [url, ids] of Object.entries(map)) {
+    const next = ids.filter((item) => item !== id);
+    if (next.length !== ids.length) {
+      map[url] = next;
+      changed = true;
+    }
+  }
+  if (changed) store.setPath(['max', 'notifyChatIds'], map);
+}
+
+function telegramChatTitle(id, max = 28) {
+  if (isPrivateTelegramId(id)) return 'ЛС';
+  try {
+    const { getKnownChat } = require('./tg-chats');
+    const known = getKnownChat(id);
+    if (known?.title && known.title !== 'Без названия') {
+      return truncateButtonText(known.title, max);
+    }
+  } catch {
+    /* ignore */
+  }
+  return truncateButtonText(`Группа ${id}`, max);
+}
+
+function formatNotifyDestLabel(url, max = 42) {
+  const ids = getNotifyChatIdsForMaxChat(url);
+  if (!ids.length) return 'никуда';
+  const names = [];
+  let listedDm = false;
+  for (const id of ids) {
+    if (isPrivateTelegramId(id)) {
+      if (!listedDm) {
+        names.push('ЛС');
+        listedDm = true;
+      }
+      continue;
+    }
+    names.push(telegramChatTitle(id, 18));
+  }
+  return truncateButtonText(names.join(', ') || 'никуда', max);
+}
+
+function listNotifyDestTitles(url) {
+  return getNotifyChatIdsForMaxChat(url).map((id) => telegramChatTitle(id, 60));
+}
+
+function destToggleButton(item, on, callbackData) {
+  const button = {
+    text: item.isDm ? 'ЛС' : item.title,
+    callback_data: callbackData,
+  };
+  if (on) button.style = 'success';
+  if (on) return withTgEmoji(button, 'check');
+  if (!item.isDm) return withTgEmoji(button, 'group');
+  return button;
+}
+
+function buildTelegramDestRows(selectedIds, callbackForId, page = 0) {
+  const selected = new Set((selectedIds || []).map(String));
+  const dests = getBoundTelegramIds().map((id) => ({
+    id: String(id),
+    isDm: isPrivateTelegramId(id),
+    title: telegramChatTitle(id, 28),
+  }));
+  const dm = dests.filter((item) => item.isDm);
+  const groups = dests.filter((item) => !item.isDm);
+  const totalPages = Math.max(1, Math.ceil(groups.length / DEST_PAGE_SIZE) || 1);
+  const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
+  const slice = groups.slice(safePage * DEST_PAGE_SIZE, (safePage + 1) * DEST_PAGE_SIZE);
+  const rows = [];
+
+  for (const item of dm) {
+    rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
+  }
+  for (const item of slice) {
+    rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
+  }
+
+  return { rows, page: safePage, totalPages, groupsCount: groups.length, destCount: dests.length };
 }
 function chatMenuLabel(url) {
   const title = chatLabelFromUrl(url) || truncateUrl(url, 22);
@@ -462,11 +674,7 @@ function setDefaultChatUrl(url, options = {}) {
   store.setPath(['max', 'chatUrl'], normalized);
   store.setPath(['max', 'monitorChatUrls'], extras);
   if (options.title) setChatTitle(normalized, options.title);
-  if (options.notifyTarget) {
-    setNotifyTarget(normalized, options.notifyTarget);
-  } else if (!getNotifyTargets()[normalized]) {
-    setNotifyTarget(normalized, defaultNotifyTarget(normalized));
-  }
+  applyNotifyRouting(normalized, options);
   return { ok: true, url: normalized };
 }
 
@@ -483,11 +691,7 @@ function addMonitorChatUrl(url, options = {}) {
   const urls = getMonitorChatUrls();
   if (urls.includes(normalized)) {
     if (options.title) setChatTitle(normalized, options.title);
-    if (options.notifyTarget) {
-      setNotifyTarget(normalized, options.notifyTarget);
-    } else if (!getNotifyTargets()[normalized]) {
-      setNotifyTarget(normalized, defaultNotifyTarget(normalized));
-    }
+    applyNotifyRouting(normalized, options);
     return { ok: true, url: normalized, duplicate: true };
   }
 
@@ -506,12 +710,7 @@ function addMonitorChatUrl(url, options = {}) {
     setChatTitle(normalized, options.title);
   }
 
-  if (options.notifyTarget) {
-    setNotifyTarget(normalized, options.notifyTarget);
-  } else if (!getNotifyTargets()[normalized]) {
-    setNotifyTarget(normalized, defaultNotifyTarget(normalized));
-  }
-
+  applyNotifyRouting(normalized, options);
   return { ok: true, url: normalized };
 }
 
@@ -547,6 +746,7 @@ function removeMonitorChatUrl(url) {
   store.setPath(['max', 'monitorChatUrls'], extras);
   store.setPath(['max', 'disabledRequiredChats'], getDisabledForwardChatUrls().filter((item) => item !== normalized));
   removeNotifyTarget(normalized);
+  removeNotifyChatIds(normalized);
   removeChatTitle(normalized);
   removeChatKind(normalized);
   return { ok: true, url: normalized };
@@ -562,13 +762,13 @@ function buildMaxChatsText() {
   }
 
   lines.push('Бот шлёт в Telegram сообщения из чатов со статусом «слать».', '');
-  lines.push('Личные чаты MAX по умолчанию уходят в ЛС, группы — в ЛС и группу.', '');
+  lines.push('Нажмите чат MAX — там можно выбрать ЛС и нужные группы Telegram.', '');
 
   for (const url of urls) {
     const pin = isRequiredChatUrl(url) ? '📌 ' : '• ';
     const title = escapeHtml(chatLabelFromUrl(url));
     const forward = isChatForwardEnabled(url) ? 'слать' : 'не слать';
-    const where = notifyTargetLabel(getNotifyTarget(url));
+    const where = escapeHtml(formatNotifyDestLabel(url));
     lines.push(`${pin}<b>${title}</b> — ${forward} · ${where}`);
   }
 
@@ -592,30 +792,13 @@ function cycleNotifyTarget(url) {
   return setNotifyTarget(url, next);
 }
 
-function buildNotifyTargetButtons(url, index) {
-  const current = getNotifyTarget(url);
-  const options = [
-    { id: 'dm', text: 'ЛС' },
-    { id: 'group', text: 'Группа' },
-    { id: 'both', text: 'Оба' },
-  ];
-
-  return options.map((item) => {
-    const active = current === item.id;
-    const button = {
-      text: item.text,
-      callback_data: `maxchat:where:${index}:${item.id}`,
-    };
-    if (item.id === 'group') {
-      if (active) button.style = 'success';
-      return withTgEmoji(button, 'group');
-    }
-    if (active) {
-      button.style = 'success';
-      return withTgEmoji(button, 'check');
-    }
-    return button;
-  });
+function buildDestNavRow(page, totalPages, prevData, nextData) {
+  if (totalPages <= 1) return null;
+  const nav = [];
+  if (page > 0) nav.push({ text: '◀️', callback_data: prevData });
+  nav.push({ text: `${page + 1}/${totalPages}`, callback_data: 'maxchat:noop' });
+  if (page < totalPages - 1) nav.push({ text: '▶️', callback_data: nextData });
+  return nav;
 }
 
 function canRemoveMaxChat(url, urls) {
@@ -768,24 +951,50 @@ function buildMaxChatPickKeyboard(chats = [], page = 0) {
   return { inline_keyboard: rows };
 }
 
-function buildMaxChatPickWhereKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: '💬 ЛС', callback_data: 'maxchat:addwhere:dm' },
-        withTgEmoji({ text: 'Группа', callback_data: 'maxchat:addwhere:group' }, 'group'),
-        { text: '💬📣 Оба', callback_data: 'maxchat:addwhere:both' },
-      ],
-      [{ text: '« Назад', callback_data: 'maxchat:pickback' }],
-    ],
-  };
+function buildMaxChatPickWhereKeyboard(selectedIds = [], page = 0) {
+  const selected = (selectedIds || []).map(String);
+  const { rows, totalPages, page: safePage, destCount } = buildTelegramDestRows(
+    selected,
+    (id, destPage) => `maxchat:adddest:${destPage}:${id}`,
+    page
+  );
+
+  const nav = buildDestNavRow(
+    safePage,
+    totalPages,
+    `maxchat:adddestpage:${safePage - 1}`,
+    `maxchat:adddestpage:${safePage + 1}`
+  );
+  if (nav) rows.push(nav);
+  if (!destCount) {
+    rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
+  }
+  rows.push([{ text: 'Готово', callback_data: 'maxchat:addwhere:done', style: 'success' }]);
+  rows.push([{ text: '« Назад', callback_data: 'maxchat:pickback' }]);
+  return { inline_keyboard: rows };
 }
 
-function buildMaxChatViewKeyboard(index) {
+function buildMaxChatViewKeyboard(index, destPage = 0) {
   const urls = getMonitorChatUrls();
   const url = urls[index];
   const rows = [];
-  if (url) rows.push(buildNotifyTargetButtons(url, index));
+  if (url) {
+    const selected = getNotifyChatIdsForMaxChat(url);
+    const { rows: destRows, totalPages, page: safePage } = buildTelegramDestRows(
+      selected,
+      (id, page) => `maxchat:dest:${index}:${page}:${id}`,
+      destPage
+    );
+    rows.push(...destRows);
+    const nav = buildDestNavRow(
+      safePage,
+      totalPages,
+      `maxchat:destpage:${index}:${safePage - 1}`,
+      `maxchat:destpage:${index}:${safePage + 1}`
+    );
+    if (nav) rows.push(nav);
+    rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
+  }
   const actions = url ? [...buildMaxChatActionButtons(url, index)] : [];
   if (url && canRemoveMaxChat(url, urls)) actions.push(maxChatDeleteButton(index));
   if (actions.length) rows.push(actions);
@@ -793,7 +1002,7 @@ function buildMaxChatViewKeyboard(index) {
   return { inline_keyboard: rows };
 }
 
-module.exports = {
+Object.assign(module.exports, {
   MAX_CHAT_URL_RE,
   BUILTIN_REQUIRED_CHATS,
   isMaxChatUrl,
@@ -838,6 +1047,13 @@ module.exports = {
   setNotifyTarget,
   cycleNotifyTarget,
   notifyTargetLabel,
+  getNotifyChatIdsForMaxChat,
+  setNotifyChatIds,
+  toggleNotifyChatId,
+  getDefaultNotifyChatIds,
+  formatNotifyDestLabel,
+  listNotifyDestTitles,
+  pruneNotifyChatId,
   ensureRequiredChats,
   scopedMessageKey,
   setDefaultChatUrl,
@@ -848,4 +1064,4 @@ module.exports = {
   buildMaxChatPickKeyboard,
   buildMaxChatPickWhereKeyboard,
   buildMaxChatViewKeyboard,
-};
+});
