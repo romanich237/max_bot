@@ -10,7 +10,6 @@ const FORWARDING_TOGGLE = {
 
 const TOGGLE_ITEMS = [
   { label: TOGGLES.alwaysOnline, path: ['alwaysOnline', 'enabled'] },
-  { label: TOGGLES.profileRotate, path: ['profileRotate', 'enabled'] },
   { label: TOGGLES.profileBio, path: ['profileBio', 'enabled'] },
 ];
 

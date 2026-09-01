@@ -4,7 +4,6 @@ const {
   getAdminChatIds,
   getMax,
   getMaxDisplayName,
-  getProfileRotate,
   getProfileBio,
   getAlwaysOnline,
   getMonitorChatUrls,
@@ -61,11 +60,8 @@ const {
   TOGGLES,
   FORWARDING_TOGGLE,
   buildToggleButton,
-  parseNameList,
-  saveProfileNames,
   saveProfileBioCity,
   saveProfileBioTemplate,
-  PROFILE_NAMES_HINT,
   PROFILE_BIO_CITY_HINT,
   PROFILE_BIO_TEMPLATE_HINT,
   MAX_BIO_LENGTH,
@@ -127,12 +123,10 @@ const {
 const { clearInputPrompt, sendInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
 
 const SETTABLE = {
-  profileinterval: { path: ['profileRotate', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
   biointerval: { path: ['profileBio', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
   biocity: { path: ['profileBio', 'city'], type: 'string' },
   biotemplate: { path: ['profileBio', 'template'], type: 'string' },
   onlineinterval: { path: ['alwaysOnline', 'intervalMs'], type: 'int', min: 5000, max: 300000 },
-  profilenames: { path: ['profileRotate', 'names'], type: 'names' },
 };
 
 const BOT_COMMANDS = [
@@ -353,7 +347,6 @@ function formatNotifyTarget(id) {
 }
 
 function buildStatusText() {
-  const profile = getProfileRotate();
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
   const maxName = getMaxDisplayName();
@@ -369,14 +362,7 @@ function buildStatusText() {
     `${STATUS.alwaysOnline}: ${onFlag(online.enabled)}${online.enabled ? ` · ${formatInterval(online.intervalMs)}` : ''}`,
     '',
     '<b>Профиль MAX</b>',
-    `${STATUS.profileRotate}: ${onFlag(profile.enabled)}${profile.enabled ? ` · ${formatInterval(profile.intervalMs)}` : ''}`,
   ];
-
-  if (profile.enabled) {
-    lines.push(
-      profile.names?.length ? `Имена: ${profile.names.map(escapeHtml).join(' → ')}` : STATUS.namesUnset
-    );
-  }
 
   lines.push(
     `${STATUS.profileBio}: ${onFlag(profileBio.enabled)}${profileBio.enabled ? ` · ${formatInterval(profileBio.intervalMs)}` : ''}`
@@ -470,8 +456,7 @@ async function sendPinnedAboutOnce(chat) {
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
-    [buildToggleButton(prefix, TOGGLES[0])],
-    [buildToggleButton(prefix, TOGGLES[1]), buildToggleButton(prefix, TOGGLES[2])],
+    [buildToggleButton(prefix, TOGGLES[0]), buildToggleButton(prefix, TOGGLES[1])],
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
@@ -554,13 +539,6 @@ function parseSetCommand(text) {
     return {
       error: ERRORS.unknownKey(`chaturl, browserpassword, biocity, biotemplate, biointerval, ${Object.keys(SETTABLE).join(', ')}`),
     };
-  }
-
-  if (rule.type === 'names') {
-    const names = parseNameList(rawValue);
-    if (!names.length) return { error: ERRORS.namesRequired };
-    saveProfileNames(names);
-    return { ok: true, key, value: names.join(', ') };
   }
 
   let value = rawValue;
@@ -679,29 +657,6 @@ async function handleProfileBioTemplateInput(chatId, text, userMessageId) {
         '',
         buildStatusText(),
       ],
-    }),
-    { reply_markup: buildMenuKeyboard() }
-  );
-  return true;
-}
-
-async function handleProfileNamesInput(chatId, text, userMessageId) {
-  const names = parseNameList(text);
-  if (!names.length) {
-    await deleteMessageQuiet(chatId, userMessageId);
-    await sendInputPrompt(chatId, ERRORS.notRecognized + PROFILE_NAMES_HINT);
-    return false;
-  }
-
-  saveProfileNames(names);
-  waitingInput.delete(String(chatId));
-  await clearInputPrompt(chatId, userMessageId);
-  await sendMessage(
-    chatId,
-      buildEventMessage({
-      title: SETUP.namesSaved(names.join(' → ')).title,
-      status: 'done',
-      lines: [`Порядок смены: ${names.join(' → ')}`, '', buildStatusText()],
     }),
     { reply_markup: buildMenuKeyboard() }
   );
@@ -1456,11 +1411,6 @@ async function handleMessage(message) {
       await dispatchMaxReply(chatId, target, text);
       return;
     }
-  }
-
-  if (waitKey === 'profileNames' && text && !text.startsWith('/')) {
-    await handleProfileNamesInput(chatId, text, userMessageId);
-    return;
   }
 
   if (waitKey === 'profileBioCity' && text && !text.startsWith('/')) {
@@ -2352,14 +2302,6 @@ async function handleCallback(query) {
     }
     const next = store.togglePath(path);
     await answerCallback(query.id, next ? 'Включено' : 'Выключено');
-
-    if (path.join('.') === 'profileRotate.enabled' && next) {
-      const names = store.getPath(['profileRotate', 'names']) || [];
-      if (!names.length) {
-        waitingInput.set(String(chatId), 'profileNames');
-        await sendInputPrompt(chatId, HINTS.profileNamesEnabled + PROFILE_NAMES_HINT);
-      }
-    }
 
     if (path.join('.') === 'profileBio.enabled' && !next) {
       pendingProfileBioEnable.delete(String(chatId));

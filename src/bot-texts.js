@@ -101,7 +101,7 @@ function tgEmojiHtml(kind) {
 
 const TOGGLES = {
   forwarding: 'Отправлять в Telegram',
-  alwaysOnline: 'Всегда в сети',
+  alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
 };
@@ -154,7 +154,7 @@ const START = {
 const STATUS = {
   header: `<b>${BRAND}</b>`,
   monitoring: 'Следит за MAX',
-  alwaysOnline: 'Всегда в сети',
+  alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
   namesUnset: 'Имена для смены не заданы',

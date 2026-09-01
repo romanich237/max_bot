@@ -805,9 +805,9 @@ function canRemoveMaxChat(url, urls) {
   return Boolean(url) && !isRequiredChatUrl(url) && urls.length > 1;
 }
 
-function maxChatNameButton(url, index) {
+function maxChatNameButton(url, index, maxLen = 22) {
   const button = {
-    text: chatMenuLabel(url),
+    text: truncateButtonText(chatLabelFromUrl(url) || truncateUrl(url, maxLen), maxLen),
     callback_data: `maxchat:view:${index}`,
   };
   if (isRequiredChatUrl(url)) return withTgEmoji(button, 'pin');
@@ -819,18 +819,28 @@ function maxChatDeleteButton(index) {
   return withTgEmoji({ text: 'Удалить', callback_data: `maxchat:remove:${index}` }, 'trash');
 }
 
-function buildMaxChatActionButtons(url, index) {
+function maxChatForwardButton(url, index) {
   const forwardOn = isChatForwardEnabled(url);
-  return [
-    withOnOffEmoji(
-      {
-        text: 'Слать',
-        callback_data: `maxchat:forward:${index}`,
-        style: forwardOn ? 'success' : 'danger',
-      },
-      forwardOn
-    ),
-  ];
+  return withOnOffEmoji(
+    {
+      text: 'Слать',
+      callback_data: `maxchat:forward:${index}`,
+      style: forwardOn ? 'success' : 'danger',
+    },
+    forwardOn
+  );
+}
+
+function buildMaxChatActionButtons(url, index) {
+  return [maxChatForwardButton(url, index)];
+}
+
+function buildMaxChatListRow(url, index, urls) {
+  const row = [maxChatNameButton(url, index), maxChatForwardButton(url, index)];
+  if (canRemoveMaxChat(url, urls)) {
+    row.push(maxChatDeleteButton(index));
+  }
+  return row;
 }
 
 function buildMaxChatsKeyboard() {
@@ -859,12 +869,7 @@ function buildMaxChatsKeyboard() {
   ];
 
   urls.forEach((url, index) => {
-    const row = [maxChatNameButton(url, index)];
-    if (canRemoveMaxChat(url, urls)) {
-      row.push(maxChatDeleteButton(index));
-    }
-    rows.push(row);
-    rows.push(buildMaxChatActionButtons(url, index));
+    rows.push(buildMaxChatListRow(url, index, urls));
   });
 
   rows.push([

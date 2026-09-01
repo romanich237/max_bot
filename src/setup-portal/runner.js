@@ -5,7 +5,6 @@ const { checkTelegramConnectivity } = require('../tg-api');
 const { deleteWebhook } = require('../tg-api');
 const { registerBotCommands } = require('../tg-admin');
 const { isMaxChatUrl } = require('../setup-wizard');
-const { parseNameList, saveProfileNames } = require('../tg-settings');
 const { runAuthOnPage, PHONE_AUTH_WARNING_SHORT } = require('../auth-qr');
 const { launchMaxContext } = require('../browser-context');
 const { captureLoginScreenshot } = require('../auth-qr');
@@ -159,14 +158,8 @@ async function runWebSetup(options = {}) {
         if (body.browserPassword) {
           store.setPath(['max', 'browserPassword'], String(body.browserPassword));
         }
-        store.setPath(['profileRotate', 'enabled'], Boolean(body.profileRotate));
         store.setPath(['alwaysOnline', 'enabled'], Boolean(body.alwaysOnline));
         store.setPath(['autoUpdate', 'enabled'], true);
-
-        if (body.profileNames) {
-          const names = parseNameList(String(body.profileNames));
-          if (names.length) saveProfileNames(names);
-        }
 
         store.setPath(['setupComplete'], false);
         setStep(state, 'auth', 'Выберите способ входа в MAX');

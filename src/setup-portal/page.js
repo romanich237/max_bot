@@ -60,11 +60,8 @@ function renderSetupPage(token) {
       <label>Пароль для входа (если есть)</label>
       <input id="browserPassword" type="password" placeholder="из личного кабинета MAX" autocomplete="off" />
       <div class="checks">
-        <label><input type="checkbox" id="profileRotate" /> Авто имя</label>
-        <label><input type="checkbox" id="alwaysOnline" /> Бесконечный онлайн</label>
+        <label><input type="checkbox" id="alwaysOnline" /> Вечный онлайн</label>
       </div>
-      <label>Имена авто (через запятую)</label>
-      <input id="profileNames" placeholder="в, ва, вас, вася" />
       <div style="margin-top:16px"><button class="primary" id="saveMax">Сохранить и перейти к входу</button></div>
     </div>
 
@@ -139,9 +136,7 @@ function renderSetupPage(token) {
       const res = await api('/max', {
         chatUrl: document.getElementById('chatUrl').value.trim(),
         browserPassword: document.getElementById('browserPassword').value,
-        profileRotate: document.getElementById('profileRotate').checked,
         alwaysOnline: document.getElementById('alwaysOnline').checked,
-        profileNames: document.getElementById('profileNames').value.trim(),
       });
       if (!res.ok) return alertMsg(res.error, 'err');
       alertMsg('Настройки MAX сохранены', 'ok');

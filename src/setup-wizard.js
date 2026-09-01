@@ -9,9 +9,6 @@ const {
 const {
   buildToggleRows,
   buildToggleButton,
-  parseNameList,
-  saveProfileNames,
-  PROFILE_NAMES_HINT,
   FORWARDING_TOGGLE,
 } = require('./tg-settings');
 const { registerBotCommands } = require('./tg-admin');
@@ -79,34 +76,10 @@ function runSetupWizard(options = {}) {
 
           const data = query.data || '';
 
-          if (data === 'wizard:profileNames') {
-            step = 'profileNames';
-            await answerCallback(query.id, 'Жду имена', options.token);
-            await stepChat.finishStep(chatId);
-            if (query.message?.message_id) {
-              await stepChat.deleteMessage(chatId, query.message.message_id);
-            }
-            await stepChat.sendBot(chatId, PROFILE_NAMES_HINT);
-            return;
-          }
-
           if (data.startsWith('wizard:toggle:')) {
             const path = data.slice('wizard:toggle:'.length).split('.');
-            const next = store.togglePath(path);
+            store.togglePath(path);
             await answerCallback(query.id, 'Сохранено', options.token);
-
-            if (path.join('.') === 'profileRotate.enabled' && next) {
-              const names = store.getPath(['profileRotate', 'names']) || [];
-              if (!names.length) {
-                step = 'profileNames';
-                await stepChat.finishStep(chatId);
-                if (query.message?.message_id) {
-                  await stepChat.deleteMessage(chatId, query.message.message_id);
-                }
-                await stepChat.sendBot(chatId, 'Авто имя включено. ' + PROFILE_NAMES_HINT);
-                return;
-              }
-            }
 
             stepChat.trackBot(chatId, query.message.message_id);
             await editMessageText(
@@ -119,20 +92,7 @@ function runSetupWizard(options = {}) {
             return;
           }
 
-          if (data === 'wizard:finish' && (step === 'options' || step === 'profileNames')) {
-            const profileEnabled = store.getPath(['profileRotate', 'enabled']);
-            const names = store.getPath(['profileRotate', 'names']) || [];
-            if (profileEnabled && !names.length) {
-              await answerCallback(query.id, 'Сначала задайте имена', options.token);
-              step = 'profileNames';
-              await stepChat.finishStep(chatId);
-              if (query.message?.message_id) {
-                await stepChat.deleteMessage(chatId, query.message.message_id);
-              }
-              await stepChat.sendBot(chatId, PROFILE_NAMES_HINT);
-              return;
-            }
-
+          if (data === 'wizard:finish' && step === 'options') {
             store.setPath(['setupComplete'], true);
             await answerCallback(query.id, 'Запускаю…', options.token);
             await stepChat.finishStep(chatId);
@@ -169,30 +129,6 @@ function runSetupWizard(options = {}) {
 
         const text = update.message.text.trim();
         const userMessageId = update.message.message_id;
-
-        if (step === 'profileNames') {
-          const names = parseNameList(text);
-          if (!names.length) {
-            await stepChat.deleteUserMessage(chatId, userMessageId);
-            await stepChat.sendBot(chatId, 'Не распознано. ' + PROFILE_NAMES_HINT);
-            return;
-          }
-          saveProfileNames(names);
-          step = 'options';
-          await stepChat.finishStep(chatId, userMessageId);
-          await stepChat.sendBot(
-            chatId,
-            buildEventMessage({
-              title: 'Имена авто сохранены',
-              status: 'done',
-              step: 3,
-              total: WIZARD_STEPS,
-              lines: [`Список: ${names.join(' → ')}`, '', SETUP.wizardOptions],
-            }),
-            { reply_markup: buildWizardKeyboard() }
-          );
-          return;
-        }
 
         if (step === 'chatUrl') {
           if (!isMaxChatUrl(text)) {
