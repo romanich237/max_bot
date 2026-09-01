@@ -6,6 +6,7 @@ const {
   getMaxDisplayName,
   getProfileBio,
   getAlwaysOnline,
+  getStories,
   getMonitorChatUrls,
   getNotificationChatIds,
   isPrivateChatId,
@@ -350,6 +351,7 @@ function formatNotifyTarget(id) {
 function buildStatusText() {
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
+  const stories = getStories();
   const maxName = getMaxDisplayName();
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
@@ -361,6 +363,7 @@ function buildStatusText() {
     `${STATUS.monitoring}: ${onFlag(isMonitoringEnabled())}${isMonitoringEnabled() ? '' : ' · на паузе'}`,
     `${STATUS.forwarding}: ${onFlag(getMax().forwardingEnabled !== false)}`,
     `${STATUS.alwaysOnline}: ${onFlag(online.enabled)}${online.enabled ? ` · ${formatInterval(online.intervalMs)}` : ''}`,
+    `${STATUS.stories}: ${onFlag(stories.enabled)}${stories.enabled ? ` · ${formatInterval(stories.intervalMs)}${stories.autoLike ? ' · лайк' : ''}` : ''}`,
     '',
     '<b>Профиль MAX</b>',
   ];
@@ -457,7 +460,11 @@ async function sendPinnedAboutOnce(chat) {
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
-    [buildToggleButton(prefix, TOGGLES[0]), buildToggleButton(prefix, TOGGLES[1])],
+    [
+      buildToggleButton(prefix, TOGGLES[0]),
+      buildToggleButton(prefix, TOGGLES[1]),
+      buildToggleButton(prefix, TOGGLES[2]),
+    ],
     [
       { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
       { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },

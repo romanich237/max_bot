@@ -104,6 +104,7 @@ const TOGGLES = {
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
+  stories: 'Истории',
 };
 
 const HINTS = {
@@ -157,6 +158,7 @@ const STATUS = {
   alwaysOnline: 'Вечный онлайн',
   profileRotate: 'Менять имя',
   profileBio: 'Менять описание',
+  stories: 'Истории',
   namesUnset: 'Имена для смены не заданы',
   cityUnset: 'Город не задан',
   nameAuto: 'Имя в MAX пока не считано',
