@@ -19,12 +19,15 @@ function safeName(text) {
     .slice(0, 40);
 }
 
-function extForType(type, url = '') {
+function extForType(type, url = '', fileName = '') {
   if (type === 'sticker') return 'png';
+
+  const fromName = path.extname(String(fileName || '')).slice(1).toLowerCase();
+  if (fromName && fromName.length <= 8) return fromName;
 
   try {
     const fromUrl = path.extname(new URL(url, 'https://x').pathname).slice(1).toLowerCase();
-    if (fromUrl && fromUrl.length <= 5) return fromUrl;
+    if (fromUrl && fromUrl.length <= 8) return fromUrl;
   } catch {
     /* ignore */
   }
@@ -38,6 +41,12 @@ function extForType(type, url = '') {
   return map[type] || 'bin';
 }
 
+function sanitizeSendName(name) {
+  const base = path.basename(String(name || '').replace(/\\/g, '/')).trim();
+  const cleaned = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim();
+  return cleaned.slice(0, 180);
+}
+
 function buildFilePath(message, media, index) {
   const day = new Date().toISOString().slice(0, 10);
   const dir = path.join(dataDir(), day);
@@ -45,11 +54,14 @@ function buildFilePath(message, media, index) {
 
   const hash = crypto
     .createHash('md5')
-    .update(`${message.key}::${media.type}::${index}`)
+    .update(`${message.key}::${media.type}::${index}::${media.fileName || media.url || ''}`)
     .digest('hex')
     .slice(0, 8);
 
-  const fileName = `${safeName(message.author)}_${media.type}_${hash}.${extForType(media.type, media.url)}`;
+  const original = sanitizeSendName(media.fileName);
+  const ext = `.${extForType(media.type, media.url, original)}`;
+  const stem = original ? path.basename(original, path.extname(original)) : `${safeName(message.author)}_${media.type}`;
+  const fileName = `${safeName(stem)}_${hash}${ext}`;
   return path.join(dir, fileName);
 }
 
@@ -83,6 +95,7 @@ function buildMediaKey(media) {
     .map((item) => {
       if (item.stickerId) return `sticker:${item.stickerId}`;
       if (item.url) return `${item.type}:${stableMediaUrl(item.url)}`;
+      if (item.fileName) return `${item.type}:${String(item.fileName).toLowerCase()}`;
       if (item.duration) return `voice:${item.duration}`;
       return item.type;
     })
@@ -97,6 +110,9 @@ function mediaLabel(media) {
     file: 'файл',
     sticker: 'стикер',
   };
+  if (media.type === 'file' && media.fileName) {
+    return media.fileName;
+  }
   const base = labels[media.type] || 'медиа';
   return media.duration ? `${base} ${media.duration}` : base;
 }
@@ -310,9 +326,131 @@ async function downloadSticker(page, wrapperIndex, filePath) {
   return pngPath;
 }
 
+function isDirectFileUrl(url) {
+  const raw = String(url || '');
+  if (!raw || raw.startsWith('javascript:') || raw.startsWith('blob:')) return false;
+  if (/\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|apk|json|bin)(\?|$)/i.test(raw)) return true;
+  return /oneme\.ru|max\.ru\/.+download/i.test(raw);
+}
+
+function isBinaryFileResponse(response, fileName) {
+  const url = response.url();
+  const headers = response.headers();
+  const type = String(headers['content-type'] || '').toLowerCase();
+  const disposition = String(headers['content-disposition'] || '').toLowerCase();
+  if (disposition.includes('attachment') || disposition.includes('filename')) return true;
+  if (/text\/html|text\/css|javascript|application\/json|image\/svg/i.test(type)) return false;
+  const name = String(fileName || '').toLowerCase();
+  const ext = path.extname(name).toLowerCase();
+  if (ext && (url.toLowerCase().includes(ext) || decodeURIComponent(url).toLowerCase().includes(ext))) {
+    return true;
+  }
+  if (name && disposition.includes(name)) return true;
+  if (/\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|csv|apk|txt)(\?|$)/i.test(url)) return true;
+  return /application\/pdf|octet-stream|msword|spreadsheet|officedocument|presentationml|zip|rar/i.test(type);
+}
+
+async function clickFileCard(page, wrapperIndex, fileName) {
+  const opened = page.locator('.openedChat .messageWrapper');
+  const list = (await opened.count()) > 0 ? opened : page.locator('.messageWrapper');
+  const wrap = list.nth(wrapperIndex);
+  await wrap.scrollIntoViewIfNeeded().catch(() => {});
+
+  const cards = wrap.locator(
+    '.attaches button, .attaches a, [class*="attachFile"], [class*="attachDoc"], button[aria-label*="качать" i], button[aria-label*="download" i]'
+  );
+  const named = fileName ? cards.filter({ hasText: fileName }) : cards;
+  const target = (await named.count()) ? named.first() : cards.first();
+  if (await target.count()) {
+    try {
+      await target.click({ force: true, timeout: 4000 });
+      return true;
+    } catch {
+      /* evaluate fallback */
+    }
+  }
+
+  return page.evaluate(
+    ({ idx, sel, fileName }) => {
+      const opened = document.querySelector('.openedChat');
+      const wrappers = opened?.querySelectorAll('.messageWrapper')?.length
+        ? opened.querySelectorAll('.messageWrapper')
+        : document.querySelectorAll(sel);
+      const wrapper = wrappers[idx];
+      if (!wrapper) return false;
+      const cards = [
+        ...wrapper.querySelectorAll(
+          '.attaches button, .attaches a, [class*="attachFile"], [class*="attachDoc"]'
+        ),
+      ];
+      const needle = String(fileName || '').toLowerCase();
+      const match =
+        cards.find((el) => needle && String(el.innerText || '').toLowerCase().includes(needle)) ||
+        cards[0];
+      if (!match) return false;
+      match.click();
+      return true;
+    },
+    { idx: wrapperIndex, sel: '.messageWrapper', fileName: fileName || '' }
+  );
+}
+
+async function downloadFileAttachment(page, wrapperIndex, filePath, fileName) {
+  if (wrapperIndex < 0) {
+    throw new Error('карточка файла не найдена в DOM');
+  }
+
+  const downloadPromise = page.waitForEvent('download', { timeout: 20000 }).catch(() => null);
+
+  const urlPromise = new Promise((resolve) => {
+    let resolved = false;
+    const finish = (url) => {
+      if (resolved) return;
+      resolved = true;
+      page.off('response', onResponse);
+      resolve(url);
+    };
+    const onResponse = (response) => {
+      if (response.ok() && isBinaryFileResponse(response, fileName)) {
+        finish(response.url());
+      }
+    };
+    page.on('response', onResponse);
+    setTimeout(() => finish(null), 20000);
+  });
+
+  const clicked = await clickFileCard(page, wrapperIndex, fileName);
+  if (!clicked) {
+    throw new Error('кнопка скачивания файла не найдена');
+  }
+
+  const download = await downloadPromise;
+  if (download) {
+    await download.saveAs(filePath);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+      return filePath;
+    }
+  }
+
+  const url = await urlPromise;
+  if (url) {
+    if (url.startsWith('blob:')) {
+      await downloadBlob(page, url, filePath);
+    } else {
+      await downloadFromUrl(page, url, filePath);
+    }
+    return filePath;
+  }
+
+  throw new Error('не удалось скачать файл');
+}
+
 async function findWrapperIndex(page, message, wrapperSelector) {
+  const fileNames = (message.media || [])
+    .map((item) => String(item.fileName || '').trim())
+    .filter(Boolean);
   const index = await page.evaluate(
-    ({ author, body, time, reply, wrapperSelector: sel }) => {
+    ({ author, body, time, reply, fileNames, wrapperSelector: sel }) => {
       const wrappers = (() => {
         const opened = document.querySelector('.openedChat');
         if (opened) {
@@ -329,9 +467,16 @@ async function findWrapperIndex(page, message, wrapperSelector) {
       const needle = norm(body);
       const authorNeedle = norm(author);
       const replyNeedle = norm(reply?.body);
+      const fileNeedles = (fileNames || []).map(norm).filter(Boolean);
 
       for (let i = wrappers.length - 1; i >= 0; i--) {
         const text = norm(wrappers[i].innerText || '');
+
+        if (fileNeedles.some((name) => name && text.includes(name))) {
+          if (!authorNeedle || text.includes(authorNeedle) || wrappers[i].querySelector('.fileIcon, [class*="attachFile"], [class*="attachDoc"]')) {
+            return i;
+          }
+        }
 
         if (needle && authorNeedle && text.includes(needle) && text.includes(authorNeedle)) {
           return i;
@@ -365,6 +510,7 @@ async function findWrapperIndex(page, message, wrapperSelector) {
       body: message.body,
       time: message.time,
       reply: message.reply,
+      fileNames,
       wrapperSelector,
     }
   );
@@ -572,19 +718,21 @@ async function downloadMediaItem(page, message, media, index, wrapperSelector) {
       const prepared = prepareOutgoingAudio(filePath);
       return { ...media, localPath: prepared.localPath, sendAs: prepared.sendAs };
     }
-    return { ...media, localPath: filePath };
+    return withSendName(media, filePath);
   }
 
-  if (media.url) {
+  if (media.url && (media.type !== 'file' || isDirectFileUrl(media.url))) {
     await downloadFromUrl(page, media.url, filePath);
     if (media.type === 'voice') {
       const prepared = prepareOutgoingAudio(filePath);
       return { ...media, localPath: prepared.localPath, sendAs: prepared.sendAs };
     }
-    return { ...media, localPath: filePath };
+    return withSendName(media, filePath);
   }
 
-  const wrapperIndex = await findWrapperIndex(page, message, wrapperSelector);
+  const wrapperIndex = Number.isInteger(message.index) && message.index >= 0
+    ? message.index
+    : await findWrapperIndex(page, message, wrapperSelector);
 
   if (media.type === 'voice') {
     await downloadVoice(page, wrapperIndex, filePath);
@@ -597,7 +745,20 @@ async function downloadMediaItem(page, message, media, index, wrapperSelector) {
     return { ...media, localPath: saved };
   }
 
+  if (media.type === 'file') {
+    await downloadFileAttachment(page, wrapperIndex, filePath, media.fileName);
+    return withSendName(media, filePath);
+  }
+
   throw new Error(`нет URL для ${media.type}`);
+}
+
+function withSendName(media, filePath) {
+  return {
+    ...media,
+    localPath: filePath,
+    fileName: sanitizeSendName(media.fileName) || path.basename(filePath),
+  };
 }
 
 async function downloadMessageMedia(page, message, wrapperSelector) {
@@ -610,10 +771,17 @@ async function downloadMessageMedia(page, message, wrapperSelector) {
     if (message.media[i].type === 'voice') continue;
     try {
       const item = await downloadMediaItem(page, message, message.media[i], i, wrapperSelector);
+      if (item?.localPath && fs.existsSync(item.localPath)) {
+        const size = fs.statSync(item.localPath).size;
+        if (size > 49 * 1024 * 1024) {
+          console.error(`  ⚠️ файл слишком большой для Telegram (${item.fileName || item.type}): ${size} байт`);
+          continue;
+        }
+      }
       saved.push(item);
-      console.log(`  💾 ${item.type} → ${item.localPath}`);
+      console.log(`  💾 ${item.type}${item.fileName ? ` ${item.fileName}` : ''} → ${item.localPath}`);
     } catch (err) {
-      console.error(`  ⚠️ не скачано (${message.media[i].type}): ${err.message}`);
+      console.error(`  ⚠️ не скачано (${message.media[i].type}${message.media[i].fileName ? ` ${message.media[i].fileName}` : ''}): ${err.message}`);
     }
   }
 

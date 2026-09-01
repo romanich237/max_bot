@@ -367,6 +367,15 @@ function collectTelegramImageFileIds(message) {
   return ids;
 }
 
+function collectTelegramReplyFileIds(message) {
+  const ids = collectTelegramImageFileIds(message);
+  const doc = message.document;
+  if (doc?.file_id && !ids.includes(doc.file_id)) {
+    ids.push(doc.file_id);
+  }
+  return ids;
+}
+
 function unlinkQuiet(files) {
   for (const file of files || []) {
     try {
@@ -488,7 +497,7 @@ async function flushReplyAlbum(key) {
 }
 
 async function handleReplyWaitContent(chatId, message, waitKey) {
-  const fileIds = collectTelegramImageFileIds(message);
+  const fileIds = collectTelegramReplyFileIds(message);
   let replyText = (message.caption || message.text || '').trim();
 
   if (/^\/cancel$/i.test(replyText)) return false;
@@ -1978,7 +1987,7 @@ async function handleMessage(message) {
   const settingsWait =
     waitKeyPeek === 'profileBioTemplate' || waitKeyPeek === 'profileBioCity';
   const replyHasPhoto = Boolean(
-    waitKeyPeek?.startsWith('reply:') && collectTelegramImageFileIds(message).length
+    waitKeyPeek?.startsWith('reply:') && collectTelegramReplyFileIds(message).length
   );
   if (
     !replyHasPhoto &&

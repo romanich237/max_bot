@@ -355,7 +355,8 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
 
   for (const message of toSend) {
     if (!shouldForward(message)) {
-      logMessage(message, `Пропуск (моё) · ${chatLabelFromUrl(chatUrl)}`);
+      const reason = message.isService ? 'служебное' : 'моё';
+      logMessage(message, `Пропуск (${reason}) · ${chatLabelFromUrl(chatUrl)}`);
       await persistMessage(message, { forwarded: false });
       rememberMessage(message, chatState);
       continue;

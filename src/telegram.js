@@ -3,7 +3,7 @@ const path = require('path');
 const { File } = require('node:buffer');
 const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName, isPrivateChatId } = require('./config');
 const { isOwnByAuthor } = require('./parser');
-const { chatLabelFromUrl, allowsMaxReply } = require('./max-chats');
+const { chatLabelFromUrl, allowsMaxReply, isPersonalMaxChat } = require('./max-chats');
 const replyStore = require('./reply-store');
 const outbox = require('./tg-outbox');
 
@@ -53,8 +53,22 @@ function displayAuthor(author) {
 }
 
 function formatAuthorLine(author) {
-  const clean = displayAuthor(author) || 'неизвестно';
+  const clean = displayAuthor(author);
+  if (!clean) return '';
   return `Кто написал: <b>${escapeHtml(clean)}</b>`;
+}
+
+function shouldShowAuthorLine(message, meta = {}) {
+  const url = meta.maxChatUrl || message.maxChatUrl || '';
+  if (url && isPersonalMaxChat(url)) return false;
+
+  const author = displayAuthor(message.author);
+  if (!author) return false;
+
+  const chatName = url ? chatLabelFromUrl(url) : '';
+  if (chatName && author.toLowerCase() === chatName.toLowerCase()) return false;
+
+  return true;
 }
 
 function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {}) {
@@ -67,7 +81,9 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
   if (chatName) {
     parts.push(`Чат: <b>${escapeHtml(chatName)}</b>`);
   }
-  parts.push(formatAuthorLine(message.author));
+  if (shouldShowAuthorLine(message, meta)) {
+    parts.push(formatAuthorLine(message.author));
+  }
 
   if (showServiceHeader) {
     const maxName = getMaxDisplayName();
@@ -216,6 +232,19 @@ function recordSendResult(chatId, data, sendContext, messageIdExtractor) {
   }
 }
 
+function resolveUpload(value) {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    return { path: value, filename: path.basename(value) };
+  }
+  const filePath = value.path || value.localPath || '';
+  if (!filePath) return null;
+  return {
+    path: filePath,
+    filename: value.filename || value.fileName || path.basename(filePath),
+  };
+}
+
 async function callTelegram(method, fields, files = {}, sendContext = {}) {
   const { token } = getTelegram();
   const chatIds = notifyChatIds(sendContext);
@@ -249,10 +278,11 @@ async function callTelegram(method, fields, files = {}, sendContext = {}) {
           appendFormField(form, key, value);
         }
 
-        for (const [fieldName, filePath] of Object.entries(files)) {
-          if (!filePath || !fs.existsSync(filePath)) continue;
-          const buffer = fs.readFileSync(filePath);
-          const file = new File([buffer], path.basename(filePath));
+        for (const [fieldName, fileValue] of Object.entries(files)) {
+          const upload = resolveUpload(fileValue);
+          if (!upload?.path || !fs.existsSync(upload.path)) continue;
+          const buffer = fs.readFileSync(upload.path);
+          const file = new File([buffer], upload.filename || path.basename(upload.path));
           form.append(fieldName, file);
         }
 
@@ -401,7 +431,11 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, sendConte
   }
 
   const context = withCaption && method !== 'sendVoice' ? sendContext : { ...sendContext, replyMarkup: null };
-  await callTelegram(method, extra, { [field]: media.localPath }, context);
+  const upload = {
+    path: media.localPath,
+    filename: media.fileName || path.basename(media.localPath),
+  };
+  await callTelegram(method, extra, { [field]: upload }, context);
 
   if (sendContext.replyMarkup && method === 'sendVoice') {
     const { token } = getTelegram();
@@ -518,8 +552,9 @@ async function flushTelegramOutbox() {
         });
       } else {
         const files = {};
-        for (const [field, filePath] of Object.entries(job.files || {})) {
-          if (filePath && fs.existsSync(filePath)) files[field] = filePath;
+        for (const [field, fileValue] of Object.entries(job.files || {})) {
+          const upload = resolveUpload(fileValue);
+          if (upload?.path && fs.existsSync(upload.path)) files[field] = upload;
         }
         await callTelegram(job.method || 'sendMessage', job.fields || {}, files, sendContext);
       }

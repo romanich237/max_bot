@@ -257,8 +257,26 @@ function isOwnByAuthor(author) {
   );
 }
 
+function looksLikeMaxControlNotice(message) {
+  if (message.isService) return true;
+  if (message.reply || (message.media && message.media.length)) return false;
+  const text = String(message.body || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || text.length > 180) return false;
+  return (
+    /добав(ил|ила)\(-а\)/i.test(text) ||
+    /покинул\(-а\)\s+чат/i.test(text) ||
+    /исключил\(-а\)/i.test(text) ||
+    /изменил\(-а\)\s+название\s+чата/i.test(text) ||
+    /стал(а)?\s+администратором/i.test(text)
+  );
+}
+
 function shouldForward(message) {
-  return !message.isOwn;
+  if (message.isOwn) return false;
+  if (looksLikeMaxControlNotice(message)) return false;
+  return true;
 }
 
 function keyAuthor(author) {
@@ -558,6 +576,8 @@ async function parseMessages(page) {
                 '[class*="attachFile"]',
                 '[class*="attachDoc"]',
                 '[class*="attachAudio"]',
+                '.attaches',
+                '.fileIcon',
                 '.media',
                 '.grid',
                 '.tile',
@@ -620,6 +640,12 @@ async function parseMessages(page) {
         return /скачать\s*•\s*[\d.,]+\s*[kmgt]?b/i.test(value) && /\.(m4a|mp3|aac|ogg|oga|opus|wav|flac)\b/i.test(value);
       }
 
+      function isFileCardText(text) {
+        const value = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!value) return false;
+        return /скачать\s*•\s*[\d.,]+\s*[kmgt]?b/i.test(value);
+      }
+
       function isAudioAttachment(fileName, url) {
         const hay = `${fileName || ''} ${url || ''}`;
         return /\.(m4a|mp3|aac|ogg|oga|opus|wav|flac|mpeg)(?:\?|$)/i.test(hay);
@@ -651,16 +677,44 @@ async function parseMessages(page) {
           items.push({ type: 'photo', url: img.src });
         });
 
-        wrapper.querySelectorAll('[class*="attachFile"], [class*="attachDoc"]').forEach((el) => {
-          const link = el.querySelector('a[href]') || (el.tagName === 'A' ? el : null);
-          const url = link?.href || '';
-          const fileName = (el.innerText || link?.innerText || 'file').trim().split('\n')[0];
-          if (isAudioAttachment(fileName, url) || isAudioCardText(el.innerText || '')) {
+        function pushFileCard(card) {
+          if (!card) return;
+          const title =
+            card.querySelector('.title')?.innerText?.trim() ||
+            [...card.querySelectorAll('.text')]
+              .map((el) => String(el.innerText || '').trim())
+              .find((t) => /\.[a-z0-9]{2,8}$/i.test(t)) ||
+            '';
+          const info = card.querySelector('.info')?.innerText?.trim() || '';
+          const link = card.closest('a[href]') || card.querySelector('a[href]') || (card.tagName === 'A' ? card : null);
+          const url = link?.href && !String(link.href).startsWith('javascript:') ? link.href : '';
+          const fromLines = String(card.innerText || '')
+            .split('\n')
+            .map((line) => line.trim())
+            .find((line) => /\.[a-z0-9]{2,8}$/i.test(line) && !/скачать|download/i.test(line));
+          const fileName = title || fromLines || 'file';
+          if (isAudioAttachment(fileName, url) || isAudioCardText(card.innerText || '')) {
             items.push({ type: 'voice', url: url || undefined, fileName, duration: '' });
             return;
           }
-          if (url) items.push({ type: 'file', url, fileName });
+          items.push({
+            type: 'file',
+            url: url || undefined,
+            fileName,
+            size: info,
+          });
+        }
+
+        const fileCards = new Set();
+        wrapper.querySelectorAll('.attaches .fileIcon, [class*="attachFile"], [class*="attachDoc"]').forEach((el) => {
+          const card =
+            el.closest('button, a, [class*="attachFile"], [class*="attachDoc"]') || el.parentElement;
+          if (card) fileCards.add(card);
         });
+        wrapper.querySelectorAll('.attaches button[aria-label*="качать" i], .attaches button[aria-label*="download" i]').forEach((btn) => {
+          fileCards.add(btn);
+        });
+        fileCards.forEach((card) => pushFileCard(card));
 
         wrapper.querySelectorAll('.attaches a[href], .bubbleContent a[href]').forEach((link) => {
           const url = link.href;
@@ -704,10 +758,31 @@ async function parseMessages(page) {
         return Array.from(document.querySelectorAll(selector));
       }
 
+      function isControlWrapper(wrapper) {
+        return /(?:^|\s)messageWrapper--control(?:\s|$)/i.test(wrapper.className || '');
+      }
+
       const wrappers = queryWrappers(wrapperSelector);
       const wrapperDates = collectWrapperDates(wrappers);
       let lastAuthor = '';
       return wrappers.map((wrapper, index) => {
+        const wrapperClass = wrapper.className || '';
+        if (isControlWrapper(wrapper)) {
+          return {
+            index,
+            author: '',
+            body: String(wrapper.innerText || '')
+              .replace(/\s+/g, ' ')
+              .trim(),
+            reply: null,
+            time: '',
+            date: wrapperDates[index] || '',
+            media: [],
+            isOwn: false,
+            isService: true,
+          };
+        }
+
         let author = extractAuthor(wrapper);
         if (author === 'Неизвестно' && lastAuthor) {
           author = lastAuthor;
@@ -717,7 +792,7 @@ async function parseMessages(page) {
 
         const reply = extractReply(wrapper);
         let body = extractBody(wrapper);
-        if (isAudioCardText(body)) body = '';
+        if (isAudioCardText(body) || isFileCardText(body)) body = '';
         if (author && body === author) body = '';
         if (author && body.startsWith(`${author}\n`)) {
           body = body.slice(author.length).trim();
@@ -727,7 +802,6 @@ async function parseMessages(page) {
 
         const bubble = wrapper.querySelector('[data-bubbles-variant]');
         const variant = bubble?.getAttribute('data-bubbles-variant') || '';
-        const wrapperClass = wrapper.className || '';
         const bubbleClass = bubble?.className || '';
         const isOwn =
           variant === 'outgoing' ||
@@ -758,6 +832,7 @@ async function parseMessages(page) {
           date: wrapperDates[index] || '',
           media,
           isOwn,
+          isService: false,
         };
       });
     }, {
@@ -776,10 +851,14 @@ async function parseMessages(page) {
             body,
             reply: msg.reply || null,
             isOwn: msg.isOwn || isOwnByAuthor(msg.author),
+            isService: Boolean(msg.isService),
           };
           return attachIdentity(normalized);
         })
-        .filter((msg) => Boolean(msg.body) || (msg.media && msg.media.length > 0))
+        .filter((msg) => {
+          if (msg.isService || looksLikeMaxControlNotice(msg)) return false;
+          return Boolean(msg.body) || (msg.media && msg.media.length > 0);
+        })
     );
 }
 
@@ -857,6 +936,7 @@ module.exports = {
   diffByTail,
   waitForChat,
   shouldForward,
+  looksLikeMaxControlNotice,
   isOwnByAuthor,
   normalizeClock,
   attachIdentity,

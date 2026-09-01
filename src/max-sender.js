@@ -178,7 +178,7 @@ async function attachFilesToComposer(page, filePaths) {
     }
   }
 
-  throw new Error('Не удалось прикрепить фото в MAX');
+  throw new Error('Не удалось прикрепить файл в MAX');
 }
 
 async function waitForSendReady(page, timeoutMs = 10000) {

@@ -16,6 +16,7 @@ async function launchMaxContext(userDataDir, options = {}) {
     deviceScaleFactor: options.deviceScaleFactor ?? 2,
     locale: 'ru-RU',
     userAgent: USER_AGENT,
+    acceptDownloads: true,
     args: BROWSER_ARGS,
     ignoreDefaultArgs: ['--enable-automation'],
   });
