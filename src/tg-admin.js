@@ -26,6 +26,7 @@ const {
   isRequiredChatUrl,
   isPersonalMaxChat,
   isGroupMaxChat,
+  allowsMaxReply,
   getStoredChatKind,
   setChatKind,
   isChatForwardEnabled,
@@ -288,10 +289,14 @@ function previewText(text, max = 80) {
 }
 
 async function dispatchMaxReply(chatId, target, text) {
+  if (!isPrivateChatId(chatId)) return;
+
   if (!target) {
     await sendMessage(chatId, REPLY.stale);
     return;
   }
+
+  if (!allowsMaxReply(target.maxChatUrl)) return;
 
   if (!replyHandler) {
     await sendMessage(chatId, REPLY.unavailable);
@@ -1480,9 +1485,12 @@ async function handleMessage(message) {
   }
 
   if (text && !text.startsWith('/') && !waitKey && message.reply_to_message?.message_id) {
+    if (!isPrivateChatId(chatId)) return;
     const target = replyStore.getByTelegramMessage(chatId, message.reply_to_message.message_id);
     if (target) {
-      await dispatchMaxReply(chatId, target, text);
+      if (allowsMaxReply(target.maxChatUrl)) {
+        await dispatchMaxReply(chatId, target, text);
+      }
       return;
     }
   }
@@ -1846,6 +1854,11 @@ async function handleCallback(query) {
     const target = replyStore.get(data.slice('reply:'.length));
     if (!target) {
       await answerCallback(query.id, 'Сообщение устарело');
+      return;
+    }
+
+    if (!isPrivateChatId(chatId) || !allowsMaxReply(target.maxChatUrl)) {
+      await answerCallback(query.id, REPLY.groupsDisabledShort);
       return;
     }
 

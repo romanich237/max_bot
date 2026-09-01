@@ -23,6 +23,7 @@ const {
   chatIdFromUrl,
   chatLabelFromUrl,
   chatKindFromUrl,
+  allowsMaxReply,
 } = require('./max-chats');
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
@@ -713,6 +714,10 @@ async function startMonitor() {
   });
 
   setReplyHandler(async (targetMessage, text) => {
+    if (!allowsMaxReply(targetMessage.maxChatUrl)) {
+      throw new Error('Ответить можно только в личных чатах MAX');
+    }
+
     if (authBusy) {
       throw new Error('Идёт авторизация MAX, повторите позже');
     }

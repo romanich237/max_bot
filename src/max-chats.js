@@ -162,6 +162,10 @@ function isGroupMaxChat(url) {
   return getChatKind(url) === 'group';
 }
 
+function allowsMaxReply(url) {
+  return isPersonalMaxChat(url);
+}
+
 function defaultNotifyTarget(url) {
   if (isRequiredChatUrl(url) || isPersonalMaxChat(url)) return 'dm';
   return 'both';
@@ -1046,6 +1050,7 @@ Object.assign(module.exports, {
   removeChatKind,
   isPersonalMaxChat,
   isGroupMaxChat,
+  allowsMaxReply,
   defaultNotifyTarget,
   getChatTitles,
   getChatTitle,

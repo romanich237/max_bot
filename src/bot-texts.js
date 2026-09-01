@@ -373,6 +373,7 @@ const SETUP = {
 const REPLY = {
   stale: 'Сообщение устарело. Нажмите «Ответить» на актуальном сообщении из MAX.',
   unavailable: 'Ответы временно недоступны. Перезапустите бота: <code>pm2 restart max-tg</code>',
+  groupsDisabledShort: 'Только в личных чатах MAX',
   sent: (author) => ({
     title: 'Ответ отправлен',
     lines: [`Получатель в MAX: <b>${author}</b>`],

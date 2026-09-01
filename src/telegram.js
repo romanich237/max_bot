@@ -3,7 +3,7 @@ const path = require('path');
 const { File } = require('node:buffer');
 const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName, isPrivateChatId } = require('./config');
 const { isOwnByAuthor } = require('./parser');
-const { chatLabelFromUrl } = require('./max-chats');
+const { chatLabelFromUrl, allowsMaxReply } = require('./max-chats');
 const replyStore = require('./reply-store');
 
 function escapeHtml(text) {
@@ -96,27 +96,27 @@ function notifyChatIds(sendContext = {}) {
   return getNotificationChatIdsForMaxChat(sendContext.maxChatUrl);
 }
 
+function buildReplyButtonMarkup(storeId, maxChatUrl, isCatchUp = false) {
+  if (isCatchUp || !allowsMaxReply(maxChatUrl)) return null;
+  return {
+    _storeId: storeId,
+    inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${storeId}` }]],
+  };
+}
+
 function prepareForward(message, maxChatUrl, isCatchUp) {
   const storeId = replyStore.put(message, maxChatUrl);
   const chatIds = getNotificationChatIdsForMaxChat(maxChatUrl);
   const replyToByChat = replyStore.resolveReplyToByChat(maxChatUrl, message.reply, chatIds);
   const useNativeReply = Boolean(message.reply && Object.keys(replyToByChat).length);
-  const replyMarkup = isCatchUp
-    ? null
-    : {
-        _storeId: storeId,
-        inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${storeId}` }]],
-      };
+  const replyMarkup = buildReplyButtonMarkup(storeId, maxChatUrl, isCatchUp);
 
   return { storeId, replyToByChat, useNativeReply, replyMarkup, maxChatUrl };
 }
 
 function buildReplyMarkup(message, maxChatUrl) {
   const storeId = replyStore.put(message, maxChatUrl);
-  return {
-    _storeId: storeId,
-    inline_keyboard: [[{ text: '↩️ Ответить', callback_data: `reply:${storeId}` }]],
-  };
+  return buildReplyButtonMarkup(storeId, maxChatUrl);
 }
 
 function stripReplyMarkup(markup) {
