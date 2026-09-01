@@ -36,6 +36,15 @@ function formatReply(reply) {
   return `↩ <b>${author}</b>:\n${body}`;
 }
 
+function isAudioCardText(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return false;
+  if (/\b(m4a|mp3|aac|ogg|oga|opus|wav|flac)\b/i.test(value) && /скачать|download|\.m4a|\.mp3|\.ogg|\.aac/i.test(value)) {
+    return true;
+  }
+  return /скачать\s*•\s*[\d.,]+\s*[kmgt]?b/i.test(value) && /\.(m4a|mp3|aac|ogg|oga|opus|wav|flac)\b/i.test(value);
+}
+
 function displayAuthor(author) {
   const clean = String(author || '').trim();
   if (!clean || clean === 'Неизвестно') return '';
@@ -77,7 +86,7 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
   const header = parts.filter(Boolean).join('\n');
   const tail = [];
 
-  if (message.body) tail.push(escapeHtml(message.body));
+  if (message.body && !isAudioCardText(message.body)) tail.push(escapeHtml(message.body));
 
   if (showTime && (message.time || message.date)) {
     const when = [message.date, message.clock || message.time].filter(Boolean).join(' ');
@@ -89,6 +98,8 @@ function buildMessageText(message, isCatchUp = false, meta = {}, sendContext = {
 
 function replyMarkupForChat(chatId, replyMarkup) {
   if (!replyMarkup || !isPrivateChatId(chatId)) return null;
+  const { canTelegramUserReply } = require('./max-chats');
+  if (!canTelegramUserReply(chatId)) return null;
   return replyMarkup;
 }
 
@@ -231,6 +242,7 @@ function endpointForMedia(type) {
     photo: { method: 'sendPhoto', field: 'photo' },
     video: { method: 'sendVideo', field: 'video' },
     voice: { method: 'sendVoice', field: 'voice' },
+    audio: { method: 'sendAudio', field: 'audio' },
     sticker: { method: 'sendPhoto', field: 'photo' },
     file: { method: 'sendDocument', field: 'document' },
   };
@@ -316,12 +328,21 @@ async function sendVoiceWithContext(message, voiceFile, withContext, isCatchUp, 
     }
   }
 
-  const { method, field } = endpointForMedia('voice');
-  const ok = await callTelegram(method, {}, { [field]: voiceFile.localPath }, sendContext);
+  const sendAs =
+    voiceFile.sendAs ||
+    (/\.(ogg|oga|opus)$/i.test(voiceFile.localPath || '') ? 'voice' : 'audio');
 
-  if (!ok) {
-    await callTelegram('sendAudio', { title: message.author || 'voice' }, { audio: voiceFile.localPath }, sendContext);
+  if (sendAs === 'voice') {
+    const ok = await callTelegram('sendVoice', {}, { voice: voiceFile.localPath }, sendContext);
+    if (ok) return;
   }
+
+  await callTelegram(
+    'sendAudio',
+    { title: message.author || 'voice' },
+    { audio: voiceFile.localPath },
+    sendContext
+  );
 }
 
 async function sendSingleMedia(message, media, isCatchUp, withCaption, sendContext, meta = {}) {
@@ -374,7 +395,7 @@ async function sendToTelegram(message, options = {}) {
   for (let i = 0; i < others.length; i++) {
     const media = others[i];
 
-    if (media.type === 'voice') {
+    if (media.type === 'voice' || media.type === 'audio') {
       await sendVoiceWithContext(message, media, !captionUsed, isCatchUp, sendContext, meta);
       if (!captionUsed && sendContext.replyMarkup) {
         const { token } = getTelegram();

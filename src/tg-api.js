@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { File } = require('node:buffer');
 const { getTelegram } = require('./config');
 
@@ -234,6 +236,35 @@ async function getChat(chatId, tokenOverride) {
   return api('getChat', { chat_id: chatId }, tokenOverride);
 }
 
+async function getFile(fileId, tokenOverride) {
+  return api('getFile', { file_id: fileId }, tokenOverride);
+}
+
+async function downloadTelegramFile(fileId, destDir, tokenOverride) {
+  const data = await getFile(fileId, tokenOverride);
+  if (!data.ok || !data.result?.file_path) {
+    throw new Error(data.description || 'Не удалось получить файл из Telegram');
+  }
+
+  const filePath = String(data.result.file_path);
+  const ext = path.extname(filePath) || '.jpg';
+  const token = resolveToken(tokenOverride);
+  const url = `${TELEGRAM_API}/file/bot${token}/${filePath}`;
+  const response = await fetchTelegram(url, { method: 'GET' });
+  if (!response.ok) {
+    throw new Error(`Скачивание файла: HTTP ${response.status}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  fs.mkdirSync(destDir, { recursive: true });
+  const dest = path.join(
+    destDir,
+    `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+  );
+  fs.writeFileSync(dest, buffer);
+  return dest;
+}
+
 let cachedBotUser = null;
 
 async function getMe(tokenOverride) {
@@ -282,6 +313,8 @@ module.exports = {
   editMessageText,
   editMessageCaption,
   getChat,
+  getFile,
+  downloadTelegramFile,
   getMe,
   getBotUserId,
   getBotUsername,

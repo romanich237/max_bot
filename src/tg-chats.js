@@ -330,11 +330,13 @@ function listKnownGroupChats() {
 function listKnownNotifyUsers() {
   return listBoundNotifyUserIds().map((id) => {
     const known = getKnownChat(id) || { title: 'Без названия', type: 'private' };
+    const { canTelegramUserReply } = require('./max-chats');
     return {
       ...known,
       id: String(id),
       bound: true,
       wrote: hasWrittenToBot(id),
+      canReply: canTelegramUserReply(id),
     };
   });
 }
@@ -450,7 +452,7 @@ function buildNotifyChatText(adminByChat = {}) {
       for (const user of users) {
         const title = user.title || 'Без названия';
         lines.push(
-          `• <b>${escapeHtml(title)}</b> (<code>${user.id}</code>) — ${wroteMark(user.wrote)}`
+          `• <b>${escapeHtml(title)}</b> (<code>${user.id}</code>) — ${wroteMark(user.wrote)}, ${user.canReply ? 'ответы ✅' : 'ответы ❌'}`
         );
       }
     }
@@ -479,10 +481,11 @@ async function buildNotifyChatKeyboard(adminByChat = {}) {
     const title = user.title || 'Без названия';
     rows.push([
       {
-        text: truncateButtonLabel(`${user.wrote ? '✅' : '❌'} ${title}`, 28),
+        text: truncateButtonLabel(`${user.wrote ? '✅' : '❌'} ${title}`, 22),
         callback_data: `notify:chat:${user.id}`,
         style: user.wrote ? 'success' : 'danger',
       },
+      { text: BUTTONS.userSettings, callback_data: `notify:chat:${user.id}` },
       withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${user.id}` }, 'trash'),
     ]);
   }
@@ -530,8 +533,10 @@ function buildNotifyUserViewText(chatId) {
   const known = getKnownChat(chatId);
   const title = known?.title || 'Без названия';
   const wrote = hasWrittenToBot(chatId);
+  const { canTelegramUserReply } = require('./max-chats');
+  const canReply = canTelegramUserReply(chatId);
   const lines = [
-    '<b>Пользователь для уведомлений</b>',
+    '<b>Настройки пользователя</b>',
     '',
     `Имя: <b>${escapeHtml(title)}</b>`,
     `ID: <code>${escapeHtml(String(chatId))}</code>`,
@@ -541,18 +546,33 @@ function buildNotifyUserViewText(chatId) {
     lines.push(`Ссылка: https://t.me/${encodeURIComponent(known.username)}`);
   }
   lines.push(`В бота: ${wroteMark(wrote)}`);
+  lines.push(canReply ? CHATS.userReplyOn : CHATS.userReplyOff);
   if (!wrote) {
     lines.push('', 'Пока не писал боту — Telegram не даст отправить ему личное сообщение, пока он не нажмёт Start.');
   }
+  lines.push('', CHATS.userReplyHint);
   lines.push('', '«Удалить» убирает пользователя из рассылки.');
   return lines.join('\n');
 }
 
-function buildNotifyUserViewKeyboard(chatId) {
+function buildNotifyUserViewKeyboard(chatId, backData = 'action:notifyChat') {
+  const { canTelegramUserReply } = require('./max-chats');
+  const { withOnOffEmoji } = require('./bot-texts');
+  const canReply = canTelegramUserReply(chatId);
   return {
     inline_keyboard: [
+      [
+        withOnOffEmoji(
+          {
+            text: BUTTONS.userCanReply,
+            callback_data: `notify:reply:${chatId}`,
+            style: canReply ? 'success' : 'danger',
+          },
+          canReply
+        ),
+      ],
       [withTgEmoji({ text: BUTTONS.removeNotifyGroup, callback_data: `notify:remove:${chatId}` }, 'trash')],
-      [{ text: '« К списку', callback_data: 'action:notifyChat' }],
+      [{ text: '« Назад', callback_data: backData || 'action:notifyChat' }],
     ],
   };
 }

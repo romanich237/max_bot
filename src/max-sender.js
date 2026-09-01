@@ -110,11 +110,15 @@ async function typeInComposer(page, input, text) {
   }
 }
 
-async function submitComposer(page) {
-  const sendBtn = page
+function sendButton(page) {
+  return page
     .getByRole('button', { name: /send message|^send$|отправить/i })
     .or(page.locator('button[aria-label*="Send" i], button[aria-label*="отправить" i]'))
     .last();
+}
+
+async function submitComposer(page) {
+  const sendBtn = sendButton(page);
 
   if (await sendBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
     if (await sendBtn.isEnabled().catch(() => true)) {
@@ -126,9 +130,75 @@ async function submitComposer(page) {
   await page.keyboard.press('Enter');
 }
 
-async function sendReplyInMax(page, message, text, wrapperSelector) {
-  const trimmed = (text || '').trim();
-  if (!trimmed) {
+function normalizeReplyPayload(payload) {
+  if (typeof payload === 'string' || payload == null) {
+    return { text: String(payload || ''), photos: [] };
+  }
+  return {
+    text: String(payload.text || ''),
+    photos: Array.isArray(payload.photos) ? payload.photos.filter(Boolean) : [],
+  };
+}
+
+async function attachFilesToComposer(page, filePaths) {
+  if (!filePaths.length) return;
+
+  const fileInputs = page.locator('input[type="file"]');
+  const count = await fileInputs.count();
+  for (let i = count - 1; i >= 0; i--) {
+    try {
+      await fileInputs.nth(i).setInputFiles(filePaths);
+      await page.waitForTimeout(400);
+      return;
+    } catch {
+      /* следующий input */
+    }
+  }
+
+  const attachBtns = [
+    page.getByRole('button', { name: /attach|прикрепить|файл|фото|clip|скрепк/i }),
+    page.locator(
+      'button[aria-label*="attach" i], button[aria-label*="файл" i], button[aria-label*="прикреп" i], button[aria-label*="clip" i]'
+    ),
+  ];
+
+  for (const loc of attachBtns) {
+    const btn = loc.first();
+    if (!(await btn.isVisible({ timeout: 800 }).catch(() => false))) continue;
+    try {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 4000 }),
+        btn.click(),
+      ]);
+      await chooser.setFiles(filePaths);
+      await page.waitForTimeout(400);
+      return;
+    } catch {
+      /* следующая кнопка */
+    }
+  }
+
+  throw new Error('Не удалось прикрепить фото в MAX');
+}
+
+async function waitForSendReady(page, timeoutMs = 10000) {
+  const sendBtn = sendButton(page);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (
+      (await sendBtn.isVisible().catch(() => false)) &&
+      (await sendBtn.isEnabled().catch(() => false))
+    ) {
+      return;
+    }
+    await page.waitForTimeout(200);
+  }
+}
+
+async function sendReplyInMax(page, message, payload, wrapperSelector) {
+  const { text, photos } = normalizeReplyPayload(payload);
+  const trimmed = text.trim();
+  if (!trimmed && !photos.length) {
     throw new Error('Пустой ответ');
   }
 
@@ -154,9 +224,20 @@ async function sendReplyInMax(page, message, text, wrapperSelector) {
     throw new Error('Не удалось открыть ответ на сообщение в MAX');
   }
 
-  const input = await findComposer(page);
-  await typeInComposer(page, input, trimmed);
-  await page.waitForTimeout(150);
+  if (photos.length) {
+    await attachFilesToComposer(page, photos);
+    await waitForSendReady(page);
+  }
+
+  if (trimmed) {
+    const input = await findComposer(page);
+    await typeInComposer(page, input, trimmed);
+    await page.waitForTimeout(150);
+  } else {
+    await findComposer(page).catch(() => null);
+    await page.waitForTimeout(150);
+  }
+
   await submitComposer(page);
   await page.waitForTimeout(500);
 }

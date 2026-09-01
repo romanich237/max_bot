@@ -1,5 +1,5 @@
 const store = require('./settings-store');
-const { withTgEmoji, withOnOffEmoji } = require('./bot-texts');
+const { withTgEmoji, withOnOffEmoji, BUTTONS } = require('./bot-texts');
 
 const MAX_CHAT_URL_RE = /^https:\/\/web\.max\.ru\/[-\w]+/i;
 
@@ -306,6 +306,48 @@ function isAdminTelegramUser(chatId) {
   return getAdminTelegramUserIds().includes(String(chatId || ''));
 }
 
+function getNotifyReplyUserIds() {
+  const raw = store.getPath(['telegram', 'notifyReplyUserIds']);
+  const ids = Array.isArray(raw) ? raw : [];
+  return [...new Set(ids.map((id) => String(id || '')).filter(isPrivateTelegramId))];
+}
+
+function canTelegramUserReply(chatId) {
+  const id = String(chatId || '');
+  if (!isPrivateTelegramId(id)) return false;
+  if (isAdminTelegramUser(id)) return true;
+  return getNotifyReplyUserIds().includes(id);
+}
+
+function setNotifyUserCanReply(chatId, enabled) {
+  const id = String(chatId || '');
+  if (!isPrivateTelegramId(id)) {
+    return { error: 'Ответы можно включить только пользователю.' };
+  }
+  if (isAdminTelegramUser(id)) {
+    return { ok: true, enabled: true, unchanged: true };
+  }
+  const ids = new Set(getNotifyReplyUserIds());
+  if (enabled) ids.add(id);
+  else ids.delete(id);
+  store.setPath(['telegram', 'notifyReplyUserIds'], [...ids]);
+  return { ok: true, enabled: ids.has(id) };
+}
+
+function toggleNotifyUserCanReply(chatId) {
+  return setNotifyUserCanReply(chatId, !canTelegramUserReply(chatId));
+}
+
+function pruneNotifyReplyUserId(chatId) {
+  const id = String(chatId || '');
+  if (!id) return;
+  const current = getNotifyReplyUserIds();
+  const next = current.filter((item) => item !== id);
+  if (next.length !== current.length) {
+    store.setPath(['telegram', 'notifyReplyUserIds'], next);
+  }
+}
+
 function getBoundTelegramIds() {
   const t = store.getPath(['telegram']) || {};
   const ids = (t.chatIds || []).map(String).filter(Boolean);
@@ -475,6 +517,7 @@ function removeNotifyChatIds(url) {
 function pruneNotifyChatId(chatId) {
   const id = String(chatId || '');
   if (!id) return;
+  pruneNotifyReplyUserId(id);
   const map = getNotifyChatIdsMap();
   let changed = false;
   for (const [url, ids] of Object.entries(map)) {
@@ -559,7 +602,14 @@ function destToggleButton(item, on, callbackData) {
   return button;
 }
 
-function buildTelegramDestRows(selectedIds, callbackForId, page = 0) {
+function destSettingsButton(item, callbackData) {
+  return {
+    text: BUTTONS.userSettings,
+    callback_data: callbackData,
+  };
+}
+
+function buildTelegramDestRows(selectedIds, callbackForId, page = 0, settingsCallbackForId = null) {
   const selected = new Set((selectedIds || []).map(String));
   const dests = getBoundTelegramIds().map(describeNotifyDest);
   const sticky = dests.filter((item) => item.kind === 'admin');
@@ -573,7 +623,11 @@ function buildTelegramDestRows(selectedIds, callbackForId, page = 0) {
     rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
   }
   for (const item of slice) {
-    rows.push([destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))]);
+    const row = [destToggleButton(item, selected.has(item.id), callbackForId(item.id, safePage))];
+    if (item.kind === 'user' && typeof settingsCallbackForId === 'function') {
+      row.push(destSettingsButton(item, settingsCallbackForId(item.id, safePage)));
+    }
+    rows.push(row);
   }
 
   return { rows, page: safePage, totalPages, groupsCount: rest.length, destCount: dests.length };
@@ -1066,7 +1120,8 @@ function buildMaxChatPickWhereKeyboard(selectedIds = [], page = 0) {
   const { rows, totalPages, page: safePage } = buildTelegramDestRows(
     selected,
     (id, destPage) => `maxchat:adddest:${destPage}:${id}`,
-    page
+    page,
+    (id, destPage) => `maxchat:adduserset:${destPage}:${id}`
   );
 
   const nav = buildDestNavRow(
@@ -1092,7 +1147,8 @@ function buildMaxChatViewKeyboard(index, destPage = 0) {
     const { rows: destRows, totalPages, page: safePage } = buildTelegramDestRows(
       selected,
       (id, page) => `maxchat:dest:${index}:${page}:${id}`,
-      destPage
+      destPage,
+      (id, page) => `maxchat:userset:${index}:${page}:${id}`
     );
     rows.push(...destRows);
     const nav = buildDestNavRow(
@@ -1159,6 +1215,9 @@ Object.assign(module.exports, {
   setRequiredChatForwardEnabled,
   getBoundTelegramIds,
   isAdminTelegramUser,
+  canTelegramUserReply,
+  toggleNotifyUserCanReply,
+  setNotifyUserCanReply,
   getNotifyTarget,
   setNotifyTarget,
   cycleNotifyTarget,

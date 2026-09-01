@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const {
   store,
   getTelegram,
@@ -9,6 +11,7 @@ const {
   getMonitorChatUrls,
   getNotificationChatIds,
   isPrivateChatId,
+  getSettings,
 } = require('./config');
 const {
   setDefaultChatUrl,
@@ -28,6 +31,8 @@ const {
   isPersonalMaxChat,
   isGroupMaxChat,
   allowsMaxReply,
+  canTelegramUserReply,
+  toggleNotifyUserCanReply,
   getStoredChatKind,
   setChatKind,
   isChatForwardEnabled,
@@ -60,6 +65,7 @@ const {
   pollUpdates,
   sendPhotoBuffer,
   editMessageCaption,
+  downloadTelegramFile,
 } = require('./tg-api');
 const {
   TOGGLES,
@@ -158,6 +164,7 @@ let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 const maxChatAddCache = new Map();
 const bindUserContext = new Map();
+const userSettingsContext = new Map();
 const pendingProfileBioEnable = new Set();
 
 let authInputWaiter = null;
@@ -298,23 +305,93 @@ function previewText(text, max = 80) {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-async function dispatchMaxReply(chatId, target, text) {
-  if (!isPrivateChatId(chatId)) return;
+function collectTelegramImageFileIds(message) {
+  const ids = [];
+  if (Array.isArray(message.photo) && message.photo.length) {
+    ids.push(message.photo[message.photo.length - 1].file_id);
+  }
+  const doc = message.document;
+  if (doc?.file_id && /^image\//i.test(doc.mime_type || '')) {
+    ids.push(doc.file_id);
+  }
+  return ids;
+}
+
+function unlinkQuiet(files) {
+  for (const file of files || []) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function downloadReplyImages(fileIds) {
+  if (!fileIds.length) return [];
+  const dir = path.join(getSettings().dataDir, 'reply-uploads');
+  const photos = [];
+  for (const id of fileIds) {
+    photos.push(await downloadTelegramFile(id, dir));
+  }
+  return photos;
+}
+
+const replyAlbumBuffers = new Map();
+
+function clearReplyAlbums(chatId) {
+  const prefix = `${chatId}:`;
+  for (const [key, buf] of replyAlbumBuffers) {
+    if (key.startsWith(prefix)) {
+      clearTimeout(buf.timer);
+      replyAlbumBuffers.delete(key);
+    }
+  }
+}
+
+function normalizeReplyPayload(payload) {
+  if (typeof payload === 'string' || payload == null) {
+    return { text: String(payload || ''), photos: [] };
+  }
+  return {
+    text: String(payload.text || ''),
+    photos: Array.isArray(payload.photos) ? payload.photos.filter(Boolean) : [],
+  };
+}
+
+async function dispatchMaxReply(chatId, target, payload) {
+  const { text, photos } = normalizeReplyPayload(payload);
+
+  if (!isPrivateChatId(chatId)) {
+    unlinkQuiet(photos);
+    return;
+  }
+
+  if (!canTelegramUserReply(chatId)) {
+    unlinkQuiet(photos);
+    await sendMessage(chatId, 'Ответы в боте для вас выключены.');
+    return;
+  }
 
   if (!target) {
+    unlinkQuiet(photos);
     await sendMessage(chatId, REPLY.stale);
     return;
   }
 
-  if (!allowsMaxReply(target.maxChatUrl)) return;
+  if (!allowsMaxReply(target.maxChatUrl)) {
+    unlinkQuiet(photos);
+    return;
+  }
 
   if (!replyHandler) {
+    unlinkQuiet(photos);
     await sendMessage(chatId, REPLY.unavailable);
     return;
   }
 
   try {
-    await replyHandler(target, text);
+    await replyHandler(target, { text, photos });
     await sendMessage(
       chatId,
       buildEventMessage({
@@ -330,7 +407,94 @@ async function dispatchMaxReply(chatId, target, text) {
         status: 'fail',
       })
     );
+  } finally {
+    unlinkQuiet(photos);
   }
+}
+
+async function flushReplyAlbum(key) {
+  const buf = replyAlbumBuffers.get(key);
+  if (!buf) return;
+  replyAlbumBuffers.delete(key);
+  clearTimeout(buf.timer);
+  waitingInput.delete(String(buf.chatId));
+
+  let photos = [];
+  try {
+    photos = await downloadReplyImages(buf.fileIds);
+    await clearInputPrompt(buf.chatId, buf.userMessageId);
+    await dispatchMaxReply(buf.chatId, buf.target, { text: buf.caption, photos });
+    photos = [];
+  } catch (err) {
+    unlinkQuiet(photos);
+    await sendMessage(
+      buf.chatId,
+      buildEventMessage({
+        ...REPLY.failed(escapeHtml(err.message)),
+        status: 'fail',
+      })
+    );
+  }
+}
+
+async function handleReplyWaitContent(chatId, message, waitKey) {
+  const fileIds = collectTelegramImageFileIds(message);
+  let replyText = (message.caption || message.text || '').trim();
+
+  if (/^\/cancel$/i.test(replyText)) return false;
+  if (replyText.startsWith('/')) {
+    if (!fileIds.length) return false;
+    replyText = '';
+  }
+  if (!fileIds.length && !replyText) return false;
+
+  const target = replyStore.get(waitKey.slice('reply:'.length));
+  const mediaGroupId = message.media_group_id;
+
+  if (mediaGroupId && fileIds.length) {
+    const key = `${chatId}:${mediaGroupId}`;
+    let buf = replyAlbumBuffers.get(key);
+    if (!buf) {
+      buf = {
+        fileIds: [...fileIds],
+        caption: replyText,
+        target,
+        chatId,
+        userMessageId: message.message_id,
+        timer: null,
+      };
+      replyAlbumBuffers.set(key, buf);
+    } else {
+      buf.fileIds.push(...fileIds);
+      if (replyText) buf.caption = buf.caption || replyText;
+      buf.userMessageId = message.message_id;
+    }
+    clearTimeout(buf.timer);
+    buf.timer = setTimeout(() => {
+      flushReplyAlbum(key).catch((err) => {
+        console.error('Ошибка отправки альбома в MAX:', err.message);
+      });
+    }, 800);
+    return true;
+  }
+
+  waitingInput.delete(String(chatId));
+  let photos = [];
+  try {
+    photos = await downloadReplyImages(fileIds);
+    await clearInputPrompt(chatId, message.message_id);
+    await dispatchMaxReply(chatId, target, { text: replyText, photos });
+  } catch (err) {
+    unlinkQuiet(photos);
+    await sendMessage(
+      chatId,
+      buildEventMessage({
+        ...REPLY.failed(escapeHtml(err.message)),
+        status: 'fail',
+      })
+    );
+  }
+  return true;
 }
 
 function onFlag(value) {
@@ -505,6 +669,105 @@ function isAdmin(chatId, userId) {
   if (userId != null && ids.includes(String(userId))) return true;
   if (chatId != null && isPrivateChatId(chatId) && ids.includes(String(chatId))) return true;
   return false;
+}
+
+function canUseMaxReply(chatId, userId) {
+  if (!isPrivateChatId(chatId)) return false;
+  if (userId != null && String(userId) !== String(chatId)) return false;
+  return canTelegramUserReply(chatId);
+}
+
+async function showBoundUserSettings(chatId, messageId, userId, backData = 'action:notifyChat') {
+  const targetId = String(userId);
+  userSettingsContext.set(String(chatId), { userId: targetId, backData: backData || 'action:notifyChat' });
+  await refreshTelegramChat(targetId).catch(() => null);
+  const extra = { reply_markup: buildNotifyUserViewKeyboard(targetId, backData) };
+  if (messageId) {
+    try {
+      await editMessageText(chatId, messageId, buildNotifyUserViewText(targetId), extra);
+      return;
+    } catch (err) {
+      console.warn('showBoundUserSettings edit:', err.message);
+    }
+  }
+  await sendMessage(chatId, buildNotifyUserViewText(targetId), extra);
+}
+
+async function goUserSettingsBack(chatId, messageId, backData = 'action:notifyChat') {
+  const data = backData || 'action:notifyChat';
+  if (data.startsWith('maxchat:destpage:')) {
+    const parts = data.split(':');
+    const index = Number.parseInt(parts[2], 10) || 0;
+    const page = Number.parseInt(parts[3], 10) || 0;
+    await showMaxChatView(chatId, messageId, index, page);
+    return;
+  }
+  if (data.startsWith('maxchat:adddestpage:')) {
+    const page = Number.parseInt(data.slice('maxchat:adddestpage:'.length), 10) || 0;
+    const cache = maxChatAddCache.get(String(chatId));
+    await showMaxChatWherePrompt(chatId, { ...cache?.pending, destPage: page });
+    return;
+  }
+  await showNotifyChats(chatId, messageId);
+}
+
+async function handleReplyCallback(query) {
+  const chatId = query.message?.chat?.id;
+  const data = query.data || '';
+  const target = replyStore.get(data.slice('reply:'.length));
+  if (!target) {
+    await answerCallback(query.id, 'Сообщение устарело');
+    return;
+  }
+
+  if (!isPrivateChatId(chatId) || !canUseMaxReply(chatId, query.from?.id) || !allowsMaxReply(target.maxChatUrl)) {
+    await answerCallback(query.id, REPLY.groupsDisabledShort);
+    return;
+  }
+
+  waitingInput.set(String(chatId), data);
+  await answerCallback(query.id, 'Жду ответ');
+  await sendInputPrompt(
+    chatId,
+    [
+      `<b>Ответ для ${escapeHtml(target.author || 'пользователя')}</b>`,
+      `<i>${escapeHtml(previewText(target.body))}</i>`,
+      '',
+      'Напишите текст или отправьте фото.',
+      'Отмена: /cancel',
+    ].join('\n')
+  );
+}
+
+async function handleReplyOperatorMessage(message) {
+  const chatId = message.chat.id;
+  const text = (message.text || '').trim();
+  const waitKey = waitingInput.get(String(chatId));
+  const userMessageId = message.message_id;
+
+  if (/^\/cancel$/i.test(text)) {
+    waitingInput.delete(String(chatId));
+    clearReplyAlbums(chatId);
+    await clearInputPrompt(chatId, userMessageId);
+    await sendMessage(chatId, ERRORS.cancelled);
+    return;
+  }
+
+  if (waitKey?.startsWith('reply:') && (await handleReplyWaitContent(chatId, message, waitKey))) {
+    return;
+  }
+
+  if (text && !text.startsWith('/') && !waitKey && message.reply_to_message?.message_id) {
+    const target = replyStore.getByTelegramMessage(chatId, message.reply_to_message.message_id);
+    if (target) return;
+  }
+
+  if (text && !text.startsWith('/')) {
+    await sendMessage(
+      chatId,
+      'Чтобы ответить в MAX, нажмите «Ответить» под уведомлением.'
+    );
+  }
 }
 
 function isGroupChat(chat) {
@@ -1592,6 +1855,10 @@ async function handleMessage(message) {
   const chatId = message.chat.id;
   const userId = message.from?.id;
   if (!isAdmin(chatId, userId)) {
+    if (canUseMaxReply(chatId, userId)) {
+      await handleReplyOperatorMessage(message);
+      return;
+    }
     await rejectUnauthorized(message.chat, userId);
     return;
   }
@@ -1608,28 +1875,22 @@ async function handleMessage(message) {
     return;
   }
 
-  if (await handleAuthInput(chatId, text, message.message_id)) return;
+  const waitKeyPeek = waitingInput.get(String(chatId));
+  const replyHasPhoto = Boolean(
+    waitKeyPeek?.startsWith('reply:') && collectTelegramImageFileIds(message).length
+  );
+  if (!replyHasPhoto && (await handleAuthInput(chatId, text, message.message_id))) return;
 
   const waitKey = waitingInput.get(String(chatId));
   const userMessageId = message.message_id;
 
-  if (waitKey?.startsWith('reply:') && text && !text.startsWith('/')) {
-    const target = replyStore.get(waitKey.slice('reply:'.length));
-    waitingInput.delete(String(chatId));
-    await clearInputPrompt(chatId, userMessageId);
-    await dispatchMaxReply(chatId, target, text);
+  if (waitKey?.startsWith('reply:') && (await handleReplyWaitContent(chatId, message, waitKey))) {
     return;
   }
 
   if (text && !text.startsWith('/') && !waitKey && message.reply_to_message?.message_id) {
-    if (!isPrivateChatId(chatId)) return;
     const target = replyStore.getByTelegramMessage(chatId, message.reply_to_message.message_id);
-    if (target) {
-      if (allowsMaxReply(target.maxChatUrl)) {
-        await dispatchMaxReply(chatId, target, text);
-      }
-      return;
-    }
+    if (target) return;
   }
 
   if (waitKey === 'notify:bindUser' && text && !text.startsWith('/')) {
@@ -1673,6 +1934,7 @@ async function handleMessage(message) {
     const bindCtx = bindUserContext.get(key);
     pendingProfileBioEnable.delete(key);
     waitingInput.delete(key);
+    clearReplyAlbums(chatId);
     bindUserContext.delete(key);
     if (bindCtx) {
       await clearInputPrompt(chatId, userMessageId);
@@ -1697,6 +1959,7 @@ async function handleMessage(message) {
 
   if (/^\/start$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    clearReplyAlbums(chatId);
     bindUserContext.delete(String(chatId));
     const firstVisit = await sendPinnedAboutOnce(message.chat);
     if (!firstVisit) {
@@ -1712,6 +1975,7 @@ async function handleMessage(message) {
 
   if (/^\/menu$/i.test(text)) {
     waitingInput.delete(String(chatId));
+    clearReplyAlbums(chatId);
     bindUserContext.delete(String(chatId));
     await sendMessage(chatId, START.panel, {
       reply_markup: buildMenuKeyboard(),
@@ -1936,12 +2200,15 @@ async function handleManualUpdateCheck(chatId) {
 async function handleCallback(query) {
   const chatId = query.message?.chat?.id;
   const userId = query.from?.id;
+  const data = query.data || '';
   if (!chatId || !isAdmin(chatId, userId)) {
+    if (chatId && canUseMaxReply(chatId, userId) && data.startsWith('reply:')) {
+      await handleReplyCallback(query);
+      return;
+    }
     await rejectUnauthorized(query.message?.chat, userId, { callbackId: query.id });
     return;
   }
-
-  const data = query.data || '';
 
   if (data === 'auth:switch:qr') {
     if (authInputWaiter?.onSwitch) {
@@ -2020,29 +2287,7 @@ async function handleCallback(query) {
   }
 
   if (data.startsWith('reply:')) {
-    const target = replyStore.get(data.slice('reply:'.length));
-    if (!target) {
-      await answerCallback(query.id, 'Сообщение устарело');
-      return;
-    }
-
-    if (!isPrivateChatId(chatId) || !allowsMaxReply(target.maxChatUrl)) {
-      await answerCallback(query.id, REPLY.groupsDisabledShort);
-      return;
-    }
-
-    waitingInput.set(String(chatId), data);
-    await answerCallback(query.id, 'Жду ответ');
-    await sendInputPrompt(
-      chatId,
-      [
-        `<b>Ответ для ${escapeHtml(target.author || 'пользователя')}</b>`,
-        `<i>${escapeHtml(previewText(target.body))}</i>`,
-        '',
-        'Напишите текст сообщения.',
-        'Отмена: /cancel',
-      ].join('\n')
-    );
+    await handleReplyCallback(query);
     return;
   }
 
@@ -2117,14 +2362,8 @@ async function handleCallback(query) {
   if (data.startsWith('notify:chat:')) {
     const targetId = data.slice('notify:chat:'.length);
     if (isPrivateChatId(targetId)) {
-      await refreshTelegramChat(targetId);
-      await answerCallback(query.id, 'Пользователь');
-      await editMessageText(
-        chatId,
-        query.message.message_id,
-        buildNotifyUserViewText(targetId),
-        { reply_markup: buildNotifyUserViewKeyboard(targetId) }
-      );
+      await answerCallback(query.id, 'Настройки');
+      await showBoundUserSettings(chatId, query.message.message_id, targetId, 'action:notifyChat');
       return;
     }
     await refreshTelegramChat(targetId);
@@ -2139,6 +2378,23 @@ async function handleCallback(query) {
     return;
   }
 
+  if (data.startsWith('notify:reply:')) {
+    const targetId = data.slice('notify:reply:'.length);
+    if (!isPrivateChatId(targetId)) {
+      await answerCallback(query.id, 'Только для пользователя');
+      return;
+    }
+    const result = toggleNotifyUserCanReply(targetId);
+    if (result.error) {
+      await answerCallback(query.id, result.error);
+      return;
+    }
+    await answerCallback(query.id, result.enabled ? 'Ответы включены' : 'Ответы выключены');
+    const backData = userSettingsContext.get(String(chatId))?.backData || 'action:notifyChat';
+    await showBoundUserSettings(chatId, query.message.message_id, targetId, backData);
+    return;
+  }
+
   if (data.startsWith('notify:remove:')) {
     const targetId = data.slice('notify:remove:'.length);
     const result = unbindNotificationChat(targetId);
@@ -2147,6 +2403,13 @@ async function handleCallback(query) {
       return;
     }
     await answerCallback(query.id, isPrivateChatId(targetId) ? 'Пользователь убран' : 'Группа удалена из рассылки');
+    const ctx = userSettingsContext.get(String(chatId));
+    if (ctx?.userId === String(targetId) && ctx.backData && ctx.backData !== 'action:notifyChat') {
+      userSettingsContext.delete(String(chatId));
+      await goUserSettingsBack(chatId, query.message.message_id, ctx.backData);
+      return;
+    }
+    userSettingsContext.delete(String(chatId));
     await showNotifyChats(chatId, query.message.message_id);
     return;
   }
@@ -2333,6 +2596,49 @@ async function handleCallback(query) {
     const destPage = Number.parseInt(parts[3], 10) || 0;
     await answerCallback(query.id, 'Пользователь');
     await beginBindUser(chatId, { mode: 'view', index, destPage });
+    return;
+  }
+
+  if (data.startsWith('maxchat:userset:')) {
+    const rest = data.slice('maxchat:userset:'.length);
+    const parts = rest.split(':');
+    const index = Number.parseInt(parts[0], 10) || 0;
+    const destPage = Number.parseInt(parts[1], 10) || 0;
+    const targetId = parts.slice(2).join(':');
+    if (!isPrivateChatId(targetId)) {
+      await answerCallback(query.id, 'Только для пользователя');
+      return;
+    }
+    await answerCallback(query.id, 'Настройки');
+    await showBoundUserSettings(
+      chatId,
+      query.message.message_id,
+      targetId,
+      `maxchat:destpage:${index}:${destPage}`
+    );
+    return;
+  }
+
+  if (data.startsWith('maxchat:adduserset:')) {
+    const rest = data.slice('maxchat:adduserset:'.length);
+    const colon = rest.indexOf(':');
+    if (colon < 0) {
+      await answerCallback(query.id, 'Ошибка');
+      return;
+    }
+    const destPage = Number.parseInt(rest.slice(0, colon), 10) || 0;
+    const targetId = rest.slice(colon + 1);
+    if (!isPrivateChatId(targetId)) {
+      await answerCallback(query.id, 'Только для пользователя');
+      return;
+    }
+    await answerCallback(query.id, 'Настройки');
+    await showBoundUserSettings(
+      chatId,
+      query.message.message_id,
+      targetId,
+      `maxchat:adddestpage:${destPage}`
+    );
     return;
   }
 

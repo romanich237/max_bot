@@ -713,7 +713,7 @@ async function startMonitor() {
     }
   });
 
-  setReplyHandler(async (targetMessage, text) => {
+  setReplyHandler(async (targetMessage, payload) => {
     if (!allowsMaxReply(targetMessage.maxChatUrl)) {
       throw new Error('Ответить можно только в личных чатах MAX');
     }
@@ -721,6 +721,9 @@ async function startMonitor() {
     if (authBusy) {
       throw new Error('Идёт авторизация MAX, повторите позже');
     }
+
+    const text = typeof payload === 'string' ? payload : (payload?.text || '');
+    const photos = typeof payload === 'string' ? [] : (payload?.photos || []);
 
     profileBusy = true;
     try {
@@ -736,8 +739,9 @@ async function startMonitor() {
         }
       }
 
-      await sendReplyInMax(page, targetMessage, text, MESSAGE_WRAPPER_SELECTOR);
-      console.log(`Ответ в MAX для ${targetMessage.author}: "${text.slice(0, 50)}"`);
+      await sendReplyInMax(page, targetMessage, { text, photos }, MESSAGE_WRAPPER_SELECTOR);
+      const preview = text.trim() || (photos.length ? `[фото ×${photos.length}]` : '');
+      console.log(`Ответ в MAX для ${targetMessage.author}: "${preview.slice(0, 50)}"`);
     } finally {
       profileBusy = false;
     }

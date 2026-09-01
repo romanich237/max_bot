@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const { getSettings } = require('./config');
 
 function dataDir() {
@@ -110,6 +111,66 @@ function bodyWithMedia(body, media) {
   return `[${media.length} вложения]`;
 }
 
+function sniffAudioExt(filePath) {
+  try {
+    const buf = fs.readFileSync(filePath).subarray(0, 16);
+    if (buf.length >= 4 && buf[0] === 0x4f && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53) {
+      return 'ogg';
+    }
+    if (buf.length >= 8 && buf.toString('ascii', 4, 8) === 'ftyp') return 'm4a';
+    if (buf.toString('ascii', 0, 3) === 'ID3') return 'mp3';
+    if (buf.length >= 2 && buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'mp3';
+    if (buf.toString('ascii', 0, 4) === 'RIFF') return 'wav';
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+function convertToOpus(filePath) {
+  const outPath = filePath.replace(/\.[^.]+$/, '.ogg');
+  if (/\.(ogg|oga|opus)$/i.test(filePath) && sniffAudioExt(filePath) === 'ogg') {
+    return filePath;
+  }
+
+  const result = spawnSync(
+    'ffmpeg',
+    ['-y', '-i', filePath, '-c:a', 'libopus', '-b:a', '48k', '-vn', outPath],
+    { encoding: 'utf8', timeout: 60000 }
+  );
+  if (result.error || result.status !== 0) return '';
+  if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+    return outPath;
+  }
+  return '';
+}
+
+function prepareOutgoingAudio(filePath) {
+  let current = filePath;
+  const sniffed = sniffAudioExt(filePath);
+  if (sniffed) {
+    const renamed = filePath.replace(/\.[^.]+$/, `.${sniffed}`);
+    if (renamed !== filePath) {
+      try {
+        fs.renameSync(filePath, renamed);
+        current = renamed;
+      } catch {
+        current = filePath;
+      }
+    }
+  }
+
+  const opus = convertToOpus(current);
+  if (opus) {
+    return { localPath: opus, sendAs: 'voice' };
+  }
+
+  return {
+    localPath: current,
+    sendAs: /\.(ogg|oga|opus)$/i.test(current) ? 'voice' : 'audio',
+  };
+}
+
 async function downloadFromUrl(page, url, filePath) {
   const response = await page.request.get(url);
   if (!response.ok()) {
@@ -172,7 +233,26 @@ async function downloadVoice(page, wrapperIndex, filePath) {
           ? opened.querySelectorAll('.messageWrapper')
           : document.querySelectorAll(sel);
         const wrapper = wrappers[idx];
-        wrapper?.querySelector('.attachAudio .button')?.click();
+        if (!wrapper) return;
+
+        const play = wrapper.querySelector('.attachAudio .button');
+        if (play) {
+          play.click();
+          return;
+        }
+
+        const audioLink = wrapper.querySelector(
+          'a[href*=".m4a"], a[href*=".mp3"], a[href*=".ogg"], a[href*=".aac"], a[href*=".opus"], a[download]'
+        );
+        if (audioLink) {
+          audioLink.click();
+          return;
+        }
+
+        const downloadBtn = [...wrapper.querySelectorAll('a, button')].find((el) =>
+          /скачать|download/i.test(el.innerText || el.getAttribute('aria-label') || '')
+        );
+        downloadBtn?.click();
       }, { idx: wrapperIndex, sel: '.messageWrapper' })
       .catch(() => {});
 
@@ -268,6 +348,12 @@ async function findWrapperIndex(page, message, wrapperSelector) {
 
         if (needle && text.includes(needle)) return i;
 
+        if (authorNeedle && /голосовое|m4a|mp3|ogg|скачать/.test(`${needle} ${text}`)) {
+          if (text.includes(authorNeedle) && /m4a|mp3|ogg|голосовое|скачать|attach/.test(text)) {
+            return i;
+          }
+        }
+
         if (time && text.includes(time) && needle && text.includes(needle.slice(0, 20))) {
           return i;
         }
@@ -290,11 +376,19 @@ async function downloadMediaItem(page, message, media, index, wrapperSelector) {
   const filePath = buildFilePath(message, media, index);
 
   if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+    if (media.type === 'voice') {
+      const prepared = prepareOutgoingAudio(filePath);
+      return { ...media, localPath: prepared.localPath, sendAs: prepared.sendAs };
+    }
     return { ...media, localPath: filePath };
   }
 
   if (media.url) {
     await downloadFromUrl(page, media.url, filePath);
+    if (media.type === 'voice') {
+      const prepared = prepareOutgoingAudio(filePath);
+      return { ...media, localPath: prepared.localPath, sendAs: prepared.sendAs };
+    }
     return { ...media, localPath: filePath };
   }
 
@@ -302,7 +396,8 @@ async function downloadMediaItem(page, message, media, index, wrapperSelector) {
 
   if (media.type === 'voice') {
     await downloadVoice(page, wrapperIndex, filePath);
-    return { ...media, localPath: filePath };
+    const prepared = prepareOutgoingAudio(filePath);
+    return { ...media, localPath: prepared.localPath, sendAs: prepared.sendAs };
   }
 
   if (media.type === 'sticker') {

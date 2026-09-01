@@ -555,6 +555,9 @@ async function parseMessages(page) {
                 '.meta',
                 '.meta--text',
                 '.attachAudio',
+                '[class*="attachFile"]',
+                '[class*="attachDoc"]',
+                '[class*="attachAudio"]',
                 '.media',
                 '.grid',
                 '.tile',
@@ -569,6 +572,7 @@ async function parseMessages(page) {
           const texts = [...clone.querySelectorAll('.text')].filter((el) => {
             const t = String(el.innerText || '').trim();
             if (!t || isTimeText(t) || t === 'Голосовое сообщение') return false;
+            if (isAudioCardText(t)) return false;
             return true;
           });
           const top = texts.filter(
@@ -607,6 +611,20 @@ async function parseMessages(page) {
         return src.includes('oneme.ru') || width > 80;
       }
 
+      function isAudioCardText(text) {
+        const value = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!value) return false;
+        if (/\b(m4a|mp3|aac|ogg|oga|opus|wav|flac)\b/i.test(value) && /скачать|download|\.m4a|\.mp3|\.ogg|\.aac/i.test(value)) {
+          return true;
+        }
+        return /скачать\s*•\s*[\d.,]+\s*[kmgt]?b/i.test(value) && /\.(m4a|mp3|aac|ogg|oga|opus|wav|flac)\b/i.test(value);
+      }
+
+      function isAudioAttachment(fileName, url) {
+        const hay = `${fileName || ''} ${url || ''}`;
+        return /\.(m4a|mp3|aac|ogg|oga|opus|wav|flac|mpeg)(?:\?|$)/i.test(hay);
+      }
+
       function extractMedia(wrapper) {
         const items = [];
 
@@ -635,26 +653,35 @@ async function parseMessages(page) {
 
         wrapper.querySelectorAll('[class*="attachFile"], [class*="attachDoc"]').forEach((el) => {
           const link = el.querySelector('a[href]') || (el.tagName === 'A' ? el : null);
-          const url = link?.href;
+          const url = link?.href || '';
           const fileName = (el.innerText || link?.innerText || 'file').trim().split('\n')[0];
+          if (isAudioAttachment(fileName, url) || isAudioCardText(el.innerText || '')) {
+            items.push({ type: 'voice', url: url || undefined, fileName, duration: '' });
+            return;
+          }
           if (url) items.push({ type: 'file', url, fileName });
         });
 
         wrapper.querySelectorAll('.attaches a[href], .bubbleContent a[href]').forEach((link) => {
           const url = link.href;
           if (!url || url.startsWith('javascript:')) return;
-          if (/\.(pdf|doc|docx|zip|rar|7z|txt|xlsx|xls|ppt|pptx|apk|mp3|wav|ogg)(\?|$)/i.test(url)) {
+          const fileName = (link.innerText || 'file').trim().split('\n')[0];
+          if (isAudioAttachment(fileName, url)) {
+            items.push({ type: 'voice', url, fileName });
+            return;
+          }
+          if (/\.(pdf|doc|docx|zip|rar|7z|txt|xlsx|xls|ppt|pptx|apk)(\?|$)/i.test(url)) {
             items.push({
               type: 'file',
               url,
-              fileName: (link.innerText || 'file').trim().split('\n')[0],
+              fileName,
             });
           }
         });
 
         const seen = new Set();
         return items.filter((item) => {
-          const id = item.url || item.stickerId || `${item.type}:${item.duration}`;
+          const id = item.url || item.stickerId || item.fileName || `${item.type}:${item.duration}`;
           if (seen.has(id)) return false;
           seen.add(id);
           return true;
@@ -690,6 +717,7 @@ async function parseMessages(page) {
 
         const reply = extractReply(wrapper);
         let body = extractBody(wrapper);
+        if (isAudioCardText(body)) body = '';
         if (author && body === author) body = '';
         if (author && body.startsWith(`${author}\n`)) {
           body = body.slice(author.length).trim();
