@@ -1,37 +1,64 @@
 const { ensureChatListVisible } = require('./max-chat-picker');
 const { isLoginPage } = require('./parser');
 
-const STORY_THUMB_SELECTOR =
-  'button.storiesStackItemThumbnailAvatarButton, aside .stories button[class*="Thumbnail"], aside .storiesStackItemContent button';
-const STORY_SCROLLER_SELECTOR = '.storiesStack, .storiesStackWrapper, .storiesStackRow, aside .stories';
+const STORY_ENTRY_SELECTOR = 'aside .header .stories button.storiesStackItemThumbnailAvatarButton';
+const STORY_HEADER_SCROLLER_SELECTOR =
+  'aside .header .stories .storiesStack, aside .header .stories .storiesStackWrapper, aside .header .stories .storiesStackRow';
 const STORY_LIKE_BUTTON_SELECTOR = [
+  'div.storiesPortal div.storiesPlayer div.composer div.input div.btn button.button--ghost',
+  'div.storiesStackWrapper--expanded div.storiesPlayer div.composer div.input div.btn button.button--ghost',
+  'div.storiesStackWrapper--teleported div.storiesPlayer div.composer div.input div.btn button.button--ghost',
   'div.storiesStackItem--active div.storiesPlayer div.composer div.input div.btn button.button--ghost',
-  'div.storiesPlayer div.composerWrapper div.composer div.input div.btn button.button--ghost',
-  'div.storiesPlayer div.composer div.btn button.button--xsmall.button--ghost',
 ].join(', ');
+
+function storyNameFromLabel(label) {
+  const text = String(label || '').trim();
+  const match =
+    text.match(/open stories by user\s+(.+)$/i) ||
+    text.match(/открыть истории пользовател[яе]\s+(.+)$/i) ||
+    text.match(/истории пользовател[яе]\s+(.+)$/i);
+  return match ? match[1].trim() : text;
+}
+
+function labelsMatch(target, candidate) {
+  const left = String(target || '').trim();
+  const right = String(candidate || '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.includes(right) || right.includes(left)) return true;
+
+  const leftName = storyNameFromLabel(left);
+  const rightName = storyNameFromLabel(right);
+  if (leftName && rightName && leftName === rightName) return true;
+  return false;
+}
 
 async function collectStoryButtons(page) {
   return page.evaluate(() => {
-    const selector =
-      'button.storiesStackItemThumbnailAvatarButton, aside .stories button[class*="Thumbnail"], aside .storiesStackItemContent button';
     const seen = new Set();
     const items = [];
 
-    for (const btn of document.querySelectorAll(selector)) {
-      if (!btn.closest('aside')) continue;
-      if (btn.closest('.scrollListContent, .scrollListScrollable, div.item')) continue;
-      if (!btn.offsetParent && btn.getAttribute('aria-hidden') === 'true') continue;
+    for (const btn of document.querySelectorAll(
+      'aside .header .stories button.storiesStackItemThumbnailAvatarButton'
+    )) {
+      if (btn.closest('.storiesPortal, .storiesStackWrapper--expanded, .storiesStackWrapper--teleported')) {
+        continue;
+      }
 
-      const label = (btn.getAttribute('aria-label') || btn.innerText || '').trim();
+      const label = (btn.getAttribute('aria-label') || '').trim();
+      if (!label) continue;
+      if (!/open stories by user/i.test(label) && !/истори/i.test(label)) continue;
+
       const rect = btn.getBoundingClientRect();
-      const key = `${label}::${Math.round(rect.left)}::${Math.round(rect.top)}`;
+      if (!rect.width || !rect.height) continue;
+
+      const key = label.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
 
       items.push({
         label,
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
+        name: label.replace(/^open stories by user\s+/i, '').trim(),
       });
     }
 
@@ -39,50 +66,84 @@ async function collectStoryButtons(page) {
   });
 }
 
-async function scrollStoriesRow(page) {
-  return page.evaluate((scrollerSelector) => {
-    for (const selector of scrollerSelector.split(', ')) {
-      const node = document.querySelector(selector.trim());
-      if (!node) continue;
-      const prev = node.scrollLeft;
-      node.scrollBy({ left: Math.max(node.clientWidth * 0.7, 120), behavior: 'instant' });
-      if (node.scrollLeft > prev + 2) return true;
-    }
-    return false;
-  }, STORY_SCROLLER_SELECTOR);
+async function scrollStoriesRow(page, direction = 1) {
+  return page.evaluate(
+    ({ scrollerSelector, direction: dir }) => {
+      for (const selector of scrollerSelector.split(', ')) {
+        const node = document.querySelector(selector.trim());
+        if (!node) continue;
+        if (node.closest('.storiesPortal, .storiesStackWrapper--expanded, .storiesStackWrapper--teleported')) {
+          continue;
+        }
+
+        const prev = node.scrollLeft;
+        const delta = Math.max(node.clientWidth * 0.7, 120) * (dir < 0 ? -1 : 1);
+        node.scrollBy({ left: delta, behavior: 'instant' });
+        if (Math.abs(node.scrollLeft - prev) > 2) return true;
+      }
+      return false;
+    },
+    { scrollerSelector: STORY_HEADER_SCROLLER_SELECTOR, direction }
+  );
+}
+
+async function resetStoriesRowScroll(page) {
+  await page
+    .evaluate((scrollerSelector) => {
+      for (const selector of scrollerSelector.split(', ')) {
+        const node = document.querySelector(selector.trim());
+        if (!node) continue;
+        if (node.closest('.storiesPortal, .storiesStackWrapper--expanded, .storiesStackWrapper--teleported')) {
+          continue;
+        }
+        node.scrollLeft = 0;
+      }
+    }, STORY_HEADER_SCROLLER_SELECTOR)
+    .catch(() => {});
 }
 
 async function isStoryViewerOpen(page) {
   return page.evaluate(() => {
-    if (document.querySelector('div.storiesPortal, div.storiesPlayer, div.storiesStackItem--active')) {
-      return true;
-    }
-
-    const player = document.querySelector('div.storiesStackWrapper--expanded, div.storiesStack--expanded');
-    if (player) return true;
-
-    return Boolean(document.querySelector('div.storiesPlayer div.composer div.btn button.button--ghost'));
+    return Boolean(
+      document.querySelector(
+        [
+          'div.storiesPortal div.storiesPlayer',
+          'div.storiesStackWrapper--expanded div.storiesPlayer',
+          'div.storiesStackWrapper--teleported div.storiesPlayer',
+        ].join(', ')
+      )
+    );
   });
+}
+
+async function waitForStoryEntryBar(page) {
+  const locator = page.locator(STORY_ENTRY_SELECTOR).first();
+  return locator.isVisible({ timeout: 5000 }).catch(() => false);
 }
 
 async function clickStoryByLabel(page, label) {
   const target = String(label || '').trim();
   if (!target) return false;
 
-  const buttons = page.locator(STORY_THUMB_SELECTOR);
+  if (!(await waitForStoryEntryBar(page))) {
+    await ensureChatListVisible(page).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
+  const buttons = page.locator(STORY_ENTRY_SELECTOR);
   const count = await buttons.count().catch(() => 0);
 
   for (let i = 0; i < count; i++) {
     const btn = buttons.nth(i);
     const aria = String((await btn.getAttribute('aria-label').catch(() => '')) || '').trim();
     if (!aria) continue;
-    if (aria !== target && !aria.includes(target) && !target.includes(aria)) continue;
-    if (!(await btn.isVisible({ timeout: 1200 }).catch(() => false))) continue;
+    if (!labelsMatch(target, aria)) continue;
+    if (!(await btn.isVisible({ timeout: 1500 }).catch(() => false))) continue;
 
     await btn.scrollIntoViewIfNeeded().catch(() => {});
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(250);
     await btn.click({ timeout: 8000 });
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(900);
     return true;
   }
 
@@ -137,44 +198,16 @@ async function likeCurrentStory(page) {
     return { ok: true, liked: true, reason: 'clicked', target: 'composer-heart' };
   }
 
-  return page.evaluate(() => {
-    function findStoryLikeButton() {
-      const selectors = [
-        'div.storiesStackItem--active div.storiesPlayer div.composer div.input div.btn button.button--ghost',
-        'div.storiesPlayer div.composerWrapper div.composer div.input div.btn button.button--ghost',
-        'div.storiesPlayer div.composer div.btn button.button--xsmall.button--ghost',
-      ];
-      for (const selector of selectors) {
-        const btn = document.querySelector(selector);
-        if (btn) return btn;
-      }
-      return null;
-    }
-
-    function isStoryLikeActive(button) {
-      if (!button) return false;
-      if (button.getAttribute('aria-pressed') === 'true') return true;
-      const cls = String(button.className || '');
-      return /(?:^|\s)(?:active|liked|selected|isLiked|filled)(?:\s|$)/i.test(cls);
-    }
-
-    const btn = findStoryLikeButton();
-    if (!btn) return { ok: false, liked: false, reason: 'not_found' };
-    if (isStoryLikeActive(btn)) return { ok: true, liked: false, reason: 'already', target: 'composer-heart' };
-    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
-      return { ok: false, liked: false, reason: 'disabled', target: 'composer-heart' };
-    }
-
-    btn.click();
-    return { ok: true, liked: true, reason: 'clicked', target: 'composer-heart' };
-  });
+  return { ok: false, liked: false, reason: 'not_found', target: 'composer-heart' };
 }
 
 async function advanceStorySlide(page) {
   const advanced = await page.evaluate(() => {
     const player =
-      document.querySelector('div.storiesStackItem--active div.storiesPlayer') ||
-      document.querySelector('div.storiesPlayer');
+      document.querySelector('div.storiesPortal div.storiesPlayer') ||
+      document.querySelector('div.storiesStackWrapper--expanded div.storiesPlayer') ||
+      document.querySelector('div.storiesStackWrapper--teleported div.storiesPlayer') ||
+      document.querySelector('div.storiesStackItem--active div.storiesPlayer');
     if (player) {
       const rect = player.getBoundingClientRect();
       const x = rect.left + rect.width * 0.82;
@@ -221,17 +254,16 @@ async function closeStoryViewer(page) {
 
   if (closed) {
     await page.waitForTimeout(400);
-    return true;
-  }
-
-  await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(400);
-
-  if (await isStoryViewerOpen(page)) {
+  } else {
     await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
+    if (await isStoryViewerOpen(page)) {
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(300);
+    }
   }
 
+  await waitForStoryEntryBar(page);
   return !(await isStoryViewerOpen(page));
 }
 
@@ -267,6 +299,9 @@ async function watchStoryPack(page, options) {
 }
 
 async function gatherAllStoryButtons(page, maxPacks) {
+  await resetStoriesRowScroll(page);
+  await page.waitForTimeout(250);
+
   const merged = [];
   const seen = new Set();
   let stagnant = 0;
@@ -275,8 +310,8 @@ async function gatherAllStoryButtons(page, maxPacks) {
     const batch = await collectStoryButtons(page);
     let added = 0;
     for (const item of batch) {
-      const key = item.label || `${item.x}:${item.y}`;
-      if (seen.has(key)) continue;
+      const key = (item.label || item.name || '').toLowerCase();
+      if (!key || seen.has(key)) continue;
       seen.add(key);
       merged.push(item);
       added += 1;
@@ -288,11 +323,12 @@ async function gatherAllStoryButtons(page, maxPacks) {
     else stagnant = 0;
     if (stagnant >= 2) break;
 
-    const moved = await scrollStoriesRow(page);
+    const moved = await scrollStoriesRow(page, 1);
     if (!moved) break;
     await page.waitForTimeout(350);
   }
 
+  await resetStoriesRowScroll(page);
   return merged.slice(0, maxPacks);
 }
 
@@ -321,11 +357,18 @@ async function runStoriesAutomation(page, options = {}) {
   let liked = 0;
 
   for (const item of storyItems) {
+    if (await isStoryViewerOpen(page)) {
+      await closeStoryViewer(page);
+    }
+
     await ensureChatListVisible(page).catch(() => {});
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
 
     const opened = await clickStoryByLabel(page, item.label);
-    if (!opened) continue;
+    if (!opened) {
+      console.warn(`Истории: не удалось открыть ${item.name || item.label}`);
+      continue;
+    }
 
     let viewerOpen = false;
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -335,7 +378,10 @@ async function runStoriesAutomation(page, options = {}) {
       }
       await page.waitForTimeout(350);
     }
-    if (!viewerOpen) continue;
+    if (!viewerOpen) {
+      console.warn(`Истории: просмотрщик не открылся для ${item.name || item.label}`);
+      continue;
+    }
 
     const packStats = await watchStoryPack(page, options);
     packs += 1;
@@ -356,4 +402,5 @@ module.exports = {
   runStoriesAutomation,
   collectStoryButtons,
   isStoryViewerOpen,
+  STORY_ENTRY_SELECTOR,
 };
