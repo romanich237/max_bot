@@ -8,6 +8,7 @@ const { sendMessage, editMessageText, deleteMessage } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { UPDATES } = require('./bot-texts');
 const { formatAppVersion, ensurePackageJsonVersion } = require('./app-version');
+const outbox = require('./tg-outbox');
 const {
   schedulePm2Restarts,
   APP_NAME,
@@ -438,13 +439,25 @@ async function announceUpdateDone(fromVersion, toVersion, extraChatIds = []) {
     ...extraChatIds.map((id) => String(id || '')),
   ].filter(Boolean);
   const unique = [...new Set(ids)];
-  const posts = [];
+  const jobId = `update-done:${fromVersion || ''}:${toVersion || ''}`;
+  outbox.ensureJob({
+    id: jobId,
+    kind: 'update-done',
+    method: 'sendMessage',
+    text,
+    parseMode: 'HTML',
+    destIds: unique,
+  });
 
-  for (const chatId of unique) {
+  const posts = [];
+  for (const chatId of outbox.remainingDests(outbox.getJob(jobId) || { destIds: unique, sentTo: {} })) {
     try {
       const data = await sendMessage(chatId, text);
       if (data?.ok && data.result?.message_id) {
+        outbox.markDelivered(jobId, chatId, data.result.message_id);
         posts.push({ chatId, messageId: data.result.message_id });
+      } else {
+        console.error(`auto-update: не удалось отправить «Готово» в ${chatId}:`, data?.description);
       }
     } catch (err) {
       console.error(`auto-update: не удалось отправить «Готово» в ${chatId}:`, err.message);
@@ -457,10 +470,24 @@ async function announceUpdateDone(fromVersion, toVersion, extraChatIds = []) {
 
 async function flushPendingDoneNotice() {
   const pending = readPendingDoneNotice();
-  if (!pending) return false;
-  const posts = await announceUpdateDone(pending.fromVersion, pending.toVersion);
-  if (posts.length) clearPendingDoneNotice();
-  return posts.length > 0;
+  if (pending) {
+    const jobId = `update-done:${pending.fromVersion || ''}:${pending.toVersion || ''}`;
+    if (!outbox.getJob(jobId)) {
+      clearPendingDoneNotice();
+    } else {
+      await announceUpdateDone(pending.fromVersion, pending.toVersion);
+      if (!outbox.getJob(jobId)) clearPendingDoneNotice();
+    }
+  }
+
+  try {
+    const { flushTelegramOutbox } = require('./telegram');
+    await flushTelegramOutbox();
+  } catch (err) {
+    console.warn('auto-update: outbox:', err.message);
+  }
+
+  return !pending || !outbox.getJob(`update-done:${pending?.fromVersion || ''}:${pending?.toVersion || ''}`);
 }
 
 async function editAdminPosts(posts, text) {
@@ -940,8 +967,8 @@ async function finishUpdate(fromSha, toSha, notify, fromVersion, progressPosts) 
   let doneSent = false;
   if (versionChanged && (notify || extraChatIds.length)) {
     try {
-      const posts = await announceUpdateDone(fromVersion, toVersion, extraChatIds);
-      doneSent = posts.length > 0;
+      await announceUpdateDone(fromVersion, toVersion, extraChatIds);
+      doneSent = !outbox.getJob(`update-done:${fromVersion || ''}:${toVersion || ''}`);
       if (doneSent) clearPendingDoneNotice();
     } catch (err) {
       console.warn(`auto-update: не отправил «Готово»: ${err.message}`);

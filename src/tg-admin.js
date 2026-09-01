@@ -2161,6 +2161,8 @@ async function handleManualUpdateCheck(chatId) {
       });
       if (result.status === 'updated') {
         if (result.doneSent) return;
+        const outbox = require('./tg-outbox');
+        if (outbox.getJob(`update-done:${result.fromVersion || ''}:${result.toVersion || ''}`)) return;
         if (result.fromVersion && result.toVersion && result.fromVersion !== result.toVersion) {
           const doneText = buildEventMessage({
             ...UPDATES.done(result.fromVersion, result.toVersion),

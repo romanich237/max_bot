@@ -78,7 +78,7 @@ function getProfileBio() {
   return {
     enabled: b.enabled ?? false,
     intervalMs: b.intervalMs ?? 60000,
-    template: b.template || '{час}:{минута} · {день}.{месяц} · {погода}',
+    template: b.template || '{час}:{минута} · {день}.{месяц} · {температура}, {погода}',
     city: b.city || '',
     eventDate: b.eventDate || '',
     weatherApiKey: process.env.OPENWEATHER_API_KEY || b.weatherApiKey || '',

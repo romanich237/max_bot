@@ -44,7 +44,7 @@
   "profileBio": {
     "enabled": false,
     "intervalMs": 60000,
-    "template": "{час}:{минута} · {день}.{месяц} · {погода}",
+    "template": "{час}:{минута} · {день}.{месяц} · {температура}, {погода}",
     "city": "",
     "eventDate": "",
     "weatherApiKey": "bd5e378503939ddaee76f12ad7a97608"

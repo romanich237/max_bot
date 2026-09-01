@@ -78,17 +78,30 @@ async function resolveCity(city, apiKey = '') {
   return result;
 }
 
+function formatTemperature(temp) {
+  const rounded = Math.round(Number(temp) || 0);
+  const sign = rounded > 0 ? `+${rounded}` : String(rounded);
+  return `${sign}°C`;
+}
+
+function weatherParts(temperature, condition) {
+  const temp = formatTemperature(temperature);
+  const desc = String(condition || 'нет данных').trim() || 'нет данных';
+  return {
+    temperature: temp,
+    condition: desc,
+    text: `${temp}, ${desc}`,
+  };
+}
+
 async function fetchWeatherFromMeteo(geo) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}` +
     `&current=temperature_2m,weather_code&timezone=${encodeURIComponent(geo.timezone)}`;
 
   const data = await fetchJson(url);
-  const temp = Math.round(data.current?.temperature_2m ?? 0);
-  const sign = temp > 0 ? `+${temp}` : String(temp);
   const code = data.current?.weather_code ?? -1;
-  const desc = WMO_LABELS[code] || 'нет данных';
-  return `${sign}°C, ${desc}`;
+  return weatherParts(data.current?.temperature_2m ?? 0, WMO_LABELS[code] || 'нет данных');
 }
 
 async function fetchWeatherFromOwm(geo, apiKey) {
@@ -101,38 +114,41 @@ async function fetchWeatherFromOwm(geo, apiKey) {
     throw new Error(data.message || 'Ошибка OpenWeatherMap');
   }
 
-  const temp = Math.round(data.main?.temp ?? 0);
-  const sign = temp > 0 ? `+${temp}` : String(temp);
-  const desc = data.weather?.[0]?.description || 'нет данных';
-  return `${sign}°C, ${desc}`;
+  return weatherParts(data.main?.temp ?? 0, data.weather?.[0]?.description || 'нет данных');
 }
 
-async function fetchWeatherText(city, apiKey = '') {
+async function fetchWeatherParts(city, apiKey = '') {
   const key = String(city || '').trim().toLowerCase();
   if (!key) throw new Error('Город не задан');
 
   const cached = weatherCache.get(key);
-  if (cached && cached.expires > Date.now()) return cached.text;
+  if (cached && cached.expires > Date.now()) return cached.parts;
 
   const geo = await resolveCity(city, apiKey);
-  let text = '';
+  let parts;
 
   if (apiKey) {
     try {
-      text = await fetchWeatherFromOwm(geo, apiKey);
+      parts = await fetchWeatherFromOwm(geo, apiKey);
     } catch (err) {
       console.warn(`OpenWeatherMap: ${err.message}, используем open-meteo`);
-      text = await fetchWeatherFromMeteo(geo);
+      parts = await fetchWeatherFromMeteo(geo);
     }
   } else {
-    text = await fetchWeatherFromMeteo(geo);
+    parts = await fetchWeatherFromMeteo(geo);
   }
 
-  weatherCache.set(key, { text, expires: Date.now() + WEATHER_TTL_MS });
-  return text;
+  weatherCache.set(key, { parts, expires: Date.now() + WEATHER_TTL_MS });
+  return parts;
+}
+
+async function fetchWeatherText(city, apiKey = '') {
+  const parts = await fetchWeatherParts(city, apiKey);
+  return parts.text;
 }
 
 module.exports = {
   resolveCity,
   fetchWeatherText,
+  fetchWeatherParts,
 };

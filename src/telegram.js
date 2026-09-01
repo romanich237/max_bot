@@ -5,6 +5,7 @@ const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName, isPriv
 const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl, allowsMaxReply } = require('./max-chats');
 const replyStore = require('./reply-store');
+const outbox = require('./tg-outbox');
 
 function escapeHtml(text) {
   return text
@@ -104,7 +105,38 @@ function replyMarkupForChat(chatId, replyMarkup) {
 }
 
 function notifyChatIds(sendContext = {}) {
+  if (Array.isArray(sendContext.destIds) && sendContext.destIds.length) {
+    return [...new Set(sendContext.destIds.map(String).filter(Boolean))];
+  }
   return getNotificationChatIdsForMaxChat(sendContext.maxChatUrl);
+}
+
+function outboxJobId(sendContext, method) {
+  if (sendContext.outboxId) return String(sendContext.outboxId);
+  const storeId = sendContext.storeId || 'msg';
+  return `tg:${storeId}:${method}`;
+}
+
+function persistSendJob(sendContext, method, fields, files, extra = {}) {
+  const destIds = notifyChatIds(sendContext);
+  const id = outboxJobId(sendContext, method);
+  sendContext.outboxId = id;
+  outbox.ensureJob({
+    id,
+    kind: extra.kind || 'telegram',
+    method,
+    fields,
+    files,
+    photos: extra.photos || [],
+    text: extra.text || fields?.text || fields?.caption || '',
+    parseMode: extra.parseMode || fields?.parse_mode || '',
+    replyMarkup: sendContext.replyMarkup || null,
+    replyToByChat: sendContext.replyToByChat || {},
+    maxChatUrl: sendContext.maxChatUrl || '',
+    storeId: sendContext.storeId || '',
+    destIds,
+  });
+  return id;
 }
 
 function buildReplyButtonMarkup(storeId, maxChatUrl, isCatchUp = false) {
@@ -192,18 +224,22 @@ async function callTelegram(method, fields, files = {}, sendContext = {}) {
   const baseFields = { ...fields };
   delete baseFields.reply_markup;
   const { replyMarkup = null } = sendContext;
+  const jobId = persistSendJob(sendContext, method, baseFields, files);
+  const already = outbox.deliveredSet(jobId);
 
   await Promise.all(
     chatIds.map(async (id) => {
+      const chatId = String(id);
+      if (already.has(chatId)) return;
       try {
         const form = new FormData();
-        form.append('chat_id', id);
+        form.append('chat_id', chatId);
 
         const chatFields = { ...baseFields };
-        const markup = replyMarkupForChat(id, replyMarkup);
+        const markup = replyMarkupForChat(chatId, replyMarkup);
         if (markup) chatFields.reply_markup = stripReplyMarkup(markup);
 
-        const replyTo = sendContext.replyToByChat?.[String(id)];
+        const replyTo = sendContext.replyToByChat?.[chatId];
         if (replyTo) {
           chatFields.reply_to_message_id = replyTo;
           chatFields.allow_sending_without_reply = true;
@@ -214,22 +250,24 @@ async function callTelegram(method, fields, files = {}, sendContext = {}) {
         }
 
         for (const [fieldName, filePath] of Object.entries(files)) {
+          if (!filePath || !fs.existsSync(filePath)) continue;
           const buffer = fs.readFileSync(filePath);
           const file = new File([buffer], path.basename(filePath));
           form.append(fieldName, file);
         }
 
-        const data = await postTelegramForm(url, form, sendContext, id);
+        const data = await postTelegramForm(url, form, sendContext, chatId);
 
         if (!data.ok) {
           success = false;
-          console.error(`Ошибка Telegram API (${method}) для ID ${id}:`, data.description);
+          console.error(`Ошибка Telegram API (${method}) для ID ${chatId}:`, data.description);
         } else {
-          recordSendResult(id, data, sendContext, (result) => result.result?.message_id);
+          recordSendResult(chatId, data, sendContext, (result) => result.result?.message_id);
+          outbox.markDelivered(jobId, chatId, data.result?.message_id);
         }
       } catch (error) {
         success = false;
-        console.error(`Не удалось отправить в Telegram (${method}) для ID ${id}:`, error);
+        console.error(`Не удалось отправить в Telegram (${method}) для ID ${chatId}:`, error);
       }
     })
   );
@@ -252,10 +290,17 @@ function endpointForMedia(type) {
 async function sendPhotoGroup(message, photoFiles, isCatchUp, sendContext, meta = {}) {
   const { token } = getTelegram();
   const chatIds = notifyChatIds(sendContext);
-  const caption = buildMessageText(message, isCatchUp, meta, sendContext);
+  const caption = sendContext.outboxCaption || buildMessageText(message, isCatchUp, meta, sendContext);
+
+  const jobId = persistSendJob(sendContext, 'sendMediaGroup', { caption, parse_mode: 'HTML' }, {}, {
+    photos: photoFiles.map((photo) => photo.localPath).filter(Boolean),
+  });
+  const already = outbox.deliveredSet(jobId);
 
   await Promise.all(
     chatIds.map(async (chatId) => {
+      const dest = String(chatId);
+      if (already.has(dest)) return;
       try {
         const form = new FormData();
         form.append('chat_id', chatId);
@@ -290,6 +335,7 @@ async function sendPhotoGroup(message, photoFiles, isCatchUp, sendContext, meta 
         }
 
         recordSendResult(chatId, data, sendContext, (result) => result.result?.[0]?.message_id);
+        outbox.markDelivered(jobId, dest, data.result?.[0]?.message_id);
 
         const markup = replyMarkupForChat(chatId, sendContext.replyMarkup);
         if (markup) {
@@ -421,4 +467,78 @@ async function sendToTelegram(message, options = {}) {
   }
 }
 
-module.exports = { sendToTelegram, buildMessageText, buildReplyMarkup, prepareForward };
+async function flushTelegramOutbox() {
+  if (!outbox.acquireFlushLock()) return 0;
+  try {
+    const jobs = outbox.listJobs();
+    if (!jobs.length) return 0;
+
+    let flushed = 0;
+    for (const job of jobs) {
+    const left = outbox.remainingDests(job);
+    if (!left.length) {
+      outbox.removeJob(job.id);
+      continue;
+    }
+
+    const sendContext = {
+      outboxId: job.id,
+      destIds: job.destIds,
+      replyMarkup: job.replyMarkup || null,
+      replyToByChat: job.replyToByChat || {},
+      maxChatUrl: job.maxChatUrl || '',
+      storeId: job.storeId || '',
+      outboxCaption: job.fields?.caption || job.text || '',
+    };
+
+    try {
+      if (job.kind === 'update-done' || (job.method === 'sendMessage' && job.text && !Object.keys(job.files || {}).length)) {
+        const { sendMessage } = require('./tg-api');
+        for (const chatId of left) {
+          try {
+            const extra = job.parseMode ? { parse_mode: job.parseMode } : {};
+            const data = await sendMessage(chatId, job.text, extra);
+            if (data?.ok) {
+              outbox.markDelivered(job.id, chatId, data.result?.message_id);
+            }
+          } catch (err) {
+            console.warn(`outbox: не отправил в ${chatId}: ${err.message}`);
+          }
+        }
+      } else if (job.method === 'sendMediaGroup') {
+        const photos = (job.photos || [])
+          .filter((filePath) => filePath && fs.existsSync(filePath))
+          .map((localPath) => ({ localPath }));
+        if (!photos.length) {
+          outbox.removeJob(job.id);
+          continue;
+        }
+        await sendPhotoGroup({ author: '', body: '' }, photos, false, sendContext, {
+          maxChatUrl: job.maxChatUrl,
+        });
+      } else {
+        const files = {};
+        for (const [field, filePath] of Object.entries(job.files || {})) {
+          if (filePath && fs.existsSync(filePath)) files[field] = filePath;
+        }
+        await callTelegram(job.method || 'sendMessage', job.fields || {}, files, sendContext);
+      }
+      flushed += 1;
+    } catch (err) {
+      console.warn(`outbox: задание ${job.id}: ${err.message}`);
+    }
+    }
+
+    return flushed;
+  } finally {
+    outbox.releaseFlushLock();
+  }
+}
+
+module.exports = {
+  sendToTelegram,
+  buildMessageText,
+  buildReplyMarkup,
+  prepareForward,
+  flushTelegramOutbox,
+};

@@ -1,8 +1,8 @@
 const { getProfileBio } = require('./config');
-const { fetchWeatherText } = require('./weather');
+const { fetchWeatherParts } = require('./weather');
 
 const MAX_BIO_LENGTH = 400;
-const DEFAULT_BIO_TEMPLATE = '{час}:{минута} · {день}.{месяц} · {погода}';
+const DEFAULT_BIO_TEMPLATE = '{час}:{минута} · {день}.{месяц} · {температура}, {погода}';
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -83,7 +83,8 @@ function applyTemplate(template, values) {
     .replace(/\{минута\}/gi, values.minute)
     .replace(/\{день\}/gi, values.day)
     .replace(/\{месяц\}/gi, values.month)
-    .replace(/\{погода\}/gi, values.weather)
+    .replace(/\{температура\}/gi, values.temperature ?? '')
+    .replace(/\{погода\}/gi, values.weather ?? '')
     .replace(/\{непрочитанные_чаты\}/gi, values.unreadChats)
     .replace(/\{непрочитанные_сообщения\}/gi, values.unreadMessages)
     .replace(/\{чаты\}/gi, values.unreadChats)
@@ -116,7 +117,7 @@ async function renderBioDescription(options = {}) {
 
   const apiKey = settings.weatherApiKey;
 
-  const weather = await fetchWeatherText(city, apiKey);
+  const weatherParts = await fetchWeatherParts(city, apiKey);
   const { resolveCity } = require('./weather');
   const geo = await resolveCity(city, apiKey);
   const timezone = geo.timezone || 'Europe/Moscow';
@@ -137,7 +138,13 @@ async function renderBioDescription(options = {}) {
     }
   }
 
-  let text = applyTemplate(template, { ...parts, weather, daysUntil, ...unread });
+  let text = applyTemplate(template, {
+    ...parts,
+    temperature: weatherParts.temperature,
+    weather: weatherParts.condition,
+    daysUntil,
+    ...unread,
+  });
 
   if (text.length > MAX_BIO_LENGTH) {
     text = text.slice(0, MAX_BIO_LENGTH);
@@ -152,7 +159,8 @@ function previewBioTemplate(template, city, timezone = 'Europe/Moscow', eventDat
   const daysUntil = daysUntilEvent(eventDate || settings.eventDate, timezone) || '0';
   let text = applyTemplate(template || DEFAULT_BIO_TEMPLATE, {
     ...parts,
-    weather: '+5°C, облачно',
+    temperature: '+5°C',
+    weather: 'облачно',
     unreadChats: '2',
     unreadMessages: '7',
     daysUntil,

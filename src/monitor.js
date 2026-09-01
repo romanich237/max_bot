@@ -36,7 +36,7 @@ const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
 const { sendReplyInMax } = require('./max-sender');
-const { sendToTelegram } = require('./telegram');
+const { sendToTelegram, flushTelegramOutbox } = require('./telegram');
 const { loadState, saveState } = require('./state');
 const { downloadMessageMedia } = require('./media');
 const db = require('./db');
@@ -748,6 +748,15 @@ async function startMonitor() {
   });
 
   startTelegramAdmin();
+
+  try {
+    const flushed = await flushTelegramOutbox();
+    if (flushed) {
+      console.log(`Telegram: досланы сообщения, прерванные до обновления (${flushed})`);
+    }
+  } catch (err) {
+    console.warn('Telegram outbox:', err.message);
+  }
 
   const { startSitePortal } = require('./site-portal');
   const { openPortalPort } = require('./open-firewall-port');
