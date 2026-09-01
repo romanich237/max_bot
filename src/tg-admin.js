@@ -469,7 +469,7 @@ function buildMenuKeyboard() {
 
   const statusRow = [
     buildToggleButton(prefix, FORWARDING_TOGGLE),
-    withTgEmoji({ text: BUTTONS.refreshStatus, callback_data: 'status' }, 'refresh'),
+    { text: BUTTONS.refreshStatus, callback_data: 'status' },
   ];
   if (isMonitoringEnabled()) {
     statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax', style: 'danger' });
@@ -478,7 +478,7 @@ function buildMenuKeyboard() {
   }
   rows.push(statusRow);
   rows.push([
-    { text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' },
+    withTgEmoji({ text: BUTTONS.checkUpdates, callback_data: 'action:checkUpdate' }, 'refresh'),
     { text: BUTTONS.about, callback_data: 'action:about' },
   ]);
 
