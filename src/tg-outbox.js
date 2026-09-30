@@ -5,9 +5,11 @@ const { resolveFromRoot } = require('./config');
 const OUTBOX_PATH = resolveFromRoot('data/tg-outbox.json');
 const MAX_JOBS = 80;
 const MAX_AGE_MS = 36 * 60 * 60 * 1000;
+const DELIVERED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_DELIVERED = 4000;
 
 function emptyOutbox() {
-  return { jobs: [] };
+  return { jobs: [], delivered: {} };
 }
 
 function loadOutbox() {
@@ -15,7 +17,8 @@ function loadOutbox() {
     if (!fs.existsSync(OUTBOX_PATH)) return emptyOutbox();
     const parsed = JSON.parse(fs.readFileSync(OUTBOX_PATH, 'utf8'));
     const jobs = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
-    return { jobs };
+    const delivered = parsed?.delivered && typeof parsed.delivered === 'object' ? parsed.delivered : {};
+    return { jobs, delivered };
   } catch {
     return emptyOutbox();
   }
@@ -26,8 +29,13 @@ function saveOutbox(data) {
   const jobs = (data.jobs || [])
     .filter((job) => job?.id && now - Number(job.createdAt || now) < MAX_AGE_MS)
     .slice(-MAX_JOBS);
+  const deliveredEntries = Object.entries(data.delivered || {})
+    .filter(([, value]) => now - Number(value?.at || value || 0) < DELIVERED_TTL_MS)
+    .sort((a, b) => Number(b[1]?.at || b[1] || 0) - Number(a[1]?.at || a[1] || 0))
+    .slice(0, MAX_DELIVERED);
+  const delivered = Object.fromEntries(deliveredEntries);
   fs.mkdirSync(path.dirname(OUTBOX_PATH), { recursive: true });
-  fs.writeFileSync(OUTBOX_PATH, `${JSON.stringify({ jobs }, null, 2)}\n`);
+  fs.writeFileSync(OUTBOX_PATH, `${JSON.stringify({ jobs, delivered }, null, 2)}\n`);
 }
 
 function remainingDests(job) {
@@ -76,6 +84,11 @@ function ensureJob(job) {
   const data = loadOutbox();
   const destIds = [...new Set((job.destIds || []).map(String).filter(Boolean))];
   const existing = data.jobs.find((item) => item.id === id);
+  const completed = data.delivered?.[id];
+  if (!existing && completed) {
+    const sentTo = completed.sentTo && typeof completed.sentTo === 'object' ? completed.sentTo : {};
+    return { ...job, id, destIds, sentTo, completed: true };
+  }
   if (existing) {
     const merged = new Set([...(existing.destIds || []), ...destIds]);
     existing.destIds = [...merged];
@@ -125,6 +138,8 @@ function markDelivered(id, chatId, messageId) {
   job.sentTo = job.sentTo && typeof job.sentTo === 'object' ? job.sentTo : {};
   job.sentTo[dest] = messageId || true;
   if (isJobComplete(job)) {
+    data.delivered = data.delivered && typeof data.delivered === 'object' ? data.delivered : {};
+    data.delivered[jobId] = { at: Date.now(), sentTo: { ...job.sentTo } };
     data.jobs = data.jobs.filter((item) => item.id !== jobId);
   }
   saveOutbox(data);
@@ -132,8 +147,10 @@ function markDelivered(id, chatId, messageId) {
 }
 
 function deliveredSet(id) {
-  const job = getJob(id);
-  return new Set(Object.keys(job?.sentTo || {}));
+  const data = loadOutbox();
+  const job = data.jobs.find((item) => item.id === String(id));
+  const completed = data.delivered?.[String(id)];
+  return new Set(Object.keys(job?.sentTo || completed?.sentTo || {}));
 }
 
 function listJobs(kind = null) {
