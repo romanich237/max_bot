@@ -422,6 +422,7 @@ async function startMonitor() {
   const SESSION_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
   let discoveredMonitorUrls = [];
   let lastDiscoveryAt = 0;
+  let lastDiscoveryMode = '';
   const DISCOVERY_INTERVAL_MS = 5 * 60 * 1000;
 
   function getActiveMonitorUrls() {
@@ -432,11 +433,13 @@ async function startMonitor() {
     if (!needsDiscoveredChats()) {
       discoveredMonitorUrls = [];
       lastDiscoveryAt = 0;
+      lastDiscoveryMode = '';
       return discoveredMonitorUrls;
     }
 
     const now = Date.now();
-    if (!force && discoveredMonitorUrls.length && now - lastDiscoveryAt < DISCOVERY_INTERVAL_MS) {
+    const discoveryMode = isMonitorAllChatsEnabled() ? 'all' : 'personal';
+    if (!force && lastDiscoveryMode === discoveryMode && discoveredMonitorUrls.length && now - lastDiscoveryAt < DISCOVERY_INTERVAL_MS) {
       return discoveredMonitorUrls;
     }
 
@@ -444,6 +447,7 @@ async function startMonitor() {
       const { urls } = await discoverMaxChatsForMonitor(page);
       discoveredMonitorUrls = urls;
       lastDiscoveryAt = now;
+      lastDiscoveryMode = discoveryMode;
       if (urls.length) {
         const mode = isMonitorAllChatsEnabled() ? 'все чаты' : 'личные сообщения';
         console.log(`Режим «${mode}»: найдено ${urls.length} чатов в MAX`);

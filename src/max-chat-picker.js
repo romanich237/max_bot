@@ -772,7 +772,7 @@ async function collectAllMaxChats(page) {
       const existing = [...byKey.values()].find(
         (item) =>
           (chat.url && item.url === chat.url) ||
-          (titleKey && normalizeChatName(item.title) === titleKey)
+          ((!chat.url || !item.url) && titleKey && normalizeChatName(item.title) === titleKey)
       );
       if (existing) {
         if (!existing.url && chat.url) existing.url = chat.url;
@@ -959,12 +959,36 @@ async function discoverMaxChatsForMonitor(page) {
   await waitForChatListDom(page);
   await page.waitForTimeout(800);
 
-  let chats = await collectAllMaxChats(page);
-  if (!chats.length) {
-    await page.waitForTimeout(1500);
-    chats = await collectAllMaxChats(page);
+  const labels = await listChatListFilters(page);
+  const filters = pickUnreadScanFilters(labels);
+  // The personal tab identifies offline DMs even when their IDs look like group IDs.
+  const personalLabel = labels.find((label) => /^(личные|personal|direct|директ)$/i.test(label));
+  if (personalLabel && !filters.includes(personalLabel)) filters.push(personalLabel);
+  const byUrl = new Map();
+  for (const label of filters) {
+    if (label && !(await openChatListFilter(page, label))) {
+      throw new Error(`Не удалось открыть вкладку MAX: ${label}`);
+    }
+    await resetChatListScroll(page);
+    let batch = await collectAllMaxChats(page);
+    if (!batch.length) {
+      await page.waitForTimeout(1500);
+      batch = await collectAllMaxChats(page);
+    }
+    const filterKind = /^(личные|personal|direct|директ)$/i.test(label || '')
+      ? 'personal'
+      : /^(группы|groups|каналы|channels)$/i.test(label || '') ? 'group' : '';
+    for (const chat of batch) {
+      const url = normalizeMaxChatUrl(chat.url);
+      if (!url || !isMaxChatUrl(url)) continue;
+      const kind = filterKind || chat.kind;
+      if (kind) setChatKind(url, kind);
+      const previous = byUrl.get(url);
+      byUrl.set(url, { ...previous, ...chat, url, kind: kind || previous?.kind });
+    }
   }
 
+  let chats = [...byUrl.values()];
   chats = hydrateChatsWithStoredTitles(chats);
   mergeChatTitles(chats.filter((chat) => chat.url && chat.title));
 
