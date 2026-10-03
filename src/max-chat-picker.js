@@ -435,6 +435,13 @@ async function extractMaxChatsFromPage(page) {
 
     function addChat(title, url, container) {
       const kind = kindFromContainer(container);
+      const activityKey = String(container?.innerText || '').replace(/\s+/g, ' ').trim();
+      let unreadCount = 0;
+      for (const badge of container?.querySelectorAll?.('[class*="unread" i], [class*="counter" i], [class*="badge" i]') || []) {
+        if (badge.closest?.('.subtitleWrapper')) continue;
+        const text = String(badge.innerText || badge.textContent || '').trim();
+        if (/^\d{1,3}\+?$/.test(text)) unreadCount = Math.max(unreadCount, parseInt(text, 10));
+      }
       let cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
       if (isJunkTitle(cleanTitle)) cleanTitle = '';
       if (!cleanTitle) cleanTitle = url || '';
@@ -468,7 +475,7 @@ async function extractMaxChatsFromPage(page) {
 
       seen.add(url);
       seenTitles.add(key);
-      chats.push({ title: cleanTitle, url, kind: kind || undefined });
+      chats.push({ title: cleanTitle, url, kind: kind || undefined, activityKey, unreadCount });
     }
 
     function addFromRow(row) {
@@ -644,7 +651,7 @@ function titleOwnedByOtherChat(title, url) {
 
 async function ensureChatTitleFromPage(page, chatUrl) {
   const normalized = normalizeMaxChatUrl(chatUrl);
-  await ensureChatKindFromPage(page, normalized);
+  if (!getStoredChatKind(normalized)) await ensureChatKindFromPage(page, normalized);
 
   if (!normalized || getChatTitle(normalized) || isRequiredChatUrl(normalized)) {
     return getChatTitle(normalized) || chatLabelFromUrl(normalized);
@@ -1002,6 +1009,21 @@ async function discoverMaxChatsForMonitor(page) {
   return { chats, urls };
 }
 
+async function prepareChatActivityList(page, personalOnly = false) {
+  await ensureChatListVisible(page);
+  if (await isLoginPage(page)) throw new Error('Сессия MAX истекла');
+  const labels = await listChatListFilters(page);
+  const label = personalOnly
+    ? labels.find((value) => /^(личные|personal|direct|директ)$/i.test(value))
+    : labels.find((value) => /^(все|all)$/i.test(value));
+  if (label && !(await openChatListFilter(page, label))) {
+    throw new Error(`Не удалось открыть вкладку MAX: ${label}`);
+  }
+  await resetChatListScroll(page);
+  await waitForChatListDom(page);
+  return Boolean(label && personalOnly);
+}
+
 async function readUnreadCounts(page) {
   if (!page || page.isClosed()) {
     return { chats: 0, messages: 0 };
@@ -1228,4 +1250,5 @@ module.exports = {
   normalizeChatName,
   chatUrlFromHref,
   discoverMaxChatsForMonitor,
+  prepareChatActivityList,
 };

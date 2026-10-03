@@ -171,9 +171,31 @@ async function waitForOpenChat(page, chatUrl, timeout = 15000, options = {}) {
 }
 
 async function openChatPage(page, chatUrl, timeout = 15000) {
+  const expectedId = chatIdFromUrl(chatUrl);
+  const sameChat = Boolean(expectedId) && chatIdFromUrl(page.url()) === expectedId;
+  if (sameChat && await page.locator('.openedChat').first().isVisible().catch(() => false)) {
+    return;
+  }
   const previousTitle = await readOpenedHeaderTitle(page);
-  const sameChat = chatIdFromUrl(page.url()) === chatIdFromUrl(chatUrl);
-  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  // Use MAX's own router when the destination is visible in the chat list.
+  const clicked = await page.evaluate((target) => {
+    for (const link of document.querySelectorAll('aside a[href], .scrollListContent a[href]')) {
+      const href = link.getAttribute('href');
+      if (href && new URL(href, location.href).href.split('?')[0] === target.split('?')[0]) {
+        link.click();
+        return true;
+      }
+    }
+    return false;
+  }, chatUrl).catch(() => false);
+  if (clicked) {
+    await page.waitForURL(chatUrl, { timeout: 2000 }).catch(() => {});
+    if (chatIdFromUrl(page.url()) === chatIdFromUrl(chatUrl)) {
+      await waitForOpenChat(page, chatUrl, timeout);
+      return;
+    }
+  }
+  await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: Math.max(timeout, 15000) });
   await waitForOpenChat(page, chatUrl, timeout, {
     previousTitle: sameChat ? '' : previousTitle,
   });

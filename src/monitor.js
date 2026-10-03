@@ -24,14 +24,17 @@ const {
   chatLabelFromUrl,
   chatKindFromUrl,
   allowsMaxReply,
+  mergeChatTitles,
+  setChatKind,
 } = require('./max-chats');
+const { ChatPollQueue } = require('./chat-poll-queue');
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler, setMaxChatKindHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor, extractMaxChatsFromPage, prepareChatActivityList } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -262,13 +265,13 @@ function persistChatStates(chatStates) {
 }
 
 async function processChatMessages(page, chatUrl, chatState, options = {}) {
-  const { onLoginRequired, forwardOnStart = 0, isStartup = false } = options;
+  const { onLoginRequired, forwardOnStart = 0, isStartup = false, unreadCount = 0 } = options;
 
   if (!page || page.isClosed()) {
     throw new Error('Страница браузера закрыта');
   }
 
-  await openChatPage(page, chatUrl);
+  await openChatPage(page, chatUrl, 5000);
 
   if (await isLoginPage(page)) {
     const defaultUrl = getDefaultChatUrl() || chatUrl;
@@ -289,8 +292,6 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     }
   }
 
-  await ensureChatTitleFromPage(page, chatUrl);
-
   const openedId = chatIdFromUrl(page.url());
   const expectedId = chatIdFromUrl(chatUrl);
   if (expectedId && openedId !== expectedId) {
@@ -298,6 +299,11 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
       `[${chatLabelFromUrl(chatUrl)}] Страница не совпала: ждали ${expectedId}, открыт ${openedId || page.url()}`
     );
     return [];
+  }
+
+  if (!chatState.metadataSynced) {
+    await ensureChatTitleFromPage(page, chatUrl);
+    chatState.metadataSynced = true;
   }
 
   let messages = await readMessages(page);
@@ -335,6 +341,14 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
   }
 
   if (needsBaseline) {
+    if (!isStartup && unreadCount > 0) {
+      // A newly discovered conversation can already contain the message that woke us.
+      for (const message of scoped.slice(-unreadCount).filter(shouldForward)) {
+        if (await wasAlreadyForwarded(message, chatState)) continue;
+        await forwardMessage(page, message, false, chatUrl);
+        rememberMessage(message, chatState);
+      }
+    }
     markSeen(scoped, chatState);
     chatState.lastSnapshot = snapshotFrom(scoped);
     chatState.baselineDone = true;
@@ -409,6 +423,7 @@ async function startMonitor() {
   const settings = getSettings();
   const state = await loadState();
   const chatStates = createChatStates(state);
+  const pollQueue = new ChatPollQueue();
   let profileBusy = false;
   let authBusy = false;
   let profileIndex = 0;
@@ -423,6 +438,11 @@ async function startMonitor() {
   let discoveredMonitorUrls = [];
   let lastDiscoveryAt = 0;
   let lastDiscoveryMode = '';
+  let discoveryTask = null;
+  let activityPage = null;
+  let activityMode = '';
+  let activityListIsPersonal = false;
+  let activityRetryAt = 0;
   const DISCOVERY_INTERVAL_MS = 5 * 60 * 1000;
 
   function getActiveMonitorUrls() {
@@ -517,6 +537,53 @@ async function startMonitor() {
 
   const page = context.pages()[0] || (await context.newPage());
   await injectOnlineGuards(page);
+
+  async function readActivityChats() {
+    if (!needsDiscoveredChats()) {
+      if (activityPage) await activityPage.close().catch(() => {});
+      activityPage = null;
+      return extractMaxChatsFromPage(page);
+    }
+    if (Date.now() < activityRetryAt) return [];
+    const mode = isMonitorAllChatsEnabled() ? 'all' : 'personal';
+    try {
+      if (!activityPage || activityPage.isClosed() || activityMode !== mode) {
+        if (activityPage) await activityPage.close().catch(() => {});
+        activityPage = await context.newPage();
+        activityListIsPersonal = await prepareChatActivityList(activityPage, mode === 'personal');
+        activityMode = mode;
+      }
+      const chats = await extractMaxChatsFromPage(activityPage);
+      return activityListIsPersonal
+        ? chats.map((chat) => ({ ...chat, kind: 'personal' }))
+        : chats;
+    } catch (err) {
+      if (activityPage) await activityPage.close().catch(() => {});
+      activityPage = null;
+      activityRetryAt = Date.now() + 30000;
+      console.warn('Список активности MAX:', err.message);
+      return [];
+    }
+  }
+
+  function refreshDiscoveryInBackground() {
+    const mode = isMonitorAllChatsEnabled() ? 'all' : 'personal';
+    if (discoveryTask || (
+      lastDiscoveryMode === mode && discoveredMonitorUrls.length &&
+      Date.now() - lastDiscoveryAt < DISCOVERY_INTERVAL_MS
+    )) return;
+    // Full list scrolling must not block delivery in the monitoring tab.
+    discoveryTask = (async () => {
+      const discoveryPage = await context.newPage();
+      try {
+        await refreshDiscoveredUrlsIfNeeded(discoveryPage, true);
+      } finally {
+        await discoveryPage.close().catch(() => {});
+      }
+    })().catch((err) => {
+      console.warn('Фоновый поиск чатов MAX:', err.message);
+    }).finally(() => { discoveryTask = null; });
+  }
 
   const onlineKeeper = startAlwaysOnline(page, getAlwaysOnline);
 
@@ -977,9 +1044,21 @@ async function startMonitor() {
 
     try {
       if (needsDiscoveredChats()) {
-        await refreshDiscoveredUrlsIfNeeded(page);
+        refreshDiscoveryInBackground();
       }
 
+      const visibleChats = await readActivityChats().catch(() => []);
+      pollQueue.observe(visibleChats);
+      if (needsDiscoveredChats()) {
+        mergeChatTitles(visibleChats.filter((chat) => chat.url && chat.title));
+        for (const chat of visibleChats) {
+          if (chat.url && chat.kind) setChatKind(chat.url, chat.kind);
+        }
+        discoveredMonitorUrls = [...new Set([
+          ...discoveredMonitorUrls,
+          ...visibleChats.map((chat) => chat.url).filter(Boolean),
+        ])];
+      }
       const monitorUrls = getActiveMonitorUrls();
       let urlsChanged = false;
 
@@ -1009,18 +1088,24 @@ async function startMonitor() {
 
       let sessionExpired = false;
 
-      for (const chatUrl of monitorUrls) {
+      for (const chatUrl of pollQueue.next(monitorUrls)) {
         const chatState = chatStates.get(chatUrl);
         if (!chatState) continue;
 
-        await processChatMessages(page, chatUrl, chatState, {
-          onLoginRequired: async () => {
-            if (!sessionExpired) {
-              sessionExpired = true;
-              await notifySessionExpired();
-            }
-          },
-        });
+        try {
+          const result = await processChatMessages(page, chatUrl, chatState, {
+            unreadCount: pollQueue.unreadCount(chatUrl),
+            onLoginRequired: async () => {
+              if (!sessionExpired) {
+                sessionExpired = true;
+                await notifySessionExpired();
+              }
+            },
+          });
+          if (result !== null) pollQueue.done(chatUrl);
+        } catch (err) {
+          console.warn(`[${chatLabelFromUrl(chatUrl)}] Проверка чата: ${err.message}`);
+        }
 
         if (sessionExpired) break;
       }
@@ -1037,7 +1122,9 @@ async function startMonitor() {
     clearMonitorTimer();
     if (!isMonitoringEnabled()) return;
 
-    const delay = getSettings().checkIntervalMs;
+    const delay = needsDiscoveredChats()
+      ? Math.min(getSettings().checkIntervalMs, 1000)
+      : getSettings().checkIntervalMs;
     monitorTimer = setTimeout(async () => {
       await monitorTick();
       scheduleMonitor();
