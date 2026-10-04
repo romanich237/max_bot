@@ -12,6 +12,8 @@ const {
   getNotificationChatIds,
   isPrivateChatId,
   getSettings,
+  getDatabase,
+  getAutoUpdate,
 } = require('./config');
 const {
   setDefaultChatUrl,
@@ -66,6 +68,7 @@ const {
   sendPhotoBuffer,
   editMessageCaption,
   downloadTelegramFile,
+  checkTelegramConnectivity,
 } = require('./tg-api');
 const {
   TOGGLES,
@@ -85,6 +88,8 @@ const {
 } = require('./tg-settings');
 const { previewBioTemplate, formatEventDateRu, daysUntilEvent } = require('./profile-bio');
 const replyStore = require('./reply-store');
+const outbox = require('./tg-outbox');
+const { formatAppVersion } = require('./app-version');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
   recordChatFromUpdate,
@@ -156,6 +161,7 @@ const BOT_COMMANDS = [
   { command: 'start', description: COMMANDS.start },
   { command: 'menu', description: COMMANDS.menu },
   { command: 'reauth', description: COMMANDS.reauth },
+  { command: 'status', description: 'Диагностика бота' },
 ];
 
 let reauthHandler = null;
@@ -2105,7 +2111,45 @@ async function handleMessage(message) {
   }
 
   if (/^\/status$/i.test(text)) {
-    await sendMessage(chatId, buildStatusText());
+    let maxOk = false;
+    let tgOk = false;
+    let lastError = '';
+    try {
+      maxOk = sessionCheckHandler ? Boolean(await sessionCheckHandler()) : false;
+    } catch (err) {
+      lastError = `MAX: ${err.message}`;
+    }
+    try {
+      await checkTelegramConnectivity();
+      tgOk = true;
+    } catch (err) {
+      lastError = lastError || `Telegram: ${err.message}`;
+    }
+    const db = getDatabase();
+    const autoUpdate = getAutoUpdate();
+    const queue = outbox.listJobs();
+    const uptimeSec = Math.floor(process.uptime());
+    const uptime = uptimeSec >= 86400
+      ? `${Math.floor(uptimeSec / 86400)}д ${Math.floor((uptimeSec % 86400) / 3600)}ч`
+      : uptimeSec >= 3600
+        ? `${Math.floor(uptimeSec / 3600)}ч ${Math.floor((uptimeSec % 3600) / 60)}м`
+        : `${Math.floor(uptimeSec / 60)}м ${uptimeSec % 60}с`;
+    const diagnostic = [
+      '<b>Диагностика</b>',
+      '',
+      `MAX: ${maxOk ? '✅ авторизован' : '❌ не авторизован'}`,
+      `Telegram API: ${tgOk ? '✅ доступен' : '❌ недоступен'}`,
+      `Очередь сообщений: <code>${queue.length}</code>`,
+      `Последняя успешная пересылка: <code>${queue.length ? 'есть ожидающие' : 'очередь пуста'}</code>`,
+      `Последняя ошибка: ${lastError ? `<code>${escapeHtml(lastError)}</code>` : 'нет'}`,
+      `Uptime: <code>${uptime}</code>`,
+      `Версия: <code>${escapeHtml(formatAppVersion())}</code>`,
+      `База данных: <code>${escapeHtml(String(db.driver || 'sqlite').toUpperCase())}</code>`,
+      `Автообновление: ${autoUpdate.enabled !== false ? '✅ включено' : '❌ выключено'}`,
+      '',
+      buildStatusText(),
+    ].join('\n');
+    await sendMessage(chatId, diagnostic);
     return;
   }
 

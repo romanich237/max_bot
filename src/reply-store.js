@@ -230,6 +230,29 @@ function getByTelegramMessage(chatId, messageId) {
   return id ? get(id) : null;
 }
 
+function getForwardedTelegramIds(message, maxChatUrl) {
+  if (!message?.key) return {};
+  const id = makeId(`${normalizeChatUrl(maxChatUrl || message.maxChatUrl || '')}::${message.key}`);
+  return { ...(forwardIds.get(id) || {}) };
+}
+
+function replaceForwardedMessage(previousMessage, nextMessage, maxChatUrl) {
+  if (!previousMessage?.key || !nextMessage?.key) return null;
+  const normalizedUrl = normalizeChatUrl(maxChatUrl || previousMessage.maxChatUrl || nextMessage.maxChatUrl || '');
+  const oldId = makeId(`${normalizedUrl}::${previousMessage.key}`);
+  const forwards = { ...(forwardIds.get(oldId) || {}) };
+  if (!Object.keys(forwards).length) return null;
+  const nextId = put(nextMessage, normalizedUrl);
+  forwardIds.set(nextId, forwards);
+  forwardIds.delete(oldId);
+  store.delete(oldId);
+  for (const [chatId, messageId] of Object.entries(forwards)) {
+    tgLinks.set(`${String(chatId)}:${messageId}`, nextId);
+  }
+  persist();
+  return nextId;
+}
+
 module.exports = {
   put,
   get,
@@ -238,5 +261,7 @@ module.exports = {
   findTelegramReplyTo,
   resolveReplyToByChat,
   getByTelegramMessage,
+  getForwardedTelegramIds,
+  replaceForwardedMessage,
   matchesReplyTarget,
 };

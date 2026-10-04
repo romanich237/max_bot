@@ -39,7 +39,7 @@ const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
 const { sendReplyInMax } = require('./max-sender');
-const { sendToTelegram, flushTelegramOutbox } = require('./telegram');
+const { sendToTelegram, flushTelegramOutbox, syncEditedTelegramMessage, syncDeletedTelegramMessage } = require('./telegram');
 const { loadState, saveState } = require('./state');
 const { downloadMessageMedia, enrichVoiceTranscript } = require('./media');
 const db = require('./db');
@@ -355,6 +355,28 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     return scoped;
   }
 
+  const previousSnapshot = Array.isArray(chatState.lastSnapshot) ? chatState.lastSnapshot : [];
+  const identity = (message) => [
+    String(message.author || ''),
+    String(message.date || ''),
+    String(message.clock || message.time || ''),
+  ].join('\u0001');
+  const currentByIdentity = new Map(scoped.map((message) => [identity(message), message]));
+  for (const previous of previousSnapshot) {
+    const current = currentByIdentity.get(identity(previous));
+    if (current && previous.key !== current.key && previous.body !== current.body) {
+      await syncEditedTelegramMessage(previous, current, chatUrl);
+    }
+  }
+  if (scoped.length < previousSnapshot.length) {
+    const currentIdentities = new Set(scoped.map(identity));
+    for (const previous of previousSnapshot) {
+      if (!currentIdentities.has(identity(previous))) {
+        await syncDeletedTelegramMessage(previous, chatUrl);
+      }
+    }
+  }
+
   const byKeys = findNewMessages(scoped, chatState.seenKeys).filter(
     (message) => !isMessageSeen(message, chatState)
   );
@@ -388,9 +410,7 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
 
   markSeen(scoped, chatState);
 
-  if (toSend.length > 0) {
-    chatState.lastSnapshot = snapshotFrom(scoped);
-  }
+  chatState.lastSnapshot = snapshotFrom(scoped);
 
   return scoped;
 }

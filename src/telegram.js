@@ -5,6 +5,7 @@ const { getTelegram, getNotificationChatIdsForMaxChat, getMaxDisplayName, isPriv
 const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl, allowsMaxReply, isPersonalMaxChat } = require('./max-chats');
 const replyStore = require('./reply-store');
+const { editMessageText, editMessageCaption, deleteMessage } = require('./tg-api');
 const outbox = require('./tg-outbox');
 
 function escapeHtml(text) {
@@ -449,6 +450,50 @@ async function sendSingleMedia(message, media, isCatchUp, withCaption, sendConte
   }
 }
 
+async function syncEditedTelegramMessage(previousMessage, nextMessage, maxChatUrl) {
+  const ids = replyStore.getForwardedTelegramIds(previousMessage, maxChatUrl);
+  if (!Object.keys(ids).length) return false;
+  const meta = { maxChatUrl };
+  const sendContext = prepareForward(nextMessage, maxChatUrl, false);
+  const text = buildMessageText(nextMessage, false, meta, sendContext);
+  let changed = false;
+  for (const [chatId, messageId] of Object.entries(ids)) {
+    try {
+      await editMessageText(chatId, messageId, text, { parse_mode: 'HTML' });
+      changed = true;
+    } catch {
+      try {
+        await editMessageCaption(chatId, messageId, text, { parse_mode: 'HTML' });
+        changed = true;
+      } catch (err) {
+        console.warn(`Не удалось синхронизировать изменение MAX → TG (${chatId}/${messageId}): ${err.message}`);
+      }
+    }
+  }
+  if (changed) replyStore.replaceForwardedMessage(previousMessage, nextMessage, maxChatUrl);
+  return changed;
+}
+
+async function syncDeletedTelegramMessage(previousMessage, maxChatUrl) {
+  const ids = replyStore.getForwardedTelegramIds(previousMessage, maxChatUrl);
+  if (!Object.keys(ids).length) return false;
+  let changed = false;
+  for (const [chatId, messageId] of Object.entries(ids)) {
+    try {
+      await deleteMessage(chatId, messageId);
+      changed = true;
+    } catch (err) {
+      try {
+        await editMessageText(chatId, messageId, 'Сообщение удалено в MAX');
+        changed = true;
+      } catch {
+        console.warn(`Не удалось синхронизировать удаление MAX → TG (${chatId}/${messageId}): ${err.message}`);
+      }
+    }
+  }
+  return changed;
+}
+
 async function sendToTelegram(message, options = {}) {
   const { isCatchUp = false, mediaFiles = [], maxChatUrl = null } = options;
   const meta = { maxChatUrl };
@@ -576,4 +621,6 @@ module.exports = {
   buildReplyMarkup,
   prepareForward,
   flushTelegramOutbox,
+  syncEditedTelegramMessage,
+  syncDeletedTelegramMessage,
 };
