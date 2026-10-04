@@ -1,4 +1,6 @@
-const { getDatabase, resolveFromRoot } = require('./config');
+const fs = require('fs');
+const path = require('path');
+const { getDatabase } = require('./config');
 
 function esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 async function rowsForChat(chatUrl) {
@@ -11,7 +13,20 @@ async function rowsForChat(chatUrl) {
       return rows;
     } finally { await pool.end(); }
   }
-  const filename=cfg.file || cfg.sqlitePath || cfg.path || resolveFromRoot('data/data.db');
+  let filename=cfg.file;
+  if (!filename || !fs.existsSync(filename)) {
+    const candidates=[
+      filename,
+      path.resolve(__dirname,'../data/max.db'),
+      path.resolve(__dirname,'../data/data.db'),
+      path.resolve(__dirname,'../max.db'),
+      path.resolve(__dirname,'../data.db'),
+    ].filter(Boolean);
+    filename=candidates.find((candidate)=>fs.existsSync(candidate));
+    if (!filename) {
+      throw new Error(`Файл базы данных не найден. Ожидался: ${cfg.file || 'не задан'}`);
+    }
+  }
   const sql=`SELECT author,body,time_str,date_str,clock_str,is_own,media_json,reply_author,reply_body,created_at FROM messages WHERE chat_url=? ORDER BY id ASC LIMIT 20000`;
   let db;
   try {
