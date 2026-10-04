@@ -86,7 +86,7 @@ const {
   PROFILE_BIO_TEMPLATE_HINT,
   MAX_BIO_LENGTH,
 } = require('./tg-settings');
-const { previewBioTemplate, formatEventDateRu, daysUntilEvent } = require('./profile-bio');
+const { previewBioTemplate, renderBioDescription, formatEventDateRu, daysUntilEvent } = require('./profile-bio');
 const replyStore = require('./reply-store');
 const outbox = require('./tg-outbox');
 const { formatAppVersion } = require('./app-version');
@@ -591,7 +591,7 @@ function formatNotifyTarget(id) {
     : `Группа: <b>${escapeHtml(title)}</b> <code>${escapeHtml(id)}</code>`;
 }
 
-function buildStatusText() {
+async function buildStatusText() {
   const profileBio = getProfileBio();
   const online = getAlwaysOnline();
   const maxName = getMaxDisplayName();
@@ -615,7 +615,16 @@ function buildStatusText() {
 
   if (profileBio.enabled) {
     lines.push(profileBio.city ? `Город: <code>${escapeHtml(profileBio.city)}</code>` : STATUS.cityUnset);
+    let currentDescription = '';
+    try {
+      currentDescription = (await renderBioDescription(profileBio)).text || '';
+    } catch {
+      currentDescription = '';
+    }
     lines.push(`Шаблон: <code>${escapeHtml(profileBio.template)}</code>`);
+    if (currentDescription) {
+      lines.push(`Сейчас: <code>${escapeHtml(currentDescription)}</code>`);
+    }
     if (profileBio.eventDate) {
       lines.push(
         `Событие: <code>${escapeHtml(formatEventDateRu(profileBio.eventDate))}</code> · дней до: <code>${daysUntilEvent(profileBio.eventDate)}</code>`
@@ -2128,6 +2137,10 @@ async function handleMessage(message) {
     const db = getDatabase();
     const autoUpdate = getAutoUpdate();
     const queue = outbox.listJobs();
+    const delivered = outbox.listDelivered ? outbox.listDelivered() : [];
+    const lastDelivered = delivered.length
+      ? new Date(Math.max(...delivered.map((item) => Number(item.at || 0)))).toLocaleString('ru-RU')
+      : 'нет данных';
     const uptimeSec = Math.floor(process.uptime());
     const uptime = uptimeSec >= 86400
       ? `${Math.floor(uptimeSec / 86400)}д ${Math.floor((uptimeSec % 86400) / 3600)}ч`
@@ -2140,14 +2153,14 @@ async function handleMessage(message) {
       `MAX: ${maxOk ? '✅ авторизован' : '❌ не авторизован'}`,
       `Telegram API: ${tgOk ? '✅ доступен' : '❌ недоступен'}`,
       `Очередь сообщений: <code>${queue.length}</code>`,
-      `Последняя успешная пересылка: <code>${queue.length ? 'есть ожидающие' : 'очередь пуста'}</code>`,
+      `Последняя успешная пересылка: <code>${escapeHtml(lastDelivered)}</code>`,
       `Последняя ошибка: ${lastError ? `<code>${escapeHtml(lastError)}</code>` : 'нет'}`,
       `Uptime: <code>${uptime}</code>`,
-      `Версия: <code>${escapeHtml(formatAppVersion())}</code>`,
+      `Версия: <code>${escapeHtml(formatAppVersion(require('../package.json').version))}</code>`,
       `База данных: <code>${escapeHtml(String(db.driver || 'sqlite').toUpperCase())}</code>`,
       `Автообновление: ${autoUpdate.enabled !== false ? '✅ включено' : '❌ выключено'}`,
       '',
-      buildStatusText(),
+      await buildStatusText(),
     ].join('\n');
     await sendMessage(chatId, diagnostic);
     return;

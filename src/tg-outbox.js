@@ -159,6 +159,14 @@ function listJobs(kind = null) {
   return jobs.filter((job) => job.kind === kind);
 }
 
+function listDelivered() {
+  return Object.entries(loadOutbox().delivered || {}).map(([id, value]) => ({
+    id,
+    at: Number(value?.at || value || 0),
+    sentTo: value?.sentTo || {},
+  })).sort((a, b) => b.at - a.at);
+}
+
 function removeJob(id) {
   const data = loadOutbox();
   data.jobs = data.jobs.filter((job) => job.id !== String(id));
@@ -173,6 +181,7 @@ module.exports = {
   isJobComplete,
   deliveredSet,
   listJobs,
+  listDelivered,
   removeJob,
   acquireFlushLock,
   releaseFlushLock,
