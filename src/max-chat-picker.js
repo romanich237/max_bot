@@ -1179,7 +1179,11 @@ async function readUnreadCounts(page) {
     });
 
     if (tabUnread > 0) messages = tabUnread;
-    const counts = { chats: unread.size, messages };
+
+    // {непрочитанные_чаты} — это именно число уникальных диалогов
+    // с признаком непрочитанного, независимо от цифры внутри их бейджа.
+    const unreadChats = new Set(unread.keys()).size;
+    const counts = { chats: unreadChats, messages };
     console.log(
       `непрочитанные MAX: чаты ${counts.chats}, сообщения ${counts.messages}` +
       (tabUnread > 0 ? ` (бейдж «Все»: ${tabUnread})` : '')
