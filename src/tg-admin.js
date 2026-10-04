@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 const {
   store,
   getTelegram,
@@ -52,6 +54,8 @@ const {
   isMonitorPersonalChatsEnabled,
   setMonitorPersonalChatsEnabled,
   telegramChatTitle,
+  getDeleteSyncMode,
+  setDeleteSyncMode,
 } = require('./max-chats');
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
@@ -90,6 +94,7 @@ const { previewBioTemplate, renderBioDescription, formatEventDateRu, daysUntilEv
 const replyStore = require('./reply-store');
 const outbox = require('./tg-outbox');
 const { formatAppVersion } = require('./app-version');
+const { buildChatExport } = require('./chat-export');
 const { refreshAuthScreenshot, isAuthSessionActive, buildAuthModeKeyboard, buildPhoneAuthWarningMessage, buildActiveSessionMessage } = require('./auth-qr');
 const {
   recordChatFromUpdate,
@@ -346,6 +351,50 @@ async function beginMaxChatAdd(chatId) {
 
 function isMonitoringEnabled() {
   return getMax().monitoringEnabled !== false;
+}
+
+let previousCpuSample = null;
+function formatGb(value) { return (Number(value || 0) / 1073741824).toFixed(1); }
+function formatServerUptime(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return [d ? `${d}д` : '', h ? `${h}ч` : '', `${m}м`].filter(Boolean).join(' ');
+}
+function serverLoadText() {
+  const cpus = os.cpus();
+  const total = cpus.reduce((sum, cpu) => sum + Object.values(cpu.times).reduce((a,b)=>a+b,0), 0);
+  const idle = cpus.reduce((sum, cpu) => sum + cpu.times.idle, 0);
+  let cpu = 0;
+  if (previousCpuSample) {
+    const dt = total - previousCpuSample.total, di = idle - previousCpuSample.idle;
+    if (dt > 0) cpu = Math.max(0, Math.min(100, (1 - di / dt) * 100));
+  }
+  previousCpuSample = { total, idle };
+  let diskUsed = 0, diskTotal = 0;
+  try {
+    const stat = fs.statfsSync('/');
+    diskTotal = stat.blocks * stat.bsize;
+    diskUsed = diskTotal - stat.bavail * stat.bsize;
+  } catch {}
+  const ramTotal = os.totalmem(), ramUsed = ramTotal - os.freemem();
+  return [
+    `v${cpus.length}CPU: ${cpu.toFixed(1)}%`,
+    `Диск: ${formatGb(diskUsed)} ГБ / ${formatGb(diskTotal)} ГБ`,
+    `RAM: ${formatGb(ramUsed)} ГБ / ${formatGb(ramTotal)} ГБ`,
+    `Uptime: ${formatServerUptime(os.uptime())}`,
+  ].join('\n');
+}
+
+async function sendHtmlDocument(chatId, html, filename, caption) {
+  const { token } = getTelegram();
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  if (caption) form.append('caption', caption);
+  form.append('document', new File([Buffer.from(html, 'utf8')], filename, { type: 'text/html' }));
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.description || 'Telegram не принял файл');
+  return data;
 }
 
 function escapeHtml(text) {
@@ -1323,6 +1372,8 @@ async function showMaxChatView(chatId, messageId, index, destPage = 0) {
       lines.push(`• <b>${escapeHtml(name)}</b>`);
     }
   }
+  const deleteModeLabels = { delete: 'удалять в Telegram', mark: 'помечать «Сообщение удалено в MAX»', keep: 'оставлять в Telegram' };
+  lines.push(`Удаление в MAX: <b>${deleteModeLabels[getDeleteSyncMode(url)]}</b>`);
   lines.push('', CHATS.notifyDestHint);
 
   const text = lines.join('\n');
@@ -2147,12 +2198,16 @@ async function handleMessage(message) {
       : uptimeSec >= 3600
         ? `${Math.floor(uptimeSec / 3600)}ч ${Math.floor((uptimeSec % 3600) / 60)}м`
         : `${Math.floor(uptimeSec / 60)}м ${uptimeSec % 60}с`;
+    const latency = store.getPath(['runtime', 'deliveryLatency']) || {};
+    const latencyAvg = Number(latency.count || 0) ? Number(latency.sum || 0) / Number(latency.count) : null;
+    const latencyText = (v) => v == null ? 'нет данных' : `${Math.round(v)} мс`;
     const diagnostic = [
       '<b>Диагностика</b>',
       '',
       `MAX: ${maxOk ? '✅ авторизован' : '❌ не авторизован'}`,
       `Telegram API: ${tgOk ? '✅ доступен' : '❌ недоступен'}`,
       `Очередь сообщений: <code>${queue.length}</code>`,
+      `Задержка MIN/AVG/MAX: <code>${latencyText(latency.min)} / ${latencyText(latencyAvg)} / ${latencyText(latency.max)}</code>`,
       `Последняя успешная пересылка: <code>${escapeHtml(lastDelivered)}</code>`,
       `Последняя ошибка: ${lastError ? `<code>${escapeHtml(lastError)}</code>` : 'нет'}`,
       `Uptime: <code>${uptime}</code>`,
@@ -2507,7 +2562,7 @@ async function handleCallback(query) {
 
   if (data === 'action:about') {
     await answerCallback(query.id, 'О сервисе');
-    await editMessageText(chatId, query.message.message_id, START.about, {
+    await editMessageText(chatId, query.message.message_id, `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`, {
       reply_markup: buildAboutKeyboard(),
     });
     return;
@@ -2982,6 +3037,35 @@ async function handleCallback(query) {
     const on = (result.ids || []).map(String).includes(String(destId));
     await answerCallback(query.id, on ? 'Добавлено' : 'Убрано');
     await refreshMaxChatPanel(chatId, query, index, page);
+    return;
+  }
+
+  if (data.startsWith('maxchat:deleteMode:')) {
+    const index = Number.parseInt(data.slice('maxchat:deleteMode:'.length), 10) || 0;
+    const url = getMonitorChatUrls()[index];
+    if (!url) { await answerCallback(query.id, 'Чат не найден'); return; }
+    const modes = ['delete', 'mark', 'keep'];
+    const current = getDeleteSyncMode(url);
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+    setDeleteSyncMode(url, next);
+    await answerCallback(query.id, { delete: 'Удалять', mark: 'Помечать', keep: 'Оставлять' }[next]);
+    await showMaxChatView(chatId, query.message.message_id, index);
+    return;
+  }
+
+  if (data.startsWith('maxchat:export:')) {
+    const index = Number.parseInt(data.slice('maxchat:export:'.length), 10) || 0;
+    const url = getMonitorChatUrls()[index];
+    if (!url) { await answerCallback(query.id, 'Чат не найден'); return; }
+    await answerCallback(query.id, 'Готовлю HTML…');
+    try {
+      const title = chatLabelFromUrl(url);
+      const exported = await buildChatExport(url, title);
+      const safeName = title.replace(/[^a-zа-яё0-9_-]+/gi, '_').slice(0, 60) || 'max-chat';
+      await sendHtmlDocument(chatId, exported.html, `${safeName}.html`, `MAX · ${title} · ${exported.count} сообщений`);
+    } catch (err) {
+      await sendMessage(chatId, `Не удалось скачать чат: <code>${escapeHtml(err.message)}</code>`);
+    }
     return;
   }
 

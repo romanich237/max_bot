@@ -681,6 +681,21 @@ function isRequiredChatUrl(url) {
   );
 }
 
+function getDeleteSyncMode(url) {
+  const normalized = normalizeMaxChatUrl(url);
+  const modes = store.getPath(['max', 'deleteSyncModes']) || {};
+  return ['delete', 'mark', 'keep'].includes(modes[normalized]) ? modes[normalized] : 'delete';
+}
+
+function setDeleteSyncMode(url, mode) {
+  const normalized = normalizeMaxChatUrl(url);
+  if (!normalized || !['delete', 'mark', 'keep'].includes(mode)) return { error: 'Некорректный режим удаления.' };
+  const modes = store.getPath(['max', 'deleteSyncModes']) || {};
+  modes[normalized] = mode;
+  store.setPath(['max', 'deleteSyncModes'], modes);
+  return { ok: true, mode };
+}
+
 function getDisabledForwardChatUrls() {
   return (store.getPath(['max', 'disabledRequiredChats']) || [])
     .map(normalizeMaxChatUrl)
@@ -1160,6 +1175,8 @@ function buildMaxChatViewKeyboard(index, destPage = 0) {
     if (nav) rows.push(nav);
     rows.push([{ text: 'Добавить группу Telegram', callback_data: 'action:notifyChat' }]);
     rows.push([{ text: 'Добавить пользователя', callback_data: `maxchat:adduser:${index}:${safePage}` }]);
+    rows.push([{ text: 'Скачать чат', callback_data: `maxchat:export:${index}` }]);
+    rows.push([{ text: 'Удаление в TG', callback_data: `maxchat:deleteMode:${index}` }]);
   }
   const actions = url ? [...buildMaxChatActionButtons(url, index)] : [];
   if (url && canRemoveMaxChat(url, urls)) actions.push(maxChatDeleteButton(index));
@@ -1212,6 +1229,8 @@ Object.assign(module.exports, {
   isRequiredChatUrl,
   isChatForwardEnabled,
   setChatForwardEnabled,
+  getDeleteSyncMode,
+  setDeleteSyncMode,
   setRequiredChatForwardEnabled,
   getBoundTelegramIds,
   isAdminTelegramUser,

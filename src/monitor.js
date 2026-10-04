@@ -181,7 +181,18 @@ async function forwardMessage(page, message, isCatchUp, maxChatUrl) {
     MESSAGE_WRAPPER_SELECTOR
   );
 
+  const deliveryStarted = Date.now();
   await sendToTelegram(messageToSend, { isCatchUp, mediaFiles, maxChatUrl });
+  const latency = Date.now() - deliveryStarted;
+  const prev = store.getPath(['runtime', 'deliveryLatency']) || { count: 0, sum: 0, min: null, max: null };
+  store.setPath(['runtime', 'deliveryLatency'], {
+    count: Number(prev.count || 0) + 1,
+    sum: Number(prev.sum || 0) + latency,
+    min: prev.min == null ? latency : Math.min(Number(prev.min), latency),
+    max: prev.max == null ? latency : Math.max(Number(prev.max), latency),
+    last: latency,
+    updatedAt: Date.now(),
+  });
   await persistMessage(messageToSend, { forwarded: true, mediaFiles });
 }
 
@@ -551,12 +562,60 @@ async function startMonitor() {
     console.log('Мониторинг MAX запущен');
   }
 
-  const context = await launchMaxContext(settings.userDataDir, {
+  let context = await launchMaxContext(settings.userDataDir, {
     headless: settings.headless,
   });
 
-  const page = context.pages()[0] || (await context.newPage());
+  let page = context.pages()[0] || (await context.newPage());
   await injectOnlineGuards(page);
+  let watchdogFailures = 0;
+  let watchdogBusy = false;
+  async function recoverMaxBrowser(reason) {
+    if (watchdogBusy || authBusy) return;
+    watchdogBusy = true;
+    try {
+      console.warn(`Watchdog MAX: ${reason}; пересоздаю страницу`);
+      try {
+        if (page && !page.isClosed()) await page.close();
+        page = await context.newPage();
+        await injectOnlineGuards(page);
+        await openChatPage(page, getDefaultChatUrl(), 5000);
+        await Promise.race([
+          page.evaluate(() => document.readyState),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('page timeout')), 10000)),
+        ]);
+        watchdogFailures = 0;
+        return;
+      } catch (err) {
+        watchdogFailures += 1;
+        console.warn('Watchdog MAX: новая страница не помогла:', err.message);
+      }
+      if (watchdogFailures >= 2) {
+        console.warn('Watchdog MAX: пересоздаю browser context');
+        await context.close().catch(() => {});
+        context = await launchMaxContext(settings.userDataDir, { headless: settings.headless });
+        page = context.pages()[0] || await context.newPage();
+        await injectOnlineGuards(page);
+        watchdogFailures = 0;
+      }
+    } finally {
+      watchdogBusy = false;
+    }
+  }
+  const watchdogTimer = setInterval(async () => {
+    if (!isMonitoringEnabled() || authBusy || profileBusy || watchdogBusy) return;
+    try {
+      await Promise.race([
+        page.evaluate(() => document.readyState),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Playwright не отвечает 12 секунд')), 12000)),
+      ]);
+      watchdogFailures = 0;
+    } catch (err) {
+      watchdogFailures += 1;
+      await recoverMaxBrowser(err.message);
+    }
+  }, 30000);
+  watchdogTimer.unref?.();
 
   async function readActivityChats() {
     if (!needsDiscoveredChats()) {

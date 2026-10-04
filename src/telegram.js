@@ -6,6 +6,7 @@ const { isOwnByAuthor } = require('./parser');
 const { chatLabelFromUrl, allowsMaxReply, isPersonalMaxChat } = require('./max-chats');
 const replyStore = require('./reply-store');
 const { editMessageText, editMessageCaption, deleteMessage } = require('./tg-api');
+const { getDeleteSyncMode } = require('./max-chats');
 const outbox = require('./tg-outbox');
 
 function escapeHtml(text) {
@@ -475,12 +476,15 @@ async function syncEditedTelegramMessage(previousMessage, nextMessage, maxChatUr
 }
 
 async function syncDeletedTelegramMessage(previousMessage, maxChatUrl) {
+  const mode = getDeleteSyncMode(maxChatUrl);
+  if (mode === 'keep') return false;
   const ids = replyStore.getForwardedTelegramIds(previousMessage, maxChatUrl);
   if (!Object.keys(ids).length) return false;
   let changed = false;
   for (const [chatId, messageId] of Object.entries(ids)) {
     try {
-      await deleteMessage(chatId, messageId);
+      if (mode === 'mark') await editMessageText(chatId, messageId, 'Сообщение удалено в MAX');
+      else await deleteMessage(chatId, messageId);
       changed = true;
     } catch (err) {
       try {

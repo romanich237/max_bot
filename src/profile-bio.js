@@ -105,6 +105,8 @@ function templateNeedsUnread(template) {
   );
 }
 
+let lastUnread = { unreadChats: '0', unreadMessages: '0' };
+
 function unreadValues(options = {}) {
   const chats = options.unreadChats ?? options.chats;
   const messages = options.unreadMessages ?? options.messages;
@@ -132,12 +134,13 @@ async function renderBioDescription(options = {}) {
   const parts = getDateParts(new Date(), timezone);
   const daysUntil = daysUntilEvent(settings.eventDate, timezone);
 
-  let unread = unreadValues(options);
+  let unread = (options.unreadChats == null && options.chats == null) ? lastUnread : unreadValues(options);
   if (options.page && templateNeedsUnread(template)) {
     try {
       const { readUnreadCounts } = require('./max-chat-picker');
       const counts = await readUnreadCounts(options.page);
       unread = unreadValues(counts);
+      lastUnread = unread;
       console.log(
         `описание: непрочитанные — чаты ${unread.unreadChats}, сообщения ${unread.unreadMessages}`
       );
