@@ -11,11 +11,26 @@ async function rowsForChat(chatUrl) {
       return rows;
     } finally { await pool.end(); }
   }
-  const Database=require('better-sqlite3');
-  const filename=cfg.sqlitePath || cfg.path || resolveFromRoot('data/data.db');
-  const db=new Database(filename,{readonly:true,fileMustExist:true});
-  try { return db.prepare(`SELECT author,body,time_str,date_str,clock_str,is_own,media_json,reply_author,reply_body,created_at FROM messages WHERE chat_url=? ORDER BY id ASC LIMIT 20000`).all(chatUrl); }
-  finally { db.close(); }
+  const filename=cfg.file || cfg.sqlitePath || cfg.path || resolveFromRoot('data/data.db');
+  const sql=`SELECT author,body,time_str,date_str,clock_str,is_own,media_json,reply_author,reply_body,created_at FROM messages WHERE chat_url=? ORDER BY id ASC LIMIT 20000`;
+  let db;
+  try {
+    const Database=require('better-sqlite3');
+    db=new Database(filename,{readonly:true,fileMustExist:true});
+    try { return db.prepare(sql).all(chatUrl); }
+    finally { db.close(); }
+  } catch (err) {
+    // Node 22+ ships SQLite itself. This fallback avoids breaking chat export
+    // when better-sqlite3 was installed for another Node ABI or has no native binding.
+    try {
+      const { DatabaseSync }=require('node:sqlite');
+      db=new DatabaseSync(filename,{readOnly:true});
+      try { return db.prepare(sql).all(chatUrl); }
+      finally { db.close(); }
+    } catch (fallbackErr) {
+      throw new Error(`Не удалось открыть SQLite для экспорта: ${fallbackErr.message || err.message}`);
+    }
+  }
 }
 function mediaHtml(raw) {
   let media=[]; try { media=typeof raw==='string'?JSON.parse(raw||'[]'):(raw||[]); } catch {}

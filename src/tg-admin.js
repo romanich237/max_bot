@@ -378,8 +378,8 @@ function serverLoadText() {
   const ramTotal = os.totalmem(), ramUsed = ramTotal - os.freemem();
   return [
     `v${cpus.length}CPU: ${cpu.toFixed(1)}%`,
-    `Диск: ${formatGb(diskUsed)} ГБ / ${formatGb(diskTotal)} ГБ`,
-    `RAM: ${formatGb(ramUsed)} ГБ / ${formatGb(ramTotal)} ГБ`,
+    `Диск: ${formatGb(diskUsed)} ГБ / ${formatGb(diskTotal)} ГБ (${diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0.0'}%)`,
+    `RAM: ${formatGb(ramUsed)} ГБ / ${formatGb(ramTotal)} ГБ (${ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0.0'}%)`,
     `Uptime: ${formatServerUptime(os.uptime())}`,
   ].join('\n');
 }
