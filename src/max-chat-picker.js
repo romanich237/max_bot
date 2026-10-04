@@ -1146,8 +1146,44 @@ async function readUnreadCounts(page) {
 
     let messages = 0;
     for (const count of unread.values()) messages += count;
+
+    // Верхний бейдж вкладки «Все» в MAX — канонический общий счётчик
+    // непрочитанных. Не суммируем вместо него бейджи отдельных чатов:
+    // они могут пересекаться между фильтрами и давать завышенное значение.
+    const tabUnread = await page.evaluate(() => {
+      const parse = (value) => {
+        const text = String(value || '').trim().replace(/\s+/g, '');
+        const match = text.match(/^(\d{1,5})(?:\+)?$/);
+        return match ? Number(match[1]) : 0;
+      };
+      const nodes = document.querySelectorAll(
+        'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
+      );
+      for (const node of nodes) {
+        if (node.querySelector?.('h3.title') || node.closest?.('.scrollListContent, .scrollListScrollable')) continue;
+        const label = String(node.innerText || node.textContent || '').trim().split('\n')[0].trim();
+        if (!/^(все|all)$/i.test(label)) continue;
+        for (const badge of node.querySelectorAll(
+          '[class*="unread" i], [class*="counter" i], [class*="badge" i], [class*="notif" i]'
+        )) {
+          const count = parse(badge.innerText || badge.textContent || '');
+          if (count > 0) return count;
+        }
+        const numbers = String(node.innerText || node.textContent || '').match(/\b\d{1,5}\+?\b/g) || [];
+        for (const value of numbers) {
+          const count = parse(value);
+          if (count > 0) return count;
+        }
+      }
+      return 0;
+    });
+
+    if (tabUnread > 0) messages = tabUnread;
     const counts = { chats: unread.size, messages };
-    console.log(`непрочитанные MAX: чаты ${counts.chats}, сообщения ${counts.messages}`);
+    console.log(
+      `непрочитанные MAX: чаты ${counts.chats}, сообщения ${counts.messages}` +
+      (tabUnread > 0 ? ` (бейдж «Все»: ${tabUnread})` : '')
+    );
     return counts;
   } catch (err) {
     console.warn('непрочитанные MAX:', err.message);
