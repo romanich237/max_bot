@@ -1,6 +1,6 @@
 {
   "name": "max-to-tg-bot",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Пересылка уведомлений из мессенджера MAX в Telegram",
   "scripts": {
     "test": "node --test",
@@ -24,7 +24,12 @@
     "logs": "pm2 logs max-tg",
     "status": "pm2 status"
   },
-  "keywords": ["playwright","telegram","bot","max-messenger"],
+  "keywords": [
+    "playwright",
+    "telegram",
+    "bot",
+    "max-messenger"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {

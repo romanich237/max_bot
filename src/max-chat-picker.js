@@ -1025,206 +1025,130 @@ async function prepareChatActivityList(page, personalOnly = false) {
 }
 
 async function readUnreadCounts(page) {
-  if (!page || page.isClosed()) {
-    return { chats: 0, messages: 0 };
-  }
+  if (!page || page.isClosed()) return { chats: 0, messages: 0 };
 
-  const scanVisibleUnreadMap = async () =>
+  const scanVisibleUnread = async () =>
     page.evaluate(() => {
-        function parseCount(text) {
-          const raw = String(text || '')
-            .trim()
-            .replace(/\s+/g, '');
-          if (!raw || /^\d{1,2}:\d{2}/.test(raw)) return 0;
-          const plus = raw.match(/^(\d{1,4})\+$/);
-          if (plus) return Number(plus[1]);
-          if (/^\d{1,4}$/.test(raw)) return Number(raw);
-          return 0;
-        }
-
-        function looksLikeChatId(value) {
-          const text = String(value || '');
-          if (!/^-?\d{5,16}$/.test(text)) return false;
-          const abs = Math.abs(Number(text));
-          if (!Number.isFinite(abs) || abs < 10000) return false;
-          if (abs >= 1e12 && abs < 2e13) return false;
-          return true;
-        }
-
-        function chatIdFromBlob(blob) {
-          const text = String(blob || '');
-          const href = text.match(/(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,16})(?:["'/?#\s]|$)/);
-          if (href && looksLikeChatId(href[1])) return href[1];
-          return '';
-        }
-
-        function listRoot() {
-          return (
-            document.querySelector('aside .scrollListContent') ||
-            document.querySelector('aside .scrollListScrollable') ||
-            document.querySelector('aside') ||
-            document.querySelector('.scrollListContent')
-          );
-        }
-
-        function isTrailingBadge(badge, cell) {
-          if (!badge || !cell) return false;
-          const badgeRect = badge.getBoundingClientRect();
-          const cellRect = cell.getBoundingClientRect();
-          if (!cellRect.width || !badgeRect.width) return false;
-          const centerX = badgeRect.left + badgeRect.width / 2;
-          return centerX >= cellRect.left + cellRect.width * 0.52;
-        }
-
-        function unreadFromRow(row, cell) {
-          if (!row || !cell) return 0;
-
-          const subtitle = row.querySelector('.subtitleWrapper');
-          const badgeSelectors = '[class*="unread" i], [class*="counter" i], [class*="badge" i], [class*="notif" i]';
-
-          let best = 0;
-          for (const badge of cell.querySelectorAll(badgeSelectors)) {
-            if (subtitle && subtitle.contains(badge)) continue;
-            if (badge.closest('.subtitleWrapper')) continue;
-            if (!isTrailingBadge(badge, cell)) continue;
-
-            const n = parseCount(badge.innerText || badge.textContent || '');
-            if (n > 0 && n <= 999) best = Math.max(best, n);
-          }
-          if (best > 0) return best;
-
-          for (const badge of cell.querySelectorAll('[class*="unread" i], [class*="mention" i]')) {
-            if (subtitle && subtitle.contains(badge)) continue;
-            if (badge.closest('.subtitleWrapper')) continue;
-            if (!isTrailingBadge(badge, cell)) continue;
-            return 1;
-          }
-
-          return 0;
-        }
-
-        const root = listRoot();
-        const scope = root || document;
-        const result = new Map();
-
-        for (const item of scope.querySelectorAll('div.item')) {
-          if (item.closest?.('.openedChat')) continue;
-          if (root && !root.contains(item)) continue;
-
-          const cell = item.querySelector('button.cell');
-          if (!cell?.querySelector('h3.title')) continue;
-
-          const blob = [item.getAttribute?.('href') || '', cell.getAttribute?.('href') || '', item.outerHTML || ''].join(
-            ' '
-          );
-          const chatId = chatIdFromBlob(blob);
-          if (!chatId) continue;
-
-          const count = unreadFromRow(item, cell);
-          if (count > 0) {
-            const prev = result.get(chatId) || 0;
-            result.set(chatId, Math.max(prev, count));
-          }
-        }
-
-        return [...result.entries()];
-    });
-
-  async function readTabUnreadMessages() {
-    return page.evaluate(() => {
-      function parseCount(text) {
-        const raw = String(text || '')
-          .trim()
-          .replace(/\s+/g, '');
+      const parseCount = (value) => {
+        const raw = String(value || '').trim().replace(/\s+/g, '');
         if (!raw || /^\d{1,2}:\d{2}/.test(raw)) return 0;
-        const plus = raw.match(/^(\d{1,4})\+$/);
-        if (plus) return Number(plus[1]);
-        if (/^\d{1,5}$/.test(raw)) return Number(raw);
-        return 0;
+        const match = raw.match(/^(\d{1,5})(?:\+)?$/);
+        return match ? Number(match[1]) : 0;
+      };
+
+      const root =
+        document.querySelector('aside .scrollListContent') ||
+        document.querySelector('aside .scrollListScrollable') ||
+        document.querySelector('aside') ||
+        document.querySelector('.scrollListContent') ||
+        document;
+
+      const candidates = [
+        ...root.querySelectorAll(
+          'div.item, button.cell, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]'
+        ),
+      ];
+      const rows = [];
+      const seenNodes = new Set();
+      for (const node of candidates) {
+        const row =
+          node.closest?.('div.item, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]') ||
+          node;
+        if (!row || seenNodes.has(row) || row.closest?.('.openedChat')) continue;
+        if (!row.querySelector?.('h3.title, [class*="title" i]')) continue;
+        seenNodes.add(row);
+        rows.push(row);
       }
 
-      for (const btn of document.querySelectorAll(
-        'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
-      )) {
-        if (btn.querySelector('h3.title') || btn.closest('.scrollListContent, .scrollListScrollable')) {
-          continue;
+      const result = [];
+      rows.forEach((row, index) => {
+        const titleNode = row.querySelector('h3.title, [class*="title" i]');
+        const title = String(titleNode?.innerText || titleNode?.textContent || '')
+          .trim()
+          .split('\n')[0]
+          .trim();
+        const href =
+          row.getAttribute?.('href') ||
+          row.querySelector?.('a[href]')?.getAttribute?.('href') ||
+          '';
+        const attrs = [...(row.attributes || [])].map((attr) => attr.value).join(' ');
+        const idMatch = (href + ' ' + attrs + ' ' + (row.outerHTML || '')).match(
+          /(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,16})(?:["'/?#\s]|$)/
+        );
+        const key = idMatch?.[1] || href || title.toLowerCase() || `row:${index}`;
+
+        let count = 0;
+        let marker = false;
+        const selectors =
+          '[class*="unread" i], [class*="counter" i], [class*="badge" i], [class*="notif" i], [class*="mention" i], [aria-label*="непроч" i], [aria-label*="unread" i]';
+        for (const badge of row.querySelectorAll(selectors)) {
+          if (badge.closest?.('.subtitleWrapper')) continue;
+          const text = badge.innerText || badge.textContent || badge.getAttribute?.('aria-label') || '';
+          const parsed = parseCount(text);
+          if (parsed > 0) count = Math.max(count, parsed);
+          else marker = true;
         }
-        const label = (btn.innerText || '').trim().split('\n')[0].trim();
-        if (!/^(чаты|chats)$/i.test(label)) continue;
-        for (const badge of btn.querySelectorAll('[class*="unread" i], [class*="counter" i], [class*="badge" i]')) {
-          const count = parseCount(badge.innerText || badge.textContent || '');
-          if (count > 0) return count;
-        }
-        const n = parseCount(btn.innerText || btn.textContent || '');
-        if (n > 0) return n;
-      }
-      return 0;
+
+        const aria = String(row.getAttribute?.('aria-label') || '');
+        const ariaCount = aria.match(/(?:непрочитан\w*|unread)\D{0,12}(\d{1,5})/i);
+        if (ariaCount) count = Math.max(count, Number(ariaCount[1]));
+        if (/непрочитан|unread/i.test(aria)) marker = true;
+
+        if (count > 0 || marker) result.push([key, count || 1]);
+      });
+      return result;
     });
-  }
 
   try {
     await ensureChatListVisible(page);
     await page.waitForTimeout(600);
 
-    const filterLabels = await listChatListFilters(page);
-    const filters = pickUnreadScanFilters(filterLabels);
-    if (filterLabels.length) {
-      console.log(
-        `непрочитанные MAX: фильтры ${filters.filter(Boolean).join(' → ') || 'список'}`
-      );
-    }
-    const unreadByChatId = new Map();
+    const labels = await listChatListFilters(page);
+    const filters = pickUnreadScanFilters(labels);
+    const unread = new Map();
 
-    const mergeBatch = (batch) => {
-      for (const [chatId, count] of batch || []) {
-        const prev = unreadByChatId.get(chatId) || 0;
-        unreadByChatId.set(chatId, Math.max(prev, count));
+    const merge = (batch) => {
+      for (const [key, count] of batch || []) {
+        unread.set(key, Math.max(unread.get(key) || 0, Number(count) || 1));
       }
     };
 
     async function scanCurrentFilter() {
-      mergeBatch(await scanVisibleUnreadMap());
-
+      merge(await scanVisibleUnread());
       let stagnant = 0;
-      for (let step = 0; step < 30; step++) {
-        const before = unreadByChatId.size;
+      let previousSignature = '';
+      for (let step = 0; step < 40; step++) {
         const moved = await scrollChatListStep(page);
         if (!moved) break;
-        await page.waitForTimeout(350);
-        mergeBatch(await scanVisibleUnreadMap());
-
-        if (unreadByChatId.size <= before) stagnant += 1;
+        await page.waitForTimeout(250);
+        merge(await scanVisibleUnread());
+        const signature = [...unread.entries()].sort().map(([k, v]) => `${k}:${v}`).join('|');
+        if (signature === previousSignature) stagnant += 1;
         else stagnant = 0;
-        if (stagnant >= 2) break;
+        previousSignature = signature;
+        if (stagnant >= 4) break;
       }
-
       await resetChatListScroll(page);
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(150);
     }
 
-    for (const filterLabel of filters) {
-      if (filterLabel) {
-        await openChatListFilter(page, filterLabel);
-        await page.waitForTimeout(400);
+    if (filters.length) {
+      for (const label of filters) {
+        if (label) {
+          await openChatListFilter(page, label);
+          await page.waitForTimeout(350);
+        }
+        await scanCurrentFilter();
       }
+    } else {
       await scanCurrentFilter();
     }
 
-    let chats = 0;
     let messages = 0;
-    for (const count of unreadByChatId.values()) {
-      if (count > 0) {
-        chats += 1;
-        messages += count;
-      }
-    }
-
-    const tabMessages = await readTabUnreadMessages();
-    if (tabMessages > messages) {
-      messages = tabMessages;
-    }
-
-    return { chats, messages };
+    for (const count of unread.values()) messages += count;
+    const counts = { chats: unread.size, messages };
+    console.log(`непрочитанные MAX: чаты ${counts.chats}, сообщения ${counts.messages}`);
+    return counts;
   } catch (err) {
     console.warn('непрочитанные MAX:', err.message);
     return { chats: 0, messages: 0 };
