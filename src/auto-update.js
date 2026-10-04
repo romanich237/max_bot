@@ -452,7 +452,16 @@ async function announceUpdateDone(fromVersion, toVersion, extraChatIds = []) {
   const posts = [];
   for (const chatId of outbox.remainingDests(outbox.getJob(jobId) || { destIds: unique, sentTo: {} })) {
     try {
-      const data = await sendMessage(chatId, text);
+      const data = await sendMessage(chatId, text, {
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: 'Посмотреть изменения',
+              url: 'https://github.com/romanich237/max_bot/commits/main/'
+            }
+          ]]
+        }
+      });
       if (data?.ok && data.result?.message_id) {
         outbox.markDelivered(jobId, chatId, data.result.message_id);
         posts.push({ chatId, messageId: data.result.message_id });
