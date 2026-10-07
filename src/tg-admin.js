@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { File } = require('node:buffer');
 const {
   store,
   getTelegram,
@@ -774,10 +775,10 @@ async function sendPinnedAboutOnce(chat) {
   });
   if (!sent?.ok || !sent.result?.message_id) return false;
 
-  await pinChatMessage(chatId, sent.result.message_id).catch((err) => {
+  markPinnedAbout(chatId);
+  void pinChatMessage(chatId, sent.result.message_id).catch((err) => {
     console.warn('pin about:', err.message);
   });
-  markPinnedAbout(chatId);
   return true;
 }
 
@@ -2194,17 +2195,21 @@ async function handleMessage(message) {
     let maxOk = false;
     let tgOk = false;
     let lastError = '';
-    try {
-      maxOk = sessionCheckHandler ? Boolean(await sessionCheckHandler()) : false;
-    } catch (err) {
-      lastError = `MAX: ${err.message}`;
-    }
-    try {
-      await checkTelegramConnectivity();
-      tgOk = true;
-    } catch (err) {
-      lastError = lastError || `Telegram: ${err.message}`;
-    }
+    const withTimeout = (promise, ms, label) => Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label}: таймаут`)), ms);
+        timer.unref?.();
+      }),
+    ]);
+    const [maxResult, tgResult] = await Promise.allSettled([
+      sessionCheckHandler ? withTimeout(sessionCheckHandler(), 1200, 'MAX') : Promise.resolve(false),
+      withTimeout(checkTelegramConnectivity(), 1200, 'Telegram'),
+    ]);
+    if (maxResult.status === 'fulfilled') maxOk = Boolean(maxResult.value);
+    else lastError = maxResult.reason?.message || 'MAX: ошибка проверки';
+    if (tgResult.status === 'fulfilled') tgOk = true;
+    else if (!lastError) lastError = tgResult.reason?.message || 'Telegram: ошибка проверки';
     const db = getDatabase();
     const autoUpdate = getAutoUpdate();
     const queue = outbox.listJobs();
@@ -2591,22 +2596,30 @@ async function handleCallback(query) {
   if (data === 'action:logs') {
     await answerCallback(query.id, 'Готовлю логи…');
     try {
+      const home = os.homedir();
       const logCandidates = [
         path.join(getSettings().dataDir, 'logo.txt'),
-        path.join(getSettings().dataDir, 'bot.log'),
         path.resolve(process.cwd(), 'logo.txt'),
+        path.join(home, '.pm2', 'logs', 'max-tg-out.log'),
+        path.join(home, '.pm2', 'logs', 'max-tg-error.log'),
+        path.join(home, '.pm2', 'logs', 'max-tg-update-out.log'),
+        path.join(home, '.pm2', 'logs', 'max-tg-update-error.log'),
         path.resolve(process.cwd(), 'bot.log'),
         path.resolve(process.cwd(), 'logs', 'max-tg.log'),
       ];
-      const found = logCandidates.find((file) => fs.existsSync(file) && fs.statSync(file).isFile());
-      let body = found ? fs.readFileSync(found, 'utf8') : '';
+      const existing = [...new Set(logCandidates)]
+        .filter((file) => fs.existsSync(file) && fs.statSync(file).isFile());
+      let body = existing.map((file) => {
+        const text = fs.readFileSync(file, 'utf8');
+        return `===== ${path.basename(file)} =====\n${text.slice(-1_000_000)}`;
+      }).join('\n\n');
       if (!body.trim()) {
         body = [
-          `MAX bot log snapshot`,
+          'MAX bot log snapshot',
           `Время: ${new Date().toISOString()}`,
           `PID: ${process.pid}`,
           `Uptime: ${formatServerUptime(process.uptime())}`,
-          'Файл логов процесса не найден. Для постоянных логов настройте PM2 output/error в logo.txt.',
+          'Логи PM2 пока пусты.',
         ].join('\n');
       }
       const form = new FormData();

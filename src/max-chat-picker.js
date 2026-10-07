@@ -163,7 +163,7 @@ function pickUnreadScanFilters(labels) {
 async function openChatListFilter(page, label) {
   const clicked = await page.evaluate((target) => {
     const FILTER_RE =
-      /^(все|all|личные|personal|direct|директ|группы|groups|каналы|channels)$/i;
+      /^(все|all|личные|personal|direct|директ|группы|groups|каналы|channels|сервисные|сервисы|уведомления|service|services|notifications)$/i;
     const aside = document.querySelector('aside');
     if (!aside) return false;
 
@@ -870,19 +870,7 @@ async function readMaxChatCategoryCounts(page) {
     { key: 'service', re: /^(сервисные|сервисы|уведомления|service|services|notifications)$/i },
   ];
 
-  const labels = await page.evaluate(() => {
-    const aside = document.querySelector('aside');
-    if (!aside) return [];
-    const values = [];
-    for (const btn of aside.querySelectorAll('button, [role="tab"]')) {
-      if (btn.closest('.scrollListContent, .scrollListScrollable, div.item')) continue;
-      if (btn.querySelector('h3.title')) continue;
-      const label = String(btn.innerText || btn.getAttribute('aria-label') || '')
-        .trim().split('\n')[0].trim();
-      if (label) values.push(label);
-    }
-    return [...new Set(values)];
-  });
+  const labels = await listChatListFilters(page);
 
   const counts = { ...empty };
   for (const def of definitions) {

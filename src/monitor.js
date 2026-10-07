@@ -812,7 +812,14 @@ async function startMonitor() {
     }
   });
 
-  let cachedChatStats = { personal: 0, groups: 0, channels: 0, service: 0, updatedAt: 0 };
+  const savedChatStats = store.getPath(['runtime', 'maxChatStats']) || {};
+  let cachedChatStats = {
+    personal: Number(savedChatStats.personal) || 0,
+    groups: Number(savedChatStats.groups) || 0,
+    channels: Number(savedChatStats.channels) || 0,
+    service: Number(savedChatStats.service) || 0,
+    updatedAt: Number(savedChatStats.updatedAt) || 0,
+  };
   let chatStatsBusy = false;
   async function refreshChatStats() {
     if (chatStatsBusy || authBusy || profileBusy || page.isClosed()) return;
@@ -822,7 +829,13 @@ async function startMonitor() {
     try {
       if (await isLoginPage(page)) return;
       const stats = await readMaxChatCategoryCounts(page);
-      cachedChatStats = { ...stats, updatedAt: Date.now() };
+      const total = Number(stats.personal) + Number(stats.groups) + Number(stats.channels) + Number(stats.service);
+      if (total > 0) {
+        cachedChatStats = { ...stats, updatedAt: Date.now() };
+        store.setPath(['runtime', 'maxChatStats'], cachedChatStats);
+      } else {
+        console.warn('Статистика чатов MAX: получены нули, сохранён предыдущий кэш');
+      }
     } catch (err) {
       console.warn('Статистика чатов MAX:', err.message);
     } finally {
