@@ -25,12 +25,33 @@ function mediaHtml(raw) {
     return `<div class="media">📎 ${esc(type)}${src ? ` · <a href="${esc(src)}">медиа</a>` : ''}</div>`;
   }).join('');
 }
+function formatDateDivider(value) {
+  const raw=String(value||'').trim();
+  if(!raw) return '';
+  const lower=raw.toLowerCase();
+  if(lower==='сегодня') return 'Сегодня';
+  if(lower==='вчера') return 'Вчера';
+
+  const months={
+    '01':'января','02':'февраля','03':'марта','04':'апреля','05':'мая','06':'июня',
+    '07':'июля','08':'августа','09':'сентября','10':'октября','11':'ноября','12':'декабря'
+  };
+  const m=raw.match(/^(\\d{1,2})[.\\/-](\\d{1,2})[.\\/-](\\d{4})$/);
+  if(m) return `${Number(m[1])} ${months[String(Number(m[2])).padStart(2,'0')]||m[2]} ${m[3]}`;
+
+  const iso=raw.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})/);
+  if(iso) return `${Number(iso[3])} ${months[String(Number(iso[2])).padStart(2,'0')]||iso[2]} ${iso[1]}`;
+
+  return raw;
+}
+
 async function buildChatExport(chatUrl,title) {
   const rows=await rowsForChat(chatUrl);
   let lastDate='';
   const messages=rows.map(row=>{
     const date=String(row.date_str||'').trim();
-    const separator=date && date!==lastDate ? `<div class="date"><span>${esc(date)}</span></div>` : '';
+    const displayDate=formatDateDivider(date);
+    const separator=date && date!==lastDate ? `<div class="date"><span>${esc(displayDate)}</span></div>` : '';
     if(date) lastDate=date;
     const author=esc(row.author||'MAX');
     const reply=row.reply_body
