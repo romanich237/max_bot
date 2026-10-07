@@ -564,6 +564,23 @@ pick_db_driver
 
 [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || fail "нужны TG_TOKEN и TG_CHAT_ID (export до запуска)"
 
+WEB_DOMAIN="${WEB_DOMAIN:-}"
+if [ -z "$WEB_DOMAIN" ]; then read -r -p "Домен веб-панели (Enter — пропустить): " WEB_DOMAIN || true; fi
+WEB_DOMAIN="${WEB_DOMAIN#http://}"; WEB_DOMAIN="${WEB_DOMAIN#https://}"; WEB_DOMAIN="${WEB_DOMAIN%/}"
+WEB_PANEL_PORT="${WEB_PANEL_PORT:-$((20000 + RANDOM % 30000))}"
+if [ -n "$WEB_DOMAIN" ]; then
+  SERVER_IP="$(c4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+  DNS_IP="$(getent ahostsv4 "$WEB_DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+  [ -n "$DNS_IP" ] && { [ -z "$SERVER_IP" ] || [ "$DNS_IP" = "$SERVER_IP" ]; } || fail "A-запись $WEB_DOMAIN должна указывать на $SERVER_IP"
+  can_sudo || fail "Для nginx/SSL нужен root или sudo"
+  ensure_apt_packages nginx certbot python3-certbot-nginx
+  printf '%s\n' "server {" " listen 80;" " server_name $WEB_DOMAIN;" " location / { proxy_pass http://127.0.0.1:$WEB_PANEL_PORT; proxy_set_header Host \\$host; proxy_set_header X-Real-IP \\$remote_addr; proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \\$scheme; }" "}" | run_root tee /etc/nginx/sites-available/max-tg-panel >/dev/null
+  run_root ln -sf /etc/nginx/sites-available/max-tg-panel /etc/nginx/sites-enabled/max-tg-panel
+  run_root nginx -t && run_root systemctl reload nginx
+  run_root certbot --nginx -d "$WEB_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+  echo "HTTPS готов: https://$WEB_DOMAIN (внутренний случайный порт $WEB_PANEL_PORT)"
+fi
+
 echo ""
 echo "запускаю npm run setup…"
 exec env \
@@ -574,4 +591,7 @@ exec env \
   TG_CHAT_ID="$TG_CHAT_ID" \
   DB_DRIVER="$DB_DRIVER" \
   SETUP_PORT="${SETUP_PORT:-}" \
+  WEB_DOMAIN="${WEB_DOMAIN:-}" \
+  WEB_PANEL_PORT="${WEB_PANEL_PORT:-}" \
+  IPINFO_TOKEN="${IPINFO_TOKEN:-}" \
   npm run setup

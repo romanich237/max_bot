@@ -187,6 +187,8 @@ async function main() {
   require('../src/force-ipv4');
 
   await ensureTelegramCredentials();
+  if (process.env.WEB_DOMAIN) { const c=loadConfig(); c.webPanel=c.webPanel||{}; c.webPanel.domain=process.env.WEB_DOMAIN.trim(); c.webPanel.port=Number(process.env.WEB_PANEL_PORT||c.webPanel.port||3848); if(process.env.IPINFO_TOKEN)c.webPanel.ipinfoToken=process.env.IPINFO_TOKEN.trim(); saveConfig(c); }
+
 
   const { checkTelegramConnectivity } = require('../src/tg-api');
   console.log('Проверка связи с Telegram API...');

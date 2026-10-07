@@ -67,5 +67,17 @@
     "user": "",
     "password": "",
     "database": ""
+  },
+  "webPanel": {
+    "enabled": true,
+    "domain": "",
+    "port": 0,
+    "ipinfoToken": "",
+    "user": "",
+    "pass": "",
+    "path": "",
+    "auth": "",
+    "rotatedAt": 0,
+    "generation": 0
   }
 }

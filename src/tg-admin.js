@@ -157,6 +157,7 @@ const {
   getBrowserPassword,
 } = require('./auth-browser');
 const { clearInputPrompt, sendInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
+const { getAccess: getWebAccess, setEnabled: setWebEnabled, url: webUrl } = require('./web-panel-access');
 
 const SETTABLE = {
   biointerval: { path: ['profileBio', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -170,6 +171,7 @@ const BOT_COMMANDS = [
   { command: 'menu', description: COMMANDS.menu },
   { command: 'reauth', description: COMMANDS.reauth },
   { command: 'status', description: 'Диагностика бота' },
+  { command: 'link', description: 'Веб-панель' },
 ];
 
 let reauthHandler = null;
@@ -821,6 +823,7 @@ function buildMenuKeyboard() {
     ],
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
+      { text: 'Веб панель', callback_data: 'action:webPanel' },
     ],
   ];
 
@@ -2111,6 +2114,10 @@ async function showChatInfo(chatId, messageId, targetChatId) {
   });
 }
 
+function webPanelText(){const c=getWebAccess(),u=webUrl(c);return ['<b>Веб-панель</b>','',c.enabled!==false?'Статус: ✅ включена':'Статус: ❌ выключена',c.domain?'Ссылка: <code>'+escapeHtml(u)+'</code>':'Домен ещё не настроен.',c.domain?'Логин: <code>'+escapeHtml(c.user)+'</code>':null,c.domain?'Пароль: <code>'+escapeHtml(c.pass)+'</code>':null,'','Путь и данные доступа меняются каждые 6 часов.'].filter(Boolean).join('\n')}
+function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
+async function showWebPanel(chatId,messageId){const x={reply_markup:webPanelKeyboard()};if(messageId){try{await editMessageText(chatId,messageId,webPanelText(),x);return}catch{}}await sendMessage(chatId,webPanelText(),x)}
+
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const userId = message.from?.id;
@@ -2251,6 +2258,8 @@ async function handleMessage(message) {
     await sendMainMenu(chatId);
     return;
   }
+
+  if (/^\/link$/i.test(text)) { await showWebPanel(chatId); return; }
 
   if (/^\/status$/i.test(text)) {
     let maxOk = false;
@@ -2524,6 +2533,9 @@ async function handleCallback(query) {
     await rejectUnauthorized(query.message?.chat, userId, { callbackId: query.id });
     return;
   }
+
+  if (data === 'action:webPanel') { await answerCallback(query.id,'Веб-панель'); if(Array.isArray(query.message.photo)&&query.message.photo.length){await deleteMessage(chatId,query.message.message_id).catch(()=>{});await showWebPanel(chatId)}else await showWebPanel(chatId,query.message.message_id); return; }
+  if (data === 'action:webPanelToggle') { const c=getWebAccess();setWebEnabled(c.enabled===false);await answerCallback(query.id,c.enabled===false?'Сайт включён':'Сайт отключён');await showWebPanel(chatId,query.message.message_id);return; }
 
   if (data === 'auth:switch:qr') {
     if (authInputWaiter?.onSwitch) {

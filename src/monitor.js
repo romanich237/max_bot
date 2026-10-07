@@ -34,6 +34,8 @@ const { injectOnlineGuards, startAlwaysOnline } = require('./online');
 const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler, setMaxChatKindHandler, setMaxChatStatsHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
+const { setPage } = require('./web-panel-runtime');
+const { start: startWebPanel } = require('./web-panel');
 const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor, extractMaxChatsFromPage, prepareChatActivityList, readMaxChatCategoryCounts } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
@@ -565,6 +567,8 @@ async function startMonitor() {
   });
 
   let page = context.pages()[0] || (await context.newPage());
+  setPage(page);
+  startWebPanel();
   await injectOnlineGuards(page);
   let watchdogFailures = 0;
   let watchdogBusy = false;
@@ -576,6 +580,7 @@ async function startMonitor() {
       try {
         if (page && !page.isClosed()) await page.close();
         page = await context.newPage();
+        setPage(page);
         await injectOnlineGuards(page);
         await openChatPage(page, getDefaultChatUrl(), 5000);
         await Promise.race([
@@ -593,6 +598,7 @@ async function startMonitor() {
         await context.close().catch(() => {});
         context = await launchMaxContext(settings.userDataDir, { headless: settings.headless });
         page = context.pages()[0] || await context.newPage();
+        setPage(page);
         await injectOnlineGuards(page);
         watchdogFailures = 0;
       }
