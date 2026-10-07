@@ -3524,12 +3524,20 @@ async function handleDeveloperBroadcast(post) {
 function decodeTelegramHtml(text) {
   return String(text || '')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#x([0-9a-f]+);/gi, (entity, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : entity;
+    })
+    .replace(/&#(\d+);/g, (entity, decimal) => {
+      const code = Number.parseInt(decimal, 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : entity;
+    })
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'");
 }
 
 function extractLatestChannelPost(html) {
