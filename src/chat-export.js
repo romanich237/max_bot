@@ -28,21 +28,36 @@ function mediaHtml(raw) {
 function formatDateDivider(value) {
   const raw=String(value||'').trim();
   if(!raw) return '';
+
   const lower=raw.toLowerCase();
   if(lower==='сегодня') return 'Сегодня';
   if(lower==='вчера') return 'Вчера';
 
-  const months={
-    '01':'января','02':'февраля','03':'марта','04':'апреля','05':'мая','06':'июня',
-    '07':'июля','08':'августа','09':'сентября','10':'октября','11':'ноября','12':'декабря'
-  };
-  const m=raw.match(/^(\\d{1,2})[.\\/-](\\d{1,2})[.\\/-](\\d{4})$/);
-  if(m) return `${Number(m[1])} ${months[String(Number(m[2])).padStart(2,'0')]||m[2]} ${m[3]}`;
+  const months=[
+    'января','февраля','марта','апреля','мая','июня',
+    'июля','августа','сентября','октября','ноября','декабря'
+  ];
 
-  const iso=raw.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})/);
-  if(iso) return `${Number(iso[3])} ${months[String(Number(iso[2])).padStart(2,'0')]||iso[2]} ${iso[1]}`;
+  let year,month,day;
+  let m=raw.match(/^(\\d{4})[.\\/-](\\d{1,2})[.\\/-](\\d{1,2})(?:\\s.*)?$/);
+  if(m) {
+    year=Number(m[1]); month=Number(m[2]); day=Number(m[3]);
+  } else {
+    m=raw.match(/^(\\d{1,2})[.\\/-](\\d{1,2})[.\\/-](\\d{4})(?:\\s.*)?$/);
+    if(m) { day=Number(m[1]); month=Number(m[2]); year=Number(m[3]); }
+  }
 
-  return raw;
+  if(!year || month<1 || month>12 || day<1 || day>31) return raw;
+
+  const target=new Date(year,month-1,day);
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const yesterday=new Date(today);
+  yesterday.setDate(today.getDate()-1);
+
+  if(target.getTime()===today.getTime()) return 'Сегодня';
+  if(target.getTime()===yesterday.getTime()) return 'Вчера';
+  return `${day} ${months[month-1]} ${year}`;
 }
 
 async function buildChatExport(chatUrl,title) {
