@@ -60,6 +60,7 @@ const {
 const { resolveMaxChatInput } = require('./max-chat-picker');
 const {
   deleteWebhook,
+  deleteMessage,
   setBotCommands,
   setBotDescription,
   setBotShortDescription,
@@ -750,7 +751,10 @@ function buildAboutKeyboard() {
   return {
     inline_keyboard: [
       buildLinksInlineRow(),
-      [{ text: 'Логи', callback_data: 'action:logs' }],
+      [
+        { text: 'Логи', callback_data: 'action:logs' },
+        { text: 'Изображение меню', callback_data: 'action:menuImage' },
+      ],
       [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
     ],
   };
@@ -836,6 +840,17 @@ function buildMenuKeyboard() {
   ]);
 
   return { inline_keyboard: rows };
+}
+
+async function replaceMenuPhotoWithText(query, text, extra = {}) {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const hasPhoto = Array.isArray(query.message.photo) && query.message.photo.length > 0;
+  if (hasPhoto) {
+    await deleteMessage(chatId, messageId).catch(() => {});
+    return sendMessage(chatId, text, extra);
+  }
+  return editMessageText(chatId, messageId, text, extra);
 }
 
 function buildProfileBioKeyboard() {
@@ -2634,9 +2649,20 @@ async function handleCallback(query) {
 
   if (data === 'action:about') {
     await answerCallback(query.id, 'О сервисе');
-    await editMessageText(chatId, query.message.message_id, `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`, {
+    await replaceMenuPhotoWithText(query, `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`, {
       reply_markup: buildAboutKeyboard(),
     });
+    return;
+  }
+
+  if (data === 'action:menuImage') {
+    await answerCallback(query.id, 'Изображение меню');
+    const image = getMenuImageBuffer();
+    if (!image) {
+      await sendMessage(chatId, 'Файл <code>menu.png</code> не найден.');
+      return;
+    }
+    await sendPhotoBuffer(chatId, image, 'Изображение главного меню');
     return;
   }
 
@@ -2684,7 +2710,7 @@ async function handleCallback(query) {
 
   if (data === 'action:profileBio') {
     await answerCallback(query.id, 'Смена описания');
-    await editMessageText(chatId, query.message.message_id, buildProfileBioText(), {
+    await replaceMenuPhotoWithText(query, buildProfileBioText(), {
       reply_markup: buildProfileBioKeyboard(),
     }).catch(() => {});
     return;
@@ -2883,6 +2909,12 @@ async function handleCallback(query) {
   }
 
   if (data === 'maxchat:list') {
+    if (Array.isArray(query.message.photo) && query.message.photo.length) {
+      await deleteMessage(chatId, query.message.message_id).catch(() => {});
+      await answerCallback(query.id, 'Чаты MAX');
+      await showMaxChats(chatId);
+      return;
+    }
     await answerCallback(query.id, 'Чаты MAX');
     await showMaxChats(chatId, query.message.message_id);
     return;
@@ -3274,9 +3306,8 @@ async function handleCallback(query) {
 
   if (data === 'discover:menu') {
     await answerCallback(query.id, 'Меню');
-    await editMessageText(chatId, query.message.message_id, 'Панель управления ботом:', {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await deleteMessage(chatId, query.message.message_id).catch(() => {});
+    await sendMainMenu(chatId);
     return;
   }
 
