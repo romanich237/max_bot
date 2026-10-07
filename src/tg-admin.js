@@ -2123,7 +2123,64 @@ async function showChatInfo(chatId, messageId, targetChatId) {
 function webPanelText(){const c=getWebAccess(),u=webUrl(c);if(!c.domain)return '<b>Веб-панель</b>\n\n🌐 Домен не привязан.\nОтправьте домен следующим сообщением, например:\n<code>panel.example.com</code>\n\nОтмена: /cancel';return ['<b>Веб-панель</b>','',c.enabled!==false?'Статус: ✅ включена':'Статус: ❌ выключена','Ссылка: <code>'+escapeHtml(u)+'</code>','Логин: <code>'+escapeHtml(c.user)+'</code>','Пароль: <code>'+escapeHtml(c.pass)+'</code>','','Путь и данные доступа меняются каждые 6 часов.'].join('\n')}
 function normalizeWebDomain(value){return String(value||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.$/,'')}
 function isValidWebDomain(domain){return /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)}
-async function bindWebDomain(chatId,text){const domain=normalizeWebDomain(text);if(!isValidWebDomain(domain)){await sendInputPrompt(chatId,'❌ Некорректный домен.\n\nОтправьте домен без пути, например: <code>panel.example.com</code>\nОтмена: /cancel');return false}let dns=[];try{dns=await require('dns').promises.resolve4(domain)}catch{}if(!dns.length){await sendInputPrompt(chatId,'❌ У домена не найдена A-запись.\n\nСначала направьте домен на IP этого сервера, затем отправьте домен ещё раз.\nОтмена: /cancel');return false}const raw=getRaw(),current=raw.webPanel||{};store.setPath(['webPanel'],{...current,domain});waitingInput.delete(String(chatId));await clearInputPrompt(chatId);await sendMessage(chatId,'✅ Домен <code>'+escapeHtml(domain)+'</code> привязан.\n\nДля HTTPS nginx и SSL должны быть настроены установщиком.');await showWebPanel(chatId);return true}
+async function getWebPanelPublicIp(){
+  const urls=['https://api.ipify.org','https://ipv4.icanhazip.com'];
+  for(const url of urls){
+    try{
+      const response=await fetch(url,{signal:AbortSignal.timeout(5000)});
+      const value=(await response.text()).trim();
+      if(response.ok&&/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value))return value;
+    }catch{}
+  }
+  return '';
+}
+async function bindWebDomain(chatId,text){
+  const domain=normalizeWebDomain(text);
+  if(!isValidWebDomain(domain)){
+    await sendInputPrompt(chatId,'❌ Некорректный домен.\n\nОтправьте домен без https:// и пути, например:\n<code>panel.example.com</code>\n\nОтмена: /cancel');
+    return false;
+  }
+
+  await sendMessage(chatId,'🔎 Проверяю домен <code>'+escapeHtml(domain)+'</code>…').catch(()=>{});
+
+  let dns=[];
+  try{dns=await require('dns').promises.resolve4(domain)}catch{}
+  const serverIp=await getWebPanelPublicIp();
+
+  if(!serverIp){
+    await sendInputPrompt(chatId,'⚠️ Не удалось определить публичный IPv4 этого сервера.\n\nПроверьте доступ сервера в интернет и отправьте домен ещё раз.\nОтмена: /cancel');
+    return false;
+  }
+
+  if(!dns.includes(serverIp)){
+    const current=dns.length?dns.map(ip=>'<code>'+escapeHtml(ip)+'</code>').join(', '):'<i>A-запись отсутствует</i>';
+    await sendInputPrompt(chatId,[
+      '❌ <b>Домен пока не направлен на этот сервер.</b>',
+      '',
+      'Нужно создать или изменить DNS-запись:',
+      '<b>Тип:</b> <code>A</code>',
+      '<b>Имя:</b> <code>'+escapeHtml(domain)+'</code>',
+      '<b>Значение:</b> <code>'+escapeHtml(serverIp)+'</code>',
+      '',
+      '<b>Сейчас в DNS:</b> '+current,
+      '<b>IP этого сервера:</b> <code>'+escapeHtml(serverIp)+'</code>',
+      '',
+      'Откройте DNS-настройки у регистратора/провайдера домена, измените A-запись и дождитесь обновления DNS. Обычно это занимает от нескольких минут, но иногда дольше.',
+      '',
+      'После изменения просто отправьте <code>'+escapeHtml(domain)+'</code> ещё раз.',
+      'Отмена: /cancel'
+    ].join('\n'));
+    return false;
+  }
+
+  const raw=getRaw(),current=raw.webPanel||{};
+  store.setPath(['webPanel'],{...current,domain});
+  waitingInput.delete(String(chatId));
+  await clearInputPrompt(chatId);
+  await sendMessage(chatId,'✅ Домен <code>'+escapeHtml(domain)+'</code> направлен на IP сервера и привязан.\n\nОткрываю данные веб-панели…');
+  await showWebPanel(chatId);
+  return true;
+}
 function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
 async function showWebPanel(chatId,messageId){const x={reply_markup:webPanelKeyboard()};if(messageId){try{await editMessageText(chatId,messageId,webPanelText(),x);return}catch{}}await sendMessage(chatId,webPanelText(),x)}
 
