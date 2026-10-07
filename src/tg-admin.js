@@ -963,11 +963,6 @@ async function handleReplyOperatorMessage(message) {
   const waitKey = waitingInput.get(String(chatId));
   const userMessageId = message.message_id;
 
-  if (waitKey === 'webPanel:domain' && text && !text.startsWith('/')) {
-    await bindWebDomain(chatId, text);
-    return;
-  }
-
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
     clearReplyAlbums(chatId);
@@ -2151,17 +2146,27 @@ async function bindWebDomain(chatId,text){
     return false;
   }
 
-  const checking=await sendMessage(chatId,'🔎 Проверяю домен <code>'+escapeHtml(domain)+'</code>…');
+  let checking;
+  try{
+    checking=await sendMessage(chatId,'🔎 Проверяю домен <code>'+escapeHtml(domain)+'</code>…');
+  }catch(err){
+    console.error('webPanel checking message:',err.message);
+  }
   const checkingMessageId=checking?.result?.message_id;
   const updateChecking=async(content,extra={})=>{
     if(checkingMessageId){
       try{return await editMessageText(chatId,checkingMessageId,content,extra)}catch{}
     }
-    return sendMessage(chatId,content,extra);
+    return sendMessage(chatId,content,extra).catch(err=>{console.error('webPanel status:',err.message);return null});
   };
 
   let dns=[];
-  try{dns=await require('dns').promises.resolve4(domain)}catch{}
+  try{
+    dns=await Promise.race([
+      require('dns').promises.resolve4(domain),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error('DNS timeout')),7000))
+    ]);
+  }catch{}
   const serverIp=await getWebPanelPublicIp();
 
   if(!serverIp){
@@ -2236,6 +2241,30 @@ async function handleMessage(message) {
   }
 
   const waitKeyPeek = waitingInput.get(String(chatId));
+
+  // Ввод домена веб-панели имеет приоритет над общей авторизацией MAX.
+  // Иначе активный authInputWaiter может перехватить домен и бот визуально "замолчит".
+  if (waitKeyPeek === 'webPanel:domain') {
+    if (/^\/cancel$/i.test(text)) {
+      waitingInput.delete(String(chatId));
+      await clearInputPrompt(chatId, message.message_id);
+      await sendMessage(chatId, ERRORS.cancelled);
+      return;
+    }
+    if (text && !text.startsWith('/')) {
+      try {
+        await bindWebDomain(chatId, text);
+      } catch (err) {
+        console.error('webPanel domain:', err);
+        await sendInputPrompt(
+          chatId,
+          '❌ Не удалось проверить домен: <code>'+escapeHtml(err.message || 'неизвестная ошибка')+'</code>\n\nПопробуйте отправить домен ещё раз.\nОтмена: /cancel'
+        ).catch(()=>{});
+      }
+      return;
+    }
+  }
+
   const settingsWait =
     waitKeyPeek === 'profileBioTemplate' || waitKeyPeek === 'profileBioCity';
   const replyHasPhoto = Boolean(
