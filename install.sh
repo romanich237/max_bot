@@ -564,11 +564,25 @@ pick_db_driver
 
 [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || fail "нужны TG_TOKEN и TG_CHAT_ID (export до запуска)"
 
+WEB_PANEL_ENABLED="${WEB_PANEL_ENABLED:-}"
+if [ -z "$WEB_PANEL_ENABLED" ]; then
+  echo ""
+  echo "Веб-панель позволяет управлять MAX через браузер и требует домен + HTTPS."
+  read -r -p "Установить веб-панель? [y/N]: " WEB_PANEL_ANSWER || true
+  case "${WEB_PANEL_ANSWER:-}" in
+    y|Y|yes|YES|да|Да|ДА) WEB_PANEL_ENABLED="1" ;;
+    *) WEB_PANEL_ENABLED="0" ;;
+  esac
+fi
+
 WEB_DOMAIN="${WEB_DOMAIN:-}"
-if [ -z "$WEB_DOMAIN" ]; then read -r -p "Домен веб-панели (Enter — пропустить): " WEB_DOMAIN || true; fi
-WEB_DOMAIN="${WEB_DOMAIN#http://}"; WEB_DOMAIN="${WEB_DOMAIN#https://}"; WEB_DOMAIN="${WEB_DOMAIN%/}"
-WEB_PANEL_PORT="${WEB_PANEL_PORT:-$((20000 + RANDOM % 30000))}"
-if [ -n "$WEB_DOMAIN" ]; then
+WEB_PANEL_PORT="${WEB_PANEL_PORT:-}"
+if [ "$WEB_PANEL_ENABLED" = "1" ]; then
+  if [ -z "$WEB_DOMAIN" ]; then read -r -p "Домен веб-панели: " WEB_DOMAIN || true; fi
+  WEB_DOMAIN="${WEB_DOMAIN#http://}"; WEB_DOMAIN="${WEB_DOMAIN#https://}"; WEB_DOMAIN="${WEB_DOMAIN%/}"
+  [ -n "$WEB_DOMAIN" ] || fail "для веб-панели нужен домен"
+  WEB_PANEL_PORT="${WEB_PANEL_PORT:-$((20000 + RANDOM % 30000))}"
+
   SERVER_IP="$(c4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
   DNS_IP="$(getent ahostsv4 "$WEB_DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)"
   [ -n "$DNS_IP" ] && { [ -z "$SERVER_IP" ] || [ "$DNS_IP" = "$SERVER_IP" ]; } || fail "A-запись $WEB_DOMAIN должна указывать на $SERVER_IP"
@@ -580,8 +594,11 @@ if [ -n "$WEB_DOMAIN" ]; then
   run_root certbot --nginx --cert-name "max-tg-$WEB_DOMAIN" -d "$WEB_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
   run_root openssl x509 -in "/etc/letsencrypt/live/max-tg-$WEB_DOMAIN/fullchain.pem" -noout -ext subjectAltName | grep -Fq "DNS:$WEB_DOMAIN" || fail "сертификат не принадлежит $WEB_DOMAIN"
   echo "HTTPS готов: https://$WEB_DOMAIN (внутренний случайный порт $WEB_PANEL_PORT)"
+else
+  WEB_DOMAIN=""
+  WEB_PANEL_PORT=""
+  echo "Веб-панель: пропущена по выбору пользователя"
 fi
-
 echo ""
 echo "запускаю npm run setup…"
 exec env \
