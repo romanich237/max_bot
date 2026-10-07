@@ -83,8 +83,43 @@ function formatDateDivider(value) {
   return `${day} ${months[month-1]} ${year}`;
 }
 
+function normalizeStoredDate(value) {
+  const raw=String(value||'').trim().toLowerCase();
+  if(!raw) return '';
+  const now=new Date();
+  if(raw==='сегодня') return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  if(raw==='вчера') {
+    const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  let m=raw.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})/);
+  if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m=raw.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})/);
+  if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return '';
+}
+
+function rowTimestamp(row,index) {
+  const date=normalizeStoredDate(row.date_str);
+  const clock=String(row.clock_str||row.time_str||'').match(/(\d{1,2}):(\d{2})/);
+  if(date) {
+    const time=clock ? `${clock[1].padStart(2,'0')}:${clock[2]}` : '00:00';
+    const ts=Date.parse(`${date}T${time}:00`);
+    if(Number.isFinite(ts)) return {ts,index};
+  }
+  const created=Date.parse(String(row.created_at||''));
+  return {ts:Number.isFinite(created)?created:Number.MAX_SAFE_INTEGER,index};
+}
+
+function sortRowsChronologically(rows) {
+  return rows
+    .map((row,index)=>({row,...rowTimestamp(row,index)}))
+    .sort((a,b)=>a.ts-b.ts || a.index-b.index)
+    .map(item=>item.row);
+}
+
 async function buildChatExport(chatUrl,title) {
-  const rows=await rowsForChat(chatUrl);
+  const rows=sortRowsChronologically(await rowsForChat(chatUrl));
   const storedTitle=rows.map(row=>String(row.chat_title||'').trim()).find(Boolean);
   const fallbackTitle=/^Чат\s+-?\d+$/i.test(String(title||'').trim()) || !String(title||'').trim();
   const displayTitle=fallbackTitle && storedTitle ? storedTitle : String(title||storedTitle||'MAX').trim();
