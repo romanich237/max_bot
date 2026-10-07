@@ -379,17 +379,11 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
       await syncEditedTelegramMessage(previous, current, chatUrl);
     }
   }
-  if (scoped.length < previousSnapshot.length) {
-    const currentIdentities = new Set(scoped.map(identity));
-    for (const previous of previousSnapshot) {
-      if (!currentIdentities.has(identity(previous))) {
-        if (db.isEnabled() && typeof db.markMessageDeleted === 'function') {
-          try { await db.markMessageDeleted(previous, chatUrl); }
-          catch (err) { console.warn('Пометка удалённого сообщения в БД:', err.message); }
-        }
-        await syncDeletedTelegramMessage(previous, chatUrl);
-      }
-    }
+  // MAX виртуализирует историю: уменьшение числа DOM-сообщений не означает удаление.
+  // Удаление нельзя определять только по исчезновению сообщения из текущего снимка.
+  if (db.isEnabled() && typeof db.restoreVisibleMessages === 'function' && scoped.length) {
+    try { await db.restoreVisibleMessages(scoped, chatUrl); }
+    catch (err) { console.warn('Восстановление ложных отметок удаления:', err.message); }
   }
 
   const byKeys = findNewMessages(scoped, chatState.seenKeys).filter(

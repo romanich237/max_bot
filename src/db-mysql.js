@@ -82,6 +82,7 @@ async function initSchema() {
   await ensureColumn(p, 'messages', 'chat_title', 'VARCHAR(255) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'chat_kind', 'VARCHAR(32) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'is_deleted', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await p.query('UPDATE messages SET is_deleted = 0 WHERE is_deleted != 0');
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS media_files (
@@ -253,6 +254,20 @@ async function saveMessages(messages, options = {}) {
   }
 }
 
+async function restoreVisibleMessages(messages, chatUrl) {
+  const p = await getPool();
+  const url = String(chatUrl || '');
+  if (!url || !Array.isArray(messages) || !messages.length) return 0;
+  const keys = [...new Set(messages.map((message) => String(message?.key || '')).filter(Boolean))];
+  if (!keys.length) return 0;
+  const placeholders = keys.map(() => '?').join(',');
+  const [result] = await p.query(
+    `UPDATE messages SET is_deleted = 0 WHERE chat_url = ? AND is_deleted != 0 AND message_key IN (${placeholders})`,
+    [url, ...keys]
+  );
+  return Number(result.affectedRows || 0);
+}
+
 async function markMessageDeleted(message, chatUrl) {
   const p = await getPool();
   const key = String(message?.key || '');
@@ -338,6 +353,7 @@ module.exports = {
   saveMessage,
   saveMessages,
   getMessagesForChat,
+  restoreVisibleMessages,
   markMessageDeleted,
   wasForwarded,
   close,

@@ -120,6 +120,7 @@ async function initSchema() {
   ensureColumn(database, 'messages', 'chat_title', 'TEXT');
   ensureColumn(database, 'messages', 'chat_kind', 'TEXT');
   ensureColumn(database, 'messages', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0');
+  database.prepare('UPDATE messages SET is_deleted = 0 WHERE is_deleted != 0').run();
 
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_messages_fingerprint ON messages (fingerprint);
@@ -297,6 +298,21 @@ async function saveMessages(messages, options = {}) {
   }, messages);
 }
 
+async function restoreVisibleMessages(messages, chatUrl) {
+  const database = getDb();
+  const url = String(chatUrl || '');
+  if (!url || !Array.isArray(messages) || !messages.length) return 0;
+  const byKey = database.prepare('UPDATE messages SET is_deleted = 0 WHERE chat_url = ? AND message_key = ? AND is_deleted != 0');
+  let changed = 0;
+  runTransaction(database, (items) => {
+    for (const message of items) {
+      const key = String(message?.key || '');
+      if (key) changed += Number(byKey.run(url, key)?.changes || 0);
+    }
+  }, messages);
+  return changed;
+}
+
 async function markMessageDeleted(message, chatUrl) {
   const database = getDb();
   const key = String(message?.key || '');
@@ -389,6 +405,7 @@ module.exports = {
   saveMessage,
   saveMessages,
   getMessagesForChat,
+  restoreVisibleMessages,
   markMessageDeleted,
   wasForwarded,
   close,
