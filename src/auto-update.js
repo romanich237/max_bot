@@ -1086,7 +1086,7 @@ async function checkForUpdates(options = {}) {
       if (notify) {
         progressPosts = await notifyAdmins(
           buildEventMessage({
-            ...UPDATES.updating(fromVersion),
+            ...UPDATES.updating(toVersion),
             status: 'progress',
           }),
           'progress'
@@ -1130,7 +1130,7 @@ async function checkForUpdates(options = {}) {
           }
           if (notify) {
             const updatingText = buildEventMessage({
-              ...UPDATES.updating(fromVersion),
+              ...UPDATES.updating(toVersion),
               status: 'progress',
             });
             if (progressPosts.length) {

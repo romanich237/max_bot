@@ -1,26 +1,62 @@
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
 const { getDatabase, getMax } = require('./config');
 const { isDuplicateIdentity } = require('./parser');
 
 let db = null;
 let schemaReady = false;
 
+function createSqliteDatabase(file) {
+  try {
+    const BetterSqlite3 = require('better-sqlite3');
+    const database = new BetterSqlite3(file);
+    database.pragma('journal_mode = WAL');
+    database.pragma('foreign_keys = ON');
+    return database;
+  } catch (nativeErr) {
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const database = new DatabaseSync(file);
+      database.exec('PRAGMA journal_mode = WAL');
+      database.exec('PRAGMA foreign_keys = ON');
+      console.warn('SQLite: better-sqlite3 недоступен, используется встроенный node:sqlite');
+      return database;
+    } catch (builtinErr) {
+      throw new Error(
+        `SQLite недоступен: better-sqlite3: ${nativeErr.message}; node:sqlite: ${builtinErr.message}`
+      );
+    }
+  }
+}
+
 function getDb() {
   if (!db) {
     const cfg = getDatabase();
     const file = cfg.file;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    db = new Database(file);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
+    db = createSqliteDatabase(file);
   }
   return db;
 }
 
+function runTransaction(database, fn, items) {
+  if (typeof database.transaction === 'function') {
+    return database.transaction(fn)(items);
+  }
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    fn(items);
+    database.exec('COMMIT');
+  } catch (err) {
+    try { database.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+}
+
 function ensureColumn(database, table, column, definition) {
-  const cols = database.pragma(`table_info(${table})`);
+  const cols = typeof database.pragma === 'function'
+    ? database.pragma(`table_info(${table})`)
+    : database.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) {
     database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
@@ -137,7 +173,7 @@ async function saveSeenKeys(keys) {
   const slice = keys.slice(-4000);
   const insert = database.prepare('INSERT OR IGNORE INTO seen_messages (message_key) VALUES (?)');
 
-  const tx = database.transaction((items) => {
+  runTransaction(database, (items) => {
     for (const key of items) {
       insert.run(key);
     }
@@ -154,9 +190,7 @@ async function saveSeenKeys(keys) {
         )
         .run(extra);
     }
-  });
-
-  tx(slice);
+  }, slice);
 }
 
 async function saveSnapshot(snapshot) {
@@ -255,12 +289,11 @@ function saveMessageRow(database, message, options = {}) {
 async function saveMessages(messages, options = {}) {
   if (!messages?.length) return;
   const database = getDb();
-  const tx = database.transaction((items) => {
+  runTransaction(database, (items) => {
     for (const message of items) {
       saveMessageRow(database, message, options);
     }
-  });
-  tx(messages);
+  }, messages);
 }
 
 async function getMessagesForChat(chatUrl, limit = 20000) {
