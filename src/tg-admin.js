@@ -785,10 +785,9 @@ async function sendPinnedAboutOnce(chat) {
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
-    [buildToggleButton(prefix, TOGGLES[0]), buildToggleButton(prefix, TOGGLES[1])],
     [
-      { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
-      { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
+      buildToggleButton(prefix, TOGGLES[0]),
+      { text: TOGGLES[1].label, callback_data: 'action:profileBio' },
     ],
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
@@ -797,7 +796,6 @@ function buildMenuKeyboard() {
 
   const statusRow = [
     buildToggleButton(prefix, FORWARDING_TOGGLE),
-    { text: BUTTONS.refreshStatus, callback_data: 'status' },
   ];
   if (isMonitoringEnabled()) {
     statusRow.push({ text: BUTTONS.stopMax, callback_data: 'action:stopMax', style: 'danger' });
@@ -811,6 +809,32 @@ function buildMenuKeyboard() {
   ]);
 
   return { inline_keyboard: rows };
+}
+
+function buildProfileBioKeyboard() {
+  return {
+    inline_keyboard: [
+      [buildToggleButton('toggle:', TOGGLES[1])],
+      [
+        { text: BUTTONS.bioTemplate, callback_data: 'action:profileBioTemplate' },
+        { text: BUTTONS.bioCity, callback_data: 'action:profileBioCity' },
+      ],
+      [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
+    ],
+  };
+}
+
+function buildProfileBioText() {
+  const bio = getProfileBio();
+  return [
+    '<b>Смена описания</b>',
+    '',
+    `Статус: ${bio.enabled ? 'включена' : 'выключена'}`,
+    `Город для погоды: <code>${escapeHtml(String(bio.city || '').trim() || 'не задан')}</code>`,
+    '',
+    'Шаблон описания:',
+    `<code>${escapeHtml(String(bio.template || '').trim())}</code>`,
+  ].join('\n');
 }
 
 function isAdmin(chatId, userId) {
@@ -2632,6 +2656,14 @@ async function handleCallback(query) {
     } catch (err) {
       await sendMessage(chatId, `Не удалось получить логи: <code>${escapeHtml(err.message)}</code>`);
     }
+    return;
+  }
+
+  if (data === 'action:profileBio') {
+    await answerCallback(query.id, 'Смена описания');
+    await editMessageText(chatId, query.message.message_id, buildProfileBioText(), {
+      reply_markup: buildProfileBioKeyboard(),
+    }).catch(() => {});
     return;
   }
 
