@@ -812,20 +812,36 @@ async function startMonitor() {
     }
   });
 
-  setMaxChatStatsHandler(async () => {
-    if (authBusy) return { personal: 0, groups: 0, channels: 0, service: 0 };
+  let cachedChatStats = { personal: 0, groups: 0, channels: 0, service: 0, updatedAt: 0 };
+  let chatStatsBusy = false;
+  async function refreshChatStats() {
+    if (chatStatsBusy || authBusy || profileBusy || page.isClosed()) return;
+    chatStatsBusy = true;
     const returnUrl = getDefaultChatUrl() || page.url();
     profileBusy = true;
     try {
-      if (await isLoginPage(page)) throw new Error('Сессия MAX истекла');
-      return await readMaxChatCategoryCounts(page);
+      if (await isLoginPage(page)) return;
+      const stats = await readMaxChatCategoryCounts(page);
+      cachedChatStats = { ...stats, updatedAt: Date.now() };
+    } catch (err) {
+      console.warn('Статистика чатов MAX:', err.message);
     } finally {
       profileBusy = false;
+      chatStatsBusy = false;
       if (returnUrl && returnUrl.includes('web.max.ru')) {
         await openChatWhenReady(page, returnUrl).catch(() => {});
       }
     }
+  }
+  setMaxChatStatsHandler(async () => {
+    if (!cachedChatStats.updatedAt || Date.now() - cachedChatStats.updatedAt > 5 * 60 * 1000) {
+      setImmediate(() => refreshChatStats().catch(() => {}));
+    }
+    return cachedChatStats;
   });
+  setTimeout(() => refreshChatStats().catch(() => {}), 5000);
+  const chatStatsTimer = setInterval(() => refreshChatStats().catch(() => {}), 5 * 60 * 1000);
+  chatStatsTimer.unref?.();
 
   setMaxChatResolveHandler(async (title) => {
     if (authBusy) {

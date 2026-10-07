@@ -121,7 +121,7 @@ async function openChatsTab(page) {
 async function listChatListFilters(page) {
   return page.evaluate(() => {
     const FILTER_RE =
-      /^(все|all|личные|personal|direct|директ|группы|groups|каналы|channels)$/i;
+      /^(все|all|личные|personal|direct|директ|группы|groups|каналы|channels|сервисные|сервисы|уведомления|service|services|notifications)$/i;
     const aside = document.querySelector('aside');
     if (!aside) return [];
 
@@ -150,6 +150,7 @@ function pickUnreadScanFilters(labels) {
     ['личные', 'personal', 'direct', 'директ'],
     ['группы', 'groups'],
     ['каналы', 'channels'],
+    ['сервисные', 'сервисы', 'уведомления', 'service', 'services', 'notifications'],
   ];
   const picked = [];
   for (const variants of order) {

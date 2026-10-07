@@ -15,14 +15,27 @@ async function rowsForChat(chatUrl) {
   }
   let filename=cfg.file;
   if (!filename || !fs.existsSync(filename)) {
+    const roots=[
+      path.dirname(cfg.file || ''),
+      path.resolve(__dirname,'../data'),
+      path.resolve(__dirname,'..'),
+      process.cwd(),
+    ].filter(Boolean);
     const candidates=[
       filename,
-      path.resolve(__dirname,'../data/max.db'),
-      path.resolve(__dirname,'../data/data.db'),
-      path.resolve(__dirname,'../max.db'),
-      path.resolve(__dirname,'../data.db'),
+      ...roots.flatMap((root)=>['max.db','data.db','users.db','messages.db','database.db'].map((name)=>path.join(root,name))),
     ].filter(Boolean);
-    filename=candidates.find((candidate)=>fs.existsSync(candidate));
+    filename=candidates.find((candidate)=>fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+    if (!filename) {
+      for (const root of roots) {
+        if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) continue;
+        const found=fs.readdirSync(root,{withFileTypes:true})
+          .filter((entry)=>entry.isFile() && /\.(?:db|sqlite|sqlite3)$/i.test(entry.name))
+          .map((entry)=>path.join(root,entry.name))
+          .find((candidate)=>fs.existsSync(candidate));
+        if (found) { filename=found; break; }
+      }
+    }
     if (!filename) {
       throw new Error(`Файл базы данных не найден. Ожидался: ${cfg.file || 'не задан'}`);
     }

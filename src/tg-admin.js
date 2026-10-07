@@ -651,7 +651,7 @@ async function buildStatusText() {
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
   let chatStats = { personal: 0, groups: 0, channels: 0, service: 0 };
-  if (maxChatStatsHandler && !isAuthBusyCheck()) {
+  if (maxChatStatsHandler) {
     try {
       chatStats = { ...chatStats, ...(await maxChatStatsHandler()) };
     } catch (err) {
@@ -749,6 +749,7 @@ function buildAboutKeyboard() {
   return {
     inline_keyboard: [
       buildLinksInlineRow(),
+      [{ text: 'Логи', callback_data: 'action:logs' }],
       [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
     ],
   };
@@ -2584,6 +2585,40 @@ async function handleCallback(query) {
     await editMessageText(chatId, query.message.message_id, `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`, {
       reply_markup: buildAboutKeyboard(),
     });
+    return;
+  }
+
+  if (data === 'action:logs') {
+    await answerCallback(query.id, 'Готовлю логи…');
+    try {
+      const logCandidates = [
+        path.join(getSettings().dataDir, 'logo.txt'),
+        path.join(getSettings().dataDir, 'bot.log'),
+        path.resolve(process.cwd(), 'logo.txt'),
+        path.resolve(process.cwd(), 'bot.log'),
+        path.resolve(process.cwd(), 'logs', 'max-tg.log'),
+      ];
+      const found = logCandidates.find((file) => fs.existsSync(file) && fs.statSync(file).isFile());
+      let body = found ? fs.readFileSync(found, 'utf8') : '';
+      if (!body.trim()) {
+        body = [
+          `MAX bot log snapshot`,
+          `Время: ${new Date().toISOString()}`,
+          `PID: ${process.pid}`,
+          `Uptime: ${formatServerUptime(process.uptime())}`,
+          'Файл логов процесса не найден. Для постоянных логов настройте PM2 output/error в logo.txt.',
+        ].join('\n');
+      }
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      form.append('document', new File([Buffer.from(body.slice(-4_000_000), 'utf8')], 'logo.txt', { type: 'text/plain' }));
+      const { token } = getTelegram();
+      const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
+      const result = await response.json();
+      if (!result.ok) throw new Error(result.description || 'Telegram не принял файл');
+    } catch (err) {
+      await sendMessage(chatId, `Не удалось получить логи: <code>${escapeHtml(err.message)}</code>`);
+    }
     return;
   }
 
