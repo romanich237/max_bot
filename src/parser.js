@@ -537,12 +537,25 @@ async function parseMessages(page) {
       }
 
       function extractAuthor(wrapper) {
-        const headerName = wrapper.querySelector('.header .name .text');
-        if (headerName?.innerText?.trim()) return headerName.innerText.trim();
-
-        const bubbleHeader = wrapper.querySelector('.bubbleContent .header .text');
-        if (bubbleHeader?.innerText?.trim()) return bubbleHeader.innerText.trim();
-
+        const selectors = [
+          '.header .name .text',
+          '.bubbleContent .header .text',
+          '.bubbleContent .header .name',
+          '.bubbleContent [class*="author"] .text',
+          '.bubbleContent [class*="author"]',
+          '.bubbleContent [class*="sender"] .text',
+          '.bubbleContent [class*="sender"]',
+          '[data-testid*="author"]',
+          '[data-testid*="sender"]',
+        ];
+        for (const selector of selectors) {
+          const node = wrapper.querySelector(selector);
+          const value = String(node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim();
+          if (value && value.length <= 120 && !isTimeText(value)) return value;
+        }
+        const avatar = wrapper.querySelector('img.avatarImage, [class*="avatar"] img');
+        const alt = String(avatar?.getAttribute('alt') || avatar?.getAttribute('title') || '').trim();
+        if (alt && alt.length <= 120) return alt;
         return 'Неизвестно';
       }
 
@@ -806,9 +819,12 @@ async function parseMessages(page) {
         }
 
         let author = extractAuthor(wrapper);
-        if (author === 'Неизвестно' && lastAuthor) {
+        const ownHint =
+          wrapper.querySelector('[data-bubbles-variant="outgoing"]') ||
+          /outgoing|isOwn|myMessage|messageWrapper--out/i.test(wrapperClass);
+        if (author === 'Неизвестно' && lastAuthor && !ownHint) {
           author = lastAuthor;
-        } else if (author && author !== 'Неизвестно') {
+        } else if (author && author !== 'Неизвестно' && !ownHint) {
           lastAuthor = author;
         }
 

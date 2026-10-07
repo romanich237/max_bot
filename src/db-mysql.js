@@ -81,6 +81,7 @@ async function initSchema() {
   await ensureColumn(p, 'messages', 'clock_str', 'VARCHAR(8) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'chat_title', 'VARCHAR(255) DEFAULT NULL');
   await ensureColumn(p, 'messages', 'chat_kind', 'VARCHAR(32) DEFAULT NULL');
+  await ensureColumn(p, 'messages', 'is_deleted', 'TINYINT(1) NOT NULL DEFAULT 0');
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS media_files (
@@ -252,12 +253,30 @@ async function saveMessages(messages, options = {}) {
   }
 }
 
+async function markMessageDeleted(message, chatUrl) {
+  const p = await getPool();
+  const key = String(message?.key || '');
+  const url = String(chatUrl || message?.maxChatUrl || '');
+  if (!url) return false;
+  let result = [{ affectedRows: 0 }];
+  if (key) [result] = await p.query('UPDATE messages SET is_deleted = 1 WHERE chat_url = ? AND message_key = ?', [url, key]);
+  if (!result.affectedRows) {
+    [result] = await p.query(
+      `UPDATE messages SET is_deleted = 1
+       WHERE chat_url = ? AND author = ? AND IFNULL(body,'') = ? AND IFNULL(clock_str,'') = ?
+       ORDER BY id DESC LIMIT 1`,
+      [url, message?.author || '', message?.body || '', message?.clock || message?.time || '']
+    );
+  }
+  return Boolean(result.affectedRows);
+}
+
 async function getMessagesForChat(chatUrl, limit = 20000) {
   const p = await getPool();
   const safeLimit = Math.max(1, Math.min(Number(limit) || 20000, 50000));
   const [rows] = await p.query(
     `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
-            reply_author, reply_body, chat_title, created_at
+            reply_author, reply_body, chat_title, is_deleted, created_at
      FROM messages
      WHERE chat_url = ?
      ORDER BY id ASC
@@ -319,6 +338,7 @@ module.exports = {
   saveMessage,
   saveMessages,
   getMessagesForChat,
+  markMessageDeleted,
   wasForwarded,
   close,
 };

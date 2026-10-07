@@ -383,6 +383,10 @@ async function processChatMessages(page, chatUrl, chatState, options = {}) {
     const currentIdentities = new Set(scoped.map(identity));
     for (const previous of previousSnapshot) {
       if (!currentIdentities.has(identity(previous))) {
+        if (db.isEnabled() && typeof db.markMessageDeleted === 'function') {
+          try { await db.markMessageDeleted(previous, chatUrl); }
+          catch (err) { console.warn('Пометка удалённого сообщения в БД:', err.message); }
+        }
         await syncDeletedTelegramMessage(previous, chatUrl);
       }
     }

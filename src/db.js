@@ -33,6 +33,7 @@ module.exports = {
   saveMessage: delegate('saveMessage'),
   saveMessages: delegate('saveMessages'),
   getMessagesForChat: delegate('getMessagesForChat'),
+  markMessageDeleted: delegate('markMessageDeleted'),
   wasForwarded: delegate('wasForwarded'),
   close: delegate('close'),
 };

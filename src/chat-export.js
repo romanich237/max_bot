@@ -100,11 +100,14 @@ async function buildChatExport(chatUrl,title) {
     const reply=row.reply_body
       ? `<div class="reply"><strong>${esc(row.reply_author||'Ответ')}</strong><div>${esc(row.reply_body).replace(/\n/g,'<br>')}</div></div>`
       : '';
-    const body=String(row.body||'').trim()
-      ? `<div class="body">${esc(row.body||'').replace(/\n/g,'<br>')}</div>`
-      : '';
+    const deleted=Boolean(Number(row.is_deleted||0));
+    const body=deleted
+      ? '<div class="body deleted-message">🚫 Сообщение удалено в MAX</div>'
+      : String(row.body||'').trim()
+        ? `<div class="body">${esc(row.body||'').replace(/\n/g,'<br>')}</div>`
+        : '';
     const time=esc(row.clock_str||row.time_str||'');
-    return `${separator}<div class="row ${row.is_own?'own':'incoming'}"><div class="bubble">${author}${reply}${mediaHtml(row.media_json)}${body}<div class="meta"><span>${time}</span>${row.is_own?'<span class="checks">✓✓</span>':''}</div></div></div>`;
+    return `${separator}<div class="row ${row.is_own?'own':'incoming'}"><div class="bubble">${author}${reply}${deleted?'':mediaHtml(row.media_json)}${body}<div class="meta"><span>${time}</span>${row.is_own?'<span class="checks">✓✓</span>':''}</div></div></div>`;
   }).join('');
 
   const html=`<!doctype html>
@@ -123,7 +126,7 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;ba
 .incoming .bubble{border-bottom-left-radius:4px}.own .bubble{background:#e2ffc7;border-bottom-right-radius:4px}
 .author{color:#168acd;font-weight:700;font-size:13px;margin-bottom:2px}.own .author{color:#4b9a38}
 .reply{border-left:3px solid #27a4df;background:#00000008;border-radius:4px;padding:5px 8px;margin:2px 0 6px;font-size:13px;line-height:1.25}.reply strong{display:block;color:#168acd;margin-bottom:2px}
-.body{font-size:15px;line-height:1.28;overflow-wrap:anywhere;margin:1px 0}
+.body{font-size:15px;line-height:1.28;overflow-wrap:anywhere;margin:1px 0}.deleted-message{color:#7d858a;font-style:italic}
 .meta{display:flex;justify-content:flex-end;align-items:center;gap:3px;color:#7e8589;font-size:10px;line-height:12px;margin:-1px 0 0 12px;min-height:12px}.own .meta{color:#679268}.checks{color:#3e9ed6;font-weight:700}
 img,video{display:block;width:auto;max-width:100%;max-height:620px;border-radius:9px;margin:2px 0 6px;object-fit:contain}.media-link{display:block;text-decoration:none}.photo{max-width:100%}.gif{min-width:180px}.sticker-wrap{background:transparent;padding:2px 0}.sticker{width:auto;max-width:220px;max-height:220px;background:transparent;box-shadow:none}.audio-box{display:flex;align-items:center;gap:8px;min-width:280px;padding:5px 0}.audio-box audio{width:min(340px,100%);height:36px}.audio-box small{white-space:nowrap;color:#6d777d}.audio-icon{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:12px}.attachment{display:flex;align-items:center;gap:10px;min-width:260px;max-width:440px;padding:7px 2px}.file-icon{flex:0 0 40px;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:22px;font-weight:700}.file-info{min-width:0;flex:1}.file-info b,.attachment>div>b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.file-info small,.attachment>div>small{display:block;color:#758087;margin-top:2px;font-size:12px}.download{color:#168acd;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}.own .file-icon,.own .audio-icon{background:#5da24d}.own .download{color:#438d36}
 .empty{display:block;margin:30px auto;width:max-content;max-width:90%;background:#4da7d6cc;color:#fff;border-radius:15px;padding:7px 13px;font-size:14px}

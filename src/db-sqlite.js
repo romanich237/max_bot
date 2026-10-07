@@ -119,6 +119,7 @@ async function initSchema() {
   ensureColumn(database, 'messages', 'clock_str', 'TEXT');
   ensureColumn(database, 'messages', 'chat_title', 'TEXT');
   ensureColumn(database, 'messages', 'chat_kind', 'TEXT');
+  ensureColumn(database, 'messages', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0');
 
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_messages_fingerprint ON messages (fingerprint);
@@ -296,11 +297,31 @@ async function saveMessages(messages, options = {}) {
   }, messages);
 }
 
+async function markMessageDeleted(message, chatUrl) {
+  const database = getDb();
+  const key = String(message?.key || '');
+  const url = String(chatUrl || message?.maxChatUrl || '');
+  if (!url) return false;
+  let result;
+  if (key) result = database.prepare('UPDATE messages SET is_deleted = 1 WHERE chat_url = ? AND message_key = ?').run(url, key);
+  if (!result?.changes) {
+    result = database.prepare(
+      `UPDATE messages SET is_deleted = 1
+       WHERE id = (
+         SELECT id FROM messages
+         WHERE chat_url = ? AND author = ? AND IFNULL(body,'') = ? AND IFNULL(clock_str,'') = ?
+         ORDER BY id DESC LIMIT 1
+       )`
+    ).run(url, message?.author || '', message?.body || '', message?.clock || message?.time || '');
+  }
+  return Boolean(result?.changes);
+}
+
 async function getMessagesForChat(chatUrl, limit = 20000) {
   const database = getDb();
   return database.prepare(
     `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
-            reply_author, reply_body, chat_title, created_at
+            reply_author, reply_body, chat_title, is_deleted, created_at
      FROM messages
      WHERE chat_url = ?
      ORDER BY id ASC
@@ -368,6 +389,7 @@ module.exports = {
   saveMessage,
   saveMessages,
   getMessagesForChat,
+  markMessageDeleted,
   wasForwarded,
   close,
 };
