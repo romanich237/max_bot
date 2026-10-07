@@ -31,10 +31,10 @@ const { ChatPollQueue } = require('./chat-poll-queue');
 const { rotateDisplayName, rotateProfileBio } = require('./profile');
 const { syncOwnNames, syncOwnNamesFromMessages } = require('./max-profile-sync');
 const { injectOnlineGuards, startAlwaysOnline } = require('./online');
-const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler, setMaxChatKindHandler } = require('./tg-admin');
+const { startTelegramAdmin, setReauthHandler, setSessionCheckHandler, setAuthBusyCheck, setReplyHandler, setStopHandler, setStartHandler, setMaxChatPickerHandler, setMaxChatResolveHandler, setMaxChatKindHandler, setMaxChatStatsHandler } = require('./tg-admin');
 const { runAuthOnPage, probeMaxSession, buildAuthModeKeyboard } = require('./auth-qr');
 const { launchMaxContext } = require('./browser-context');
-const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor, extractMaxChatsFromPage, prepareChatActivityList } = require('./max-chat-picker');
+const { listMaxChats, resolveChatUrlByTitle, syncMonitoredChatTitles, ensureChatTitleFromPage, ensureChatKindFromPage, discoverMaxChatsForMonitor, extractMaxChatsFromPage, prepareChatActivityList, readMaxChatCategoryCounts } = require('./max-chat-picker');
 const { sendMessage: sendTgMessage, editMessageText } = require('./tg-api');
 const { buildEventMessage } = require('./tg-events');
 const { AUTH } = require('./bot-texts');
@@ -804,6 +804,21 @@ async function startMonitor() {
         throw new Error('Сессия MAX истекла. Отправьте /reauth');
       }
       return await listMaxChats(page);
+    } finally {
+      profileBusy = false;
+      if (returnUrl && returnUrl.includes('web.max.ru')) {
+        await openChatWhenReady(page, returnUrl).catch(() => {});
+      }
+    }
+  });
+
+  setMaxChatStatsHandler(async () => {
+    if (authBusy) return { personal: 0, groups: 0, channels: 0, service: 0 };
+    const returnUrl = getDefaultChatUrl() || page.url();
+    profileBusy = true;
+    try {
+      if (await isLoginPage(page)) throw new Error('Сессия MAX истекла');
+      return await readMaxChatCategoryCounts(page);
     } finally {
       profileBusy = false;
       if (returnUrl && returnUrl.includes('web.max.ru')) {

@@ -855,6 +855,51 @@ async function collectAllMaxChats(page) {
   return [...byKey.values()];
 }
 
+async function readMaxChatCategoryCounts(page) {
+  const empty = { personal: 0, groups: 0, channels: 0, service: 0 };
+  if (!page || page.isClosed()) return empty;
+
+  await ensureChatListVisible(page);
+  if (await isLoginPage(page)) throw new Error('Сессия MAX истекла');
+
+  const definitions = [
+    { key: 'personal', re: /^(личные|personal|direct|директ)$/i },
+    { key: 'groups', re: /^(группы|groups)$/i },
+    { key: 'channels', re: /^(каналы|channels)$/i },
+    { key: 'service', re: /^(сервисные|сервисы|уведомления|service|services|notifications)$/i },
+  ];
+
+  const labels = await page.evaluate(() => {
+    const aside = document.querySelector('aside');
+    if (!aside) return [];
+    const values = [];
+    for (const btn of aside.querySelectorAll('button, [role="tab"]')) {
+      if (btn.closest('.scrollListContent, .scrollListScrollable, div.item')) continue;
+      if (btn.querySelector('h3.title')) continue;
+      const label = String(btn.innerText || btn.getAttribute('aria-label') || '')
+        .trim().split('\n')[0].trim();
+      if (label) values.push(label);
+    }
+    return [...new Set(values)];
+  });
+
+  const counts = { ...empty };
+  for (const def of definitions) {
+    const label = labels.find((value) => def.re.test(value));
+    if (!label) continue;
+    if (!(await openChatListFilter(page, label))) continue;
+    await resetChatListScroll(page);
+    await page.waitForTimeout(350);
+    const chats = await collectAllMaxChats(page);
+    const unique = new Set(chats.map((chat) => normalizeMaxChatUrl(chat.url)).filter(Boolean));
+    counts[def.key] = unique.size;
+  }
+
+  const all = labels.find((value) => /^(все|all)$/i.test(value));
+  if (all) await openChatListFilter(page, all).catch(() => {});
+  return counts;
+}
+
 async function listMaxChats(page) {
   if (!page || page.isClosed()) {
     throw new Error('Браузер MAX недоступен. Перезапустите бота.');
@@ -1215,4 +1260,5 @@ module.exports = {
   chatUrlFromHref,
   discoverMaxChatsForMonitor,
   prepareChatActivityList,
+  readMaxChatCategoryCounts,
 };

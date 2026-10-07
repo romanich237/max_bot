@@ -176,6 +176,7 @@ let startHandler = null;
 let maxChatPickerHandler = null;
 let maxChatResolveHandler = null;
 let maxChatKindHandler = null;
+let maxChatStatsHandler = null;
 let isAuthBusyCheck = () => false;
 const waitingInput = new Map();
 const maxChatAddCache = new Map();
@@ -287,6 +288,10 @@ function setMaxChatResolveHandler(fn) {
 
 function setMaxChatKindHandler(fn) {
   maxChatKindHandler = typeof fn === 'function' ? fn : null;
+}
+
+function setMaxChatStatsHandler(fn) {
+  maxChatStatsHandler = typeof fn === 'function' ? fn : null;
 }
 
 async function clearMaxChatAddPrompt(chatId, userMessageId) {
@@ -645,6 +650,14 @@ async function buildStatusText() {
   const maxName = getMaxDisplayName();
   const monitorUrls = getMonitorChatUrls();
   const notifyIds = getNotificationChatIds();
+  let chatStats = { personal: 0, groups: 0, channels: 0, service: 0 };
+  if (maxChatStatsHandler && !isAuthBusyCheck()) {
+    try {
+      chatStats = { ...chatStats, ...(await maxChatStatsHandler()) };
+    } catch (err) {
+      console.warn('Статистика чатов MAX:', err.message);
+    }
+  }
 
   const lines = [
     STATUS.header,
@@ -682,6 +695,13 @@ async function buildStatusText() {
 
   lines.push(maxName ? `Сейчас имя: <code>${escapeHtml(maxName)}</code>` : STATUS.nameAuto);
   lines.push('', `<b>${STATUS.chatsHeader}</b>`);
+  lines.push(
+    `Личные чаты: <code>${Number(chatStats.personal) || 0}</code>`,
+    `Групповые чаты: <code>${Number(chatStats.groups) || 0}</code>`,
+    `Каналы: <code>${Number(chatStats.channels) || 0}</code>`,
+    `Сервисные уведомления: <code>${Number(chatStats.service) || 0}</code>`,
+    ''
+  );
 
   if (isMonitorAllChatsEnabled()) {
     lines.push('Режим: все чаты в MAX');
@@ -3339,6 +3359,7 @@ module.exports = {
   setMaxChatPickerHandler,
   setMaxChatResolveHandler,
   setMaxChatKindHandler,
+  setMaxChatStatsHandler,
   buildStatusText,
   buildMenuKeyboard,
   BOT_COMMANDS,
