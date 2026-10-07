@@ -263,6 +263,18 @@ async function saveMessages(messages, options = {}) {
   tx(messages);
 }
 
+async function getMessagesForChat(chatUrl, limit = 20000) {
+  const database = getDb();
+  return database.prepare(
+    `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
+            reply_author, reply_body, created_at
+     FROM messages
+     WHERE chat_url = ?
+     ORDER BY id ASC
+     LIMIT ?`
+  ).all(String(chatUrl || ''), Math.max(1, Math.min(Number(limit) || 20000, 50000)));
+}
+
 async function wasForwarded(message) {
   const database = getDb();
   const key = String(message.key || '');
@@ -322,6 +334,7 @@ module.exports = {
   saveSnapshot,
   saveMessage,
   saveMessages,
+  getMessagesForChat,
   wasForwarded,
   close,
 };

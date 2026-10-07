@@ -32,6 +32,7 @@ module.exports = {
   saveSnapshot: delegate('saveSnapshot'),
   saveMessage: delegate('saveMessage'),
   saveMessages: delegate('saveMessages'),
+  getMessagesForChat: delegate('getMessagesForChat'),
   wasForwarded: delegate('wasForwarded'),
   close: delegate('close'),
 };

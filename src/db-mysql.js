@@ -252,6 +252,21 @@ async function saveMessages(messages, options = {}) {
   }
 }
 
+async function getMessagesForChat(chatUrl, limit = 20000) {
+  const p = await getPool();
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20000, 50000));
+  const [rows] = await p.query(
+    `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
+            reply_author, reply_body, created_at
+     FROM messages
+     WHERE chat_url = ?
+     ORDER BY id ASC
+     LIMIT ?`,
+    [String(chatUrl || ''), safeLimit]
+  );
+  return rows;
+}
+
 async function wasForwarded(message) {
   const p = await getPool();
   const key = String(message.key || '');
@@ -303,6 +318,7 @@ module.exports = {
   saveSnapshot,
   saveMessage,
   saveMessages,
+  getMessagesForChat,
   wasForwarded,
   close,
 };

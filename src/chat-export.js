@@ -1,65 +1,19 @@
-const fs = require('fs');
-const path = require('path');
 const { getDatabase } = require('./config');
 
 function esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 async function rowsForChat(chatUrl) {
-  const cfg=getDatabase();
-  if (cfg.driver === 'mysql') {
-    const mysql=require('mysql2/promise');
-    const pool=mysql.createPool({host:cfg.host,port:cfg.port,user:cfg.user,password:cfg.password,database:cfg.database,charset:'utf8mb4'});
-    try {
-      const [rows]=await pool.query(`SELECT author,body,time_str,date_str,clock_str,is_own,media_json,reply_author,reply_body,created_at FROM messages WHERE chat_url=? ORDER BY id ASC LIMIT 20000`,[chatUrl]);
-      return rows;
-    } finally { await pool.end(); }
+  const db = require('./db');
+  if (!db.isEnabled()) {
+    throw new Error('База данных отключена в config.json');
   }
-  let filename=cfg.file;
-  if (!filename || !fs.existsSync(filename)) {
-    const roots=[
-      path.dirname(cfg.file || ''),
-      path.resolve(__dirname,'../data'),
-      path.resolve(__dirname,'..'),
-      process.cwd(),
-    ].filter(Boolean);
-    const candidates=[
-      filename,
-      ...roots.flatMap((root)=>['max.db','data.db','users.db','messages.db','database.db'].map((name)=>path.join(root,name))),
-    ].filter(Boolean);
-    filename=candidates.find((candidate)=>fs.existsSync(candidate) && fs.statSync(candidate).isFile());
-    if (!filename) {
-      for (const root of roots) {
-        if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) continue;
-        const found=fs.readdirSync(root,{withFileTypes:true})
-          .filter((entry)=>entry.isFile() && /\.(?:db|sqlite|sqlite3)$/i.test(entry.name))
-          .map((entry)=>path.join(root,entry.name))
-          .find((candidate)=>fs.existsSync(candidate));
-        if (found) { filename=found; break; }
-      }
-    }
-    if (!filename) {
-      throw new Error(`Файл базы данных не найден. Ожидался: ${cfg.file || 'не задан'}`);
-    }
-  }
-  const sql=`SELECT author,body,time_str,date_str,clock_str,is_own,media_json,reply_author,reply_body,created_at FROM messages WHERE chat_url=? ORDER BY id ASC LIMIT 20000`;
-  let db;
   try {
-    const Database=require('better-sqlite3');
-    db=new Database(filename,{readonly:true,fileMustExist:true});
-    try { return db.prepare(sql).all(chatUrl); }
-    finally { db.close(); }
+    await db.initSchema();
+    return await db.getMessagesForChat(chatUrl, 20000);
   } catch (err) {
-    // Node 22+ ships SQLite itself. This fallback avoids breaking chat export
-    // when better-sqlite3 was installed for another Node ABI or has no native binding.
-    try {
-      const { DatabaseSync }=require('node:sqlite');
-      db=new DatabaseSync(filename,{readOnly:true});
-      try { return db.prepare(sql).all(chatUrl); }
-      finally { db.close(); }
-    } catch (fallbackErr) {
-      throw new Error(`Не удалось открыть SQLite для экспорта: ${fallbackErr.message || err.message}`);
-    }
+    throw new Error(`Не удалось прочитать историю чата из ${getDatabase().driver.toUpperCase()}: ${err.message}`);
   }
 }
+
 function mediaHtml(raw) {
   let media=[]; try { media=typeof raw==='string'?JSON.parse(raw||'[]'):(raw||[]); } catch {}
   if(!Array.isArray(media)) return '';
