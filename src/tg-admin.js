@@ -16,6 +16,7 @@ const {
   getSettings,
   getDatabase,
   getAutoUpdate,
+  getRaw,
 } = require('./config');
 const {
   setDefaultChatUrl,
@@ -961,6 +962,11 @@ async function handleReplyOperatorMessage(message) {
   const text = (message.text || '').trim();
   const waitKey = waitingInput.get(String(chatId));
   const userMessageId = message.message_id;
+
+  if (waitKey === 'webPanel:domain' && text && !text.startsWith('/')) {
+    await bindWebDomain(chatId, text);
+    return;
+  }
 
   if (/^\/cancel$/i.test(text)) {
     waitingInput.delete(String(chatId));
@@ -2114,7 +2120,10 @@ async function showChatInfo(chatId, messageId, targetChatId) {
   });
 }
 
-function webPanelText(){const c=getWebAccess(),u=webUrl(c);return ['<b>Веб-панель</b>','',c.enabled!==false?'Статус: ✅ включена':'Статус: ❌ выключена',c.domain?'Ссылка: <code>'+escapeHtml(u)+'</code>':'Домен ещё не настроен.',c.domain?'Логин: <code>'+escapeHtml(c.user)+'</code>':null,c.domain?'Пароль: <code>'+escapeHtml(c.pass)+'</code>':null,'','Путь и данные доступа меняются каждые 6 часов.'].filter(Boolean).join('\n')}
+function webPanelText(){const c=getWebAccess(),u=webUrl(c);if(!c.domain)return '<b>Веб-панель</b>\n\n🌐 Домен не привязан.\nОтправьте домен следующим сообщением, например:\n<code>panel.example.com</code>\n\nОтмена: /cancel';return ['<b>Веб-панель</b>','',c.enabled!==false?'Статус: ✅ включена':'Статус: ❌ выключена','Ссылка: <code>'+escapeHtml(u)+'</code>','Логин: <code>'+escapeHtml(c.user)+'</code>','Пароль: <code>'+escapeHtml(c.pass)+'</code>','','Путь и данные доступа меняются каждые 6 часов.'].join('\n')}
+function normalizeWebDomain(value){return String(value||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.$/,'')}
+function isValidWebDomain(domain){return /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)}
+async function bindWebDomain(chatId,text){const domain=normalizeWebDomain(text);if(!isValidWebDomain(domain)){await sendInputPrompt(chatId,'❌ Некорректный домен.\n\nОтправьте домен без пути, например: <code>panel.example.com</code>\nОтмена: /cancel');return false}let dns=[];try{dns=await require('dns').promises.resolve4(domain)}catch{}if(!dns.length){await sendInputPrompt(chatId,'❌ У домена не найдена A-запись.\n\nСначала направьте домен на IP этого сервера, затем отправьте домен ещё раз.\nОтмена: /cancel');return false}const raw=getRaw(),current=raw.webPanel||{};store.setPath(['webPanel'],{...current,domain});waitingInput.delete(String(chatId));await clearInputPrompt(chatId);await sendMessage(chatId,'✅ Домен <code>'+escapeHtml(domain)+'</code> привязан.\n\nДля HTTPS nginx и SSL должны быть настроены установщиком.');await showWebPanel(chatId);return true}
 function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
 async function showWebPanel(chatId,messageId){const x={reply_markup:webPanelKeyboard()};if(messageId){try{await editMessageText(chatId,messageId,webPanelText(),x);return}catch{}}await sendMessage(chatId,webPanelText(),x)}
 
@@ -2259,7 +2268,7 @@ async function handleMessage(message) {
     return;
   }
 
-  if (/^\/link$/i.test(text)) { await showWebPanel(chatId); return; }
+  if (/^\/link$/i.test(text)) { const c=getWebAccess(); if(!c.domain){waitingInput.set(String(chatId),'webPanel:domain');await sendInputPrompt(chatId,webPanelText());}else await showWebPanel(chatId); return; }
 
   if (/^\/status$/i.test(text)) {
     let maxOk = false;
@@ -2534,7 +2543,7 @@ async function handleCallback(query) {
     return;
   }
 
-  if (data === 'action:webPanel') { await answerCallback(query.id,'Веб-панель'); if(Array.isArray(query.message.photo)&&query.message.photo.length){await deleteMessage(chatId,query.message.message_id).catch(()=>{});await showWebPanel(chatId)}else await showWebPanel(chatId,query.message.message_id); return; }
+  if (data === 'action:webPanel') { await answerCallback(query.id,'Веб-панель'); const c=getWebAccess(); if(!c.domain){waitingInput.set(String(chatId),'webPanel:domain');if(Array.isArray(query.message.photo)&&query.message.photo.length)await deleteMessage(chatId,query.message.message_id).catch(()=>{});await sendInputPrompt(chatId,webPanelText());}else if(Array.isArray(query.message.photo)&&query.message.photo.length){await deleteMessage(chatId,query.message.message_id).catch(()=>{});await showWebPanel(chatId)}else await showWebPanel(chatId,query.message.message_id); return; }
   if (data === 'action:webPanelToggle') { const c=getWebAccess();setWebEnabled(c.enabled===false);await answerCallback(query.id,c.enabled===false?'Сайт включён':'Сайт отключён');await showWebPanel(chatId,query.message.message_id);return; }
 
   if (data === 'auth:switch:qr') {
