@@ -1061,168 +1061,82 @@ async function prepareChatActivityList(page, personalOnly = false) {
 async function readUnreadCounts(page) {
   if (!page || page.isClosed()) return { chats: 0, messages: 0 };
 
-  const scanVisibleUnread = async () =>
-    page.evaluate(() => {
-      const parseCount = (value) => {
-        const raw = String(value || '').trim().replace(/\s+/g, '');
-        if (!raw || /^\d{1,2}:\d{2}/.test(raw)) return 0;
-        const match = raw.match(/^(\d{1,5})(?:\+)?$/);
-        return match ? Number(match[1]) : 0;
-      };
+  try {
+    await ensureChatListVisible(page);
+    await page.waitForTimeout(500);
+    const labels = await listChatListFilters(page);
+    const all = labels.find((label) => /^(все|all)$/i.test(label));
+    if (all) {
+      await openChatListFilter(page, all);
+      await page.waitForTimeout(300);
+    }
+    await resetChatListScroll(page);
 
+    // Считаем только реальные строки диалогов с собственным unread-маркером.
+    // Не используем общие badge/counter/notif: они встречаются у вкладок,
+    // аватаров, упоминаний и других элементов и раньше завышали число чатов.
+    const unread = new Map();
+    const scan = async () => page.evaluate(() => {
       const root =
         document.querySelector('aside .scrollListContent') ||
         document.querySelector('aside .scrollListScrollable') ||
-        document.querySelector('aside') ||
-        document.querySelector('.scrollListContent') ||
-        document;
-
-      const candidates = [
-        ...root.querySelectorAll(
-          'div.item, button.cell, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]'
-        ),
-      ];
-      const rows = [];
-      const seenNodes = new Set();
-      for (const node of candidates) {
-        const row =
-          node.closest?.('div.item, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]') ||
-          node;
-        if (!row || seenNodes.has(row) || row.closest?.('.openedChat')) continue;
-        if (!row.querySelector?.('h3.title, [class*="title" i]')) continue;
-        seenNodes.add(row);
-        rows.push(row);
-      }
-
-      const result = [];
-      rows.forEach((row, index) => {
-        const titleNode = row.querySelector('h3.title, [class*="title" i]');
-        const title = String(titleNode?.innerText || titleNode?.textContent || '')
-          .trim()
-          .split('\n')[0]
-          .trim();
-        const href =
-          row.getAttribute?.('href') ||
-          row.querySelector?.('a[href]')?.getAttribute?.('href') ||
-          '';
-        const attrs = [...(row.attributes || [])].map((attr) => attr.value).join(' ');
-        const idMatch = (href + ' ' + attrs + ' ' + (row.outerHTML || '')).match(
-          /(?:web\.max\.ru\/|href=["']\/|["'/])(-?\d{5,16})(?:["'/?#\s]|$)/
-        );
-        const key = idMatch?.[1] || href || title.toLowerCase() || `row:${index}`;
-
-        let count = 0;
-        let marker = false;
-        const selectors =
-          '[class*="unread" i], [class*="counter" i], [class*="badge" i], [class*="notif" i], [class*="mention" i], [aria-label*="непроч" i], [aria-label*="unread" i]';
-        for (const badge of row.querySelectorAll(selectors)) {
-          if (badge.closest?.('.subtitleWrapper')) continue;
-          const text = badge.innerText || badge.textContent || badge.getAttribute?.('aria-label') || '';
-          const parsed = parseCount(text);
-          if (parsed > 0) count = Math.max(count, parsed);
-          else marker = true;
-        }
+        document.querySelector('aside');
+      if (!root) return [];
+      const rows = [...root.querySelectorAll('div.item, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]')];
+      const out = [], seen = new Set();
+      for (const candidate of rows) {
+        const row = candidate.closest?.('div.item, [role="listitem"], [class*="chatItem" i], [class*="dialog" i]') || candidate;
+        if (!row || seen.has(row) || row.closest?.('.openedChat')) continue;
+        seen.add(row);
+        const titleNode = row.querySelector?.('h3.title, [class*="title" i]');
+        if (!titleNode) continue;
+        const title = String(titleNode.innerText || titleNode.textContent || '').trim().split('\n')[0].trim();
+        const href = row.getAttribute?.('href') || row.querySelector?.('a[href]')?.getAttribute?.('href') || '';
+        const id = String(href).match(/\/?(-?\d{5,16})(?:[/?#]|$)/)?.[1] || href || title.toLowerCase();
+        if (!id) continue;
 
         const aria = String(row.getAttribute?.('aria-label') || '');
-        const ariaCount = aria.match(/(?:непрочитан\w*|unread)\D{0,12}(\d{1,5})/i);
-        if (ariaCount) count = Math.max(count, Number(ariaCount[1]));
-        if (/непрочитан|unread/i.test(aria)) marker = true;
-
-        if (count > 0 || marker) result.push([key, count || 1]);
-      });
-      return result;
+        const cls = String(row.className || '');
+        let marker = /(^|[\s_-])unread([\s_-]|$)/i.test(cls) || /непрочитан|unread/i.test(aria);
+        let count = 0;
+        const unreadNodes = row.querySelectorAll(
+          '[class*="unread" i], [aria-label*="непроч" i], [aria-label*="unread" i]'
+        );
+        for (const node of unreadNodes) {
+          // Маркер должен принадлежать этой строке чата, а не вложенной панели/вкладке.
+          if (node.closest?.('nav, [role="tab"], .openedChat')) continue;
+          marker = true;
+          const raw = String(node.innerText || node.textContent || node.getAttribute?.('aria-label') || '');
+          const m = raw.match(/(?:^|\D)(\d{1,5})(?:\+)?(?:\D|$)/);
+          if (m) count = Math.max(count, Number(m[1]));
+        }
+        const ariaCount = aria.match(/(?:непрочитан\w*|unread)\D{0,16}(\d{1,5})/i);
+        if (ariaCount) { marker = true; count = Math.max(count, Number(ariaCount[1])); }
+        if (marker) out.push([id, Math.max(1, count)]);
+      }
+      return out;
     });
-
-  try {
-    await ensureChatListVisible(page);
-    await page.waitForTimeout(600);
-
-    const labels = await listChatListFilters(page);
-    const filters = pickUnreadScanFilters(labels);
-    const unread = new Map();
 
     const merge = (batch) => {
-      for (const [key, count] of batch || []) {
-        unread.set(key, Math.max(unread.get(key) || 0, Number(count) || 1));
-      }
+      for (const [id, count] of batch || []) unread.set(id, Math.max(unread.get(id) || 0, Number(count) || 1));
     };
-
-    async function scanCurrentFilter() {
-      merge(await scanVisibleUnread());
-      let stagnant = 0;
-      let previousSignature = '';
-      for (let step = 0; step < 40; step++) {
-        const moved = await scrollChatListStep(page);
-        if (!moved) break;
-        await page.waitForTimeout(250);
-        merge(await scanVisibleUnread());
-        const signature = [...unread.entries()].sort().map(([k, v]) => `${k}:${v}`).join('|');
-        if (signature === previousSignature) stagnant += 1;
-        else stagnant = 0;
-        previousSignature = signature;
-        if (stagnant >= 4) break;
-      }
-      await resetChatListScroll(page);
-      await page.waitForTimeout(150);
+    merge(await scan());
+    let stagnant = 0, previous = '';
+    for (let step = 0; step < 40; step++) {
+      if (!(await scrollChatListStep(page))) break;
+      await page.waitForTimeout(220);
+      merge(await scan());
+      const signature = [...unread.keys()].sort().join('|');
+      stagnant = signature === previous ? stagnant + 1 : 0;
+      previous = signature;
+      if (stagnant >= 4) break;
     }
+    await resetChatListScroll(page);
 
-    if (filters.length) {
-      for (const label of filters) {
-        if (label) {
-          await openChatListFilter(page, label);
-          await page.waitForTimeout(350);
-        }
-        await scanCurrentFilter();
-      }
-    } else {
-      await scanCurrentFilter();
-    }
-
-    let messages = 0;
-    for (const count of unread.values()) messages += count;
-
-    // Верхний бейдж вкладки «Все» в MAX — канонический общий счётчик
-    // непрочитанных. Не суммируем вместо него бейджи отдельных чатов:
-    // они могут пересекаться между фильтрами и давать завышенное значение.
-    const tabUnread = await page.evaluate(() => {
-      const parse = (value) => {
-        const text = String(value || '').trim().replace(/\s+/g, '');
-        const match = text.match(/^(\d{1,5})(?:\+)?$/);
-        return match ? Number(match[1]) : 0;
-      };
-      const nodes = document.querySelectorAll(
-        'nav button, [role="tab"], [class*="tabbar" i] button, [class*="navbar" i] button, aside button'
-      );
-      for (const node of nodes) {
-        if (node.querySelector?.('h3.title') || node.closest?.('.scrollListContent, .scrollListScrollable')) continue;
-        const label = String(node.innerText || node.textContent || '').trim().split('\n')[0].trim();
-        if (!/^(все|all)$/i.test(label)) continue;
-        for (const badge of node.querySelectorAll(
-          '[class*="unread" i], [class*="counter" i], [class*="badge" i], [class*="notif" i]'
-        )) {
-          const count = parse(badge.innerText || badge.textContent || '');
-          if (count > 0) return count;
-        }
-        const numbers = String(node.innerText || node.textContent || '').match(/\b\d{1,5}\+?\b/g) || [];
-        for (const value of numbers) {
-          const count = parse(value);
-          if (count > 0) return count;
-        }
-      }
-      return 0;
-    });
-
-    if (tabUnread > 0) messages = tabUnread;
-
-    // {непрочитанные_чаты} — это именно число уникальных диалогов
-    // с признаком непрочитанного, независимо от цифры внутри их бейджа.
-    const unreadChats = new Set(unread.keys()).size;
-    const counts = { chats: unreadChats, messages };
-    console.log(
-      `непрочитанные MAX: чаты ${counts.chats}, сообщения ${counts.messages}` +
-      (tabUnread > 0 ? ` (бейдж «Все»: ${tabUnread})` : '')
-    );
-    return counts;
+    const chats = unread.size;
+    const messages = [...unread.values()].reduce((sum, value) => sum + value, 0);
+    console.log(`непрочитанные MAX: чаты ${chats}, сообщения ${messages}`);
+    return { chats, messages };
   } catch (err) {
     console.warn('непрочитанные MAX:', err.message);
     return { chats: 0, messages: 0 };

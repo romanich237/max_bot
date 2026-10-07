@@ -157,6 +157,16 @@ async function renderBioDescription(options = {}) {
     ...unread,
   });
 
+  // Убираем HTML/Unicode-пробелы и случайные двойные пробелы,
+  // но сохраняем заданные пользователем переносы строк.
+  text = String(text)
+    .replace(/&(?:#x20|#32|nbsp);/gi, ' ')
+    .replace(/[\u00a0\u2007\u202f]/g, ' ')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .trim();
+
   if (text.length > MAX_BIO_LENGTH) {
     text = text.slice(0, MAX_BIO_LENGTH);
   }
