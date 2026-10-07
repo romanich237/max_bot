@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const { File } = require('node:buffer');
 const {
   store,
@@ -158,7 +161,7 @@ const {
   getBrowserPassword,
 } = require('./auth-browser');
 const { clearInputPrompt, sendInputPrompt, deleteMessageQuiet } = require('./tg-step-chat');
-const { getAccess: getWebAccess, setEnabled: setWebEnabled, url: webUrl } = require('./web-panel-access');
+const { getAccess: getWebAccess, setEnabled: setWebEnabled, url: webUrl, resetLogin: resetWebLogin, resetProfile: resetWebProfile } = require('./web-panel-access');
 
 const SETTABLE = {
   biointerval: { path: ['profileBio', 'intervalMs'], type: 'int', min: 10000, max: 3600000 },
@@ -2139,6 +2142,17 @@ async function getWebPanelPublicIp(){
   }
   return '';
 }
+async function configureWebPanelTls(domain){
+  const script=path.resolve(__dirname,'..','scripts','configure-web-panel-tls.sh');
+  if(!fs.existsSync(script))return {ok:false,error:'Скрипт настройки SSL не найден'};
+  try{
+    const {stdout}=await execFileAsync('bash',[script,domain],{timeout:120000,maxBuffer:1024*1024});
+    return {ok:true,details:String(stdout||'').trim()};
+  }catch(err){
+    const detail=String(err.stderr||err.stdout||err.message||'').trim().slice(0,1200);
+    return {ok:false,error:detail||'Не удалось настроить SSL'};
+  }
+}
 async function bindWebDomain(chatId,text){
   const domain=normalizeWebDomain(text);
   if(!isValidWebDomain(domain)){
@@ -2195,8 +2209,24 @@ async function bindWebDomain(chatId,text){
     return false;
   }
 
+  await updateChecking('🔐 DNS подтверждён. Настраиваю отдельный SSL-сертификат для <code>'+escapeHtml(domain)+'</code>…');
+  const tls=await configureWebPanelTls(domain);
+  if(!tls.ok){
+    await updateChecking([
+      '⚠️ <b>DNS настроен, но SSL ещё не готов.</b>',
+      '',
+      'Домен: <code>'+escapeHtml(domain)+'</code>',
+      'Причина: <code>'+escapeHtml(tls.error)+'</code>',
+      '',
+      'Запустите на сервере от root:',
+      '<code>bash scripts/configure-web-panel-tls.sh '+escapeHtml(domain)+'</code>',
+      '',
+      'После успешного запуска отправьте домен ещё раз.'
+    ].join('\n'));
+    return false;
+  }
   const raw=getRaw(),current=raw.webPanel||{};
-  store.setPath(['webPanel'],{...current,domain});
+  store.setPath(['webPanel'],{...current,domain,tlsVerifiedAt:Date.now()});
   waitingInput.delete(String(chatId));
   await clearInputPrompt(chatId);
   const c=getWebAccess(),u=webUrl(c);
@@ -2213,7 +2243,7 @@ async function bindWebDomain(chatId,text){
   ].join('\n'),{reply_markup:webPanelKeyboard()});
   return true;
 }
-function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
+function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:'🔑 Сброс входа',callback_data:'action:webPanelResetLogin'},{text:'⚙️ Настройки',callback_data:'action:webPanelSettings'}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:'🗑 Полный сброс',callback_data:'action:webPanelResetProfile'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
 async function showWebPanel(chatId,messageId){const x={reply_markup:webPanelKeyboard()};if(messageId){try{await editMessageText(chatId,messageId,webPanelText(),x);return}catch{}}await sendMessage(chatId,webPanelText(),x)}
 
 async function handleMessage(message) {
@@ -2658,6 +2688,10 @@ async function handleCallback(query) {
 
   if (data === 'action:webPanel') { await answerCallback(query.id,'Веб-панель'); const c=getWebAccess(); if(!c.domain){waitingInput.set(String(chatId),'webPanel:domain');if(Array.isArray(query.message.photo)&&query.message.photo.length)await deleteMessage(chatId,query.message.message_id).catch(()=>{});await sendInputPrompt(chatId,webPanelText());}else if(Array.isArray(query.message.photo)&&query.message.photo.length){await deleteMessage(chatId,query.message.message_id).catch(()=>{});await showWebPanel(chatId)}else await showWebPanel(chatId,query.message.message_id); return; }
   if (data === 'action:webPanelToggle') { const c=getWebAccess();setWebEnabled(c.enabled===false);await answerCallback(query.id,c.enabled===false?'Сайт включён':'Сайт отключён');await showWebPanel(chatId,query.message.message_id);return; }
+
+  if (data === 'action:webPanelResetLogin') { resetWebLogin(); await answerCallback(query.id,'Данные входа изменены'); await showWebPanel(chatId,query.message.message_id); return; }
+  if (data === 'action:webPanelSettings') { const c=getWebAccess(); await answerCallback(query.id,'Настройки'); await editMessageText(chatId,query.message.message_id,['<b>Настройки веб-панели</b>','','Домен: <code>'+escapeHtml(c.domain||'не задан')+'</code>','Сайт: '+(c.enabled!==false?'✅ включён':'❌ выключен'),'SSL: '+(c.tlsVerifiedAt?'✅ подтверждён':'⚠️ не подтверждён'),'Внутренний порт: <code>'+escapeHtml(c.port||'авто')+'</code>','','Сертификат и приватный ключ хранятся системно в /etc/letsencrypt и не записываются в config.json.'].join('\n'),{reply_markup:webPanelKeyboard()}); return; }
+  if (data === 'action:webPanelResetProfile') { resetWebProfile(); waitingInput.set(String(chatId),'webPanel:domain'); await answerCallback(query.id,'Профиль панели сброшен'); await editMessageText(chatId,query.message.message_id,webPanelText(),{reply_markup:{inline_keyboard:[[{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]]}}); return; }
 
   if (data === 'auth:switch:qr') {
     if (authInputWaiter?.onSwitch) {

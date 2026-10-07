@@ -577,7 +577,8 @@ if [ -n "$WEB_DOMAIN" ]; then
   printf '%s\n' "server {" " listen 80;" " server_name $WEB_DOMAIN;" " location / { proxy_pass http://127.0.0.1:$WEB_PANEL_PORT; proxy_set_header Host \\$host; proxy_set_header X-Real-IP \\$remote_addr; proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \\$scheme; }" "}" | run_root tee /etc/nginx/sites-available/max-tg-panel >/dev/null
   run_root ln -sf /etc/nginx/sites-available/max-tg-panel /etc/nginx/sites-enabled/max-tg-panel
   run_root nginx -t && run_root systemctl reload nginx
-  run_root certbot --nginx -d "$WEB_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+  run_root certbot --nginx --cert-name "max-tg-$WEB_DOMAIN" -d "$WEB_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+  run_root openssl x509 -in "/etc/letsencrypt/live/max-tg-$WEB_DOMAIN/fullchain.pem" -noout -ext subjectAltName | grep -Fq "DNS:$WEB_DOMAIN" || fail "сертификат не принадлежит $WEB_DOMAIN"
   echo "HTTPS готов: https://$WEB_DOMAIN (внутренний случайный порт $WEB_PANEL_PORT)"
 fi
 
