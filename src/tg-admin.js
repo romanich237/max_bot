@@ -65,6 +65,7 @@ const {
   setBotDescription,
   setBotShortDescription,
   sendMessage,
+  api,
   pinChatMessage,
   answerCallback,
   editMessageText,
@@ -3445,6 +3446,62 @@ async function registerBotCommands(tokenOverride) {
   return data;
 }
 
+const DEVELOPER_BROADCAST_CHANNEL = 'notificationsmax_in_tg';
+const DEVELOPER_BROADCAST_PREFIX = 'Рассылка от разработчика:\n';
+
+function developerBroadcastRecipients() {
+  return listKnownChats()
+    .filter((chat) => chat.type === 'private' && hasWrittenToBot(chat.id))
+    .map((chat) => String(chat.id));
+}
+
+function shiftedEntities(entities, shift) {
+  return (Array.isArray(entities) ? entities : []).map((entity) => ({
+    ...entity,
+    offset: Number(entity.offset || 0) + shift,
+  }));
+}
+
+async function handleDeveloperBroadcast(post) {
+  const username = String(post?.chat?.username || '').replace(/^@/, '').toLowerCase();
+  if (username !== DEVELOPER_BROADCAST_CHANNEL) return;
+
+  const sourceText = String(post.text || post.caption || '');
+  if (!sourceText.trim()) {
+    console.log('Рассылка разработчика: публикация без текста пропущена');
+    return;
+  }
+
+  const sourceEntities = post.text ? post.entities : post.caption_entities;
+  const text = `${DEVELOPER_BROADCAST_PREFIX}${sourceText}`;
+  const prefixLength = DEVELOPER_BROADCAST_PREFIX.length;
+  const entities = [
+    { type: 'bold', offset: 0, length: 'Рассылка от разработчика:'.length },
+    ...shiftedEntities(sourceEntities, prefixLength),
+  ];
+  const recipients = developerBroadcastRecipients();
+
+  let sent = 0;
+  let failed = 0;
+  for (const chatId of recipients) {
+    try {
+      const result = await api('sendMessage', {
+        chat_id: chatId,
+        text,
+        entities,
+        link_preview_options: { is_disabled: false },
+      });
+      if (result?.ok) sent += 1;
+      else failed += 1;
+    } catch {
+      failed += 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+
+  console.log(`Рассылка разработчика: отправлено ${sent}, ошибок ${failed}, всего ${recipients.length}`);
+}
+
 function startTelegramAdmin() {
   const { token } = getTelegram();
   if (!token) {
@@ -3461,6 +3518,15 @@ function startTelegramAdmin() {
     });
 
   return pollUpdates(async (update) => {
+    if (update.channel_post) {
+      try {
+        await handleDeveloperBroadcast(update.channel_post);
+      } catch (err) {
+        console.error('Ошибка рассылки разработчика:', err.message);
+      }
+      return;
+    }
+
     const from = update.message?.from || update.callback_query?.from || update.my_chat_member?.from;
     await runWithPremiumEmoji(from, async () => {
       recordChatFromUpdate(update);
@@ -3475,7 +3541,7 @@ function startTelegramAdmin() {
   }, {
     id: 'admin-main',
     priority: 0,
-    allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
+    allowedUpdates: ['message', 'callback_query', 'my_chat_member', 'channel_post'],
     onError: (err) => console.error('Ошибка панели Telegram:', err.message),
   });
 }
