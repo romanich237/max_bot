@@ -62,11 +62,11 @@ function formatDateDivider(value) {
   ];
 
   let year,month,day;
-  let m=raw.match(/^(\\d{4})[.\\/-](\\d{1,2})[.\\/-](\\d{1,2})(?:\\s.*)?$/);
+  let m=raw.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})(?:\s.*)?$/);
   if(m) {
     year=Number(m[1]); month=Number(m[2]); day=Number(m[3]);
   } else {
-    m=raw.match(/^(\\d{1,2})[.\\/-](\\d{1,2})[.\\/-](\\d{4})(?:\\s.*)?$/);
+    m=raw.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})(?:\s.*)?$/);
     if(m) { day=Number(m[1]); month=Number(m[2]); year=Number(m[3]); }
   }
 
@@ -94,7 +94,9 @@ async function buildChatExport(chatUrl,title) {
     const displayDate=formatDateDivider(date);
     const separator=date && date!==lastDate ? `<div class="date"><span>${esc(displayDate)}</span></div>` : '';
     if(date) lastDate=date;
-    const author=esc(row.author||'MAX');
+    const rawAuthor=String(row.author||'').trim();
+    const showAuthor=rawAuthor && !/^(неизвестно|unknown|max)$/i.test(rawAuthor);
+    const author=showAuthor ? `<div class="author">${esc(rawAuthor)}</div>` : '';
     const reply=row.reply_body
       ? `<div class="reply"><strong>${esc(row.reply_author||'Ответ')}</strong><div>${esc(row.reply_body).replace(/\n/g,'<br>')}</div></div>`
       : '';
@@ -102,7 +104,7 @@ async function buildChatExport(chatUrl,title) {
       ? `<div class="body">${esc(row.body||'').replace(/\n/g,'<br>')}</div>`
       : '';
     const time=esc(row.clock_str||row.time_str||'');
-    return `${separator}<div class="row ${row.is_own?'own':'incoming'}"><div class="bubble"><div class="author">${author}</div>${reply}${mediaHtml(row.media_json)}${body}<div class="meta"><span>${time}</span>${row.is_own?'<span class="checks">✓✓</span>':''}</div></div></div>`;
+    return `${separator}<div class="row ${row.is_own?'own':'incoming'}"><div class="bubble">${author}${reply}${mediaHtml(row.media_json)}${body}<div class="meta"><span>${time}</span>${row.is_own?'<span class="checks">✓✓</span>':''}</div></div></div>`;
   }).join('');
 
   const html=`<!doctype html>
@@ -115,17 +117,17 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;ba
 .header{position:relative;z-index:5;height:64px;background:#fff;display:flex;align-items:center;padding:0 18px;box-shadow:0 1px 2px #0002}
 .avatar{width:42px;height:42px;border-radius:50%;background:#eaf3fa;color:#1787d4;display:grid;place-items:center;font-weight:800;font-size:20px;margin-right:12px}
 .title{font-size:17px;font-weight:700;line-height:1.15}.subtitle{font-size:13px;color:#7b7f83;margin-top:3px}
-.chat{position:relative;z-index:1;max-width:760px;margin:auto;padding:18px 12px 50px;min-height:calc(100vh - 64px)}
-.date{text-align:center;margin:10px 0 14px}.date span{display:inline-block;background:#4da7d6cc;color:#fff;border-radius:15px;padding:5px 12px;font-size:14px;font-weight:600;box-shadow:0 1px 1px #0001}
-.row{display:flex;margin:5px 0}.row.own{justify-content:flex-end}.bubble{position:relative;max-width:min(78%,600px);background:#fff;border-radius:13px;padding:8px 10px 6px;box-shadow:0 1px 1px #0002;min-width:105px}
+.chat{position:relative;z-index:1;max-width:860px;margin:auto;padding:12px 14px 40px;min-height:calc(100vh - 64px)}
+.date{text-align:center;margin:7px 0 10px}.date span{display:inline-block;background:#4da7d6cc;color:#fff;border-radius:15px;padding:5px 12px;font-size:14px;font-weight:600;box-shadow:0 1px 1px #0001}
+.row{display:flex;margin:3px 0}.row.own{justify-content:flex-end}.bubble{position:relative;max-width:min(82%,640px);background:#fff;border-radius:13px;padding:7px 10px 5px;box-shadow:0 1px 1px #0002;min-width:72px}
 .incoming .bubble{border-bottom-left-radius:4px}.own .bubble{background:#e2ffc7;border-bottom-right-radius:4px}
-.author{color:#168acd;font-weight:700;font-size:14px;margin-bottom:3px}.own .author{color:#4b9a38}
+.author{color:#168acd;font-weight:700;font-size:13px;margin-bottom:2px}.own .author{color:#4b9a38}
 .reply{border-left:3px solid #27a4df;background:#00000008;border-radius:4px;padding:5px 8px;margin:2px 0 6px;font-size:13px;line-height:1.25}.reply strong{display:block;color:#168acd;margin-bottom:2px}
-.body{font-size:16px;line-height:1.3;overflow-wrap:anywhere;margin:2px 0}
-.meta{display:flex;justify-content:flex-end;align-items:center;gap:3px;color:#7e8589;font-size:11px;line-height:14px;margin:-1px 0 0 14px;min-height:14px}.own .meta{color:#679268}.checks{color:#3e9ed6;font-weight:700}
+.body{font-size:15px;line-height:1.28;overflow-wrap:anywhere;margin:1px 0}
+.meta{display:flex;justify-content:flex-end;align-items:center;gap:3px;color:#7e8589;font-size:10px;line-height:12px;margin:-1px 0 0 12px;min-height:12px}.own .meta{color:#679268}.checks{color:#3e9ed6;font-weight:700}
 img,video{display:block;width:auto;max-width:100%;max-height:620px;border-radius:9px;margin:2px 0 6px;object-fit:contain}.media-link{display:block;text-decoration:none}.photo{max-width:100%}.gif{min-width:180px}.sticker-wrap{background:transparent;padding:2px 0}.sticker{width:auto;max-width:220px;max-height:220px;background:transparent;box-shadow:none}.audio-box{display:flex;align-items:center;gap:8px;min-width:280px;padding:5px 0}.audio-box audio{width:min(340px,100%);height:36px}.audio-box small{white-space:nowrap;color:#6d777d}.audio-icon{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:12px}.attachment{display:flex;align-items:center;gap:10px;min-width:260px;max-width:440px;padding:7px 2px}.file-icon{flex:0 0 40px;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:22px;font-weight:700}.file-info{min-width:0;flex:1}.file-info b,.attachment>div>b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.file-info small,.attachment>div>small{display:block;color:#758087;margin-top:2px;font-size:12px}.download{color:#168acd;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}.own .file-icon,.own .audio-icon{background:#5da24d}.own .download{color:#438d36}
 .empty{display:block;margin:30px auto;width:max-content;max-width:90%;background:#4da7d6cc;color:#fff;border-radius:15px;padding:7px 13px;font-size:14px}
-@media(max-width:600px){.header{height:58px;padding:0 12px}.avatar{width:38px;height:38px}.chat{padding:12px 7px 32px;min-height:calc(100vh - 58px)}.bubble{max-width:88%;padding:7px 9px 5px}.body{font-size:16px}.title{font-size:16px}}
+@media(max-width:600px){.header{height:54px;padding:0 10px}.avatar{width:36px;height:36px;margin-right:9px;font-size:17px}.title{font-size:15px}.subtitle{font-size:11px;margin-top:1px}.chat{padding:8px 6px 24px;min-height:calc(100vh - 54px)}.date{margin:5px 0 8px}.date span{font-size:12px;padding:4px 9px}.row{margin:2px 0}.bubble{max-width:91%;padding:6px 8px 4px;border-radius:11px}.body{font-size:14px;line-height:1.25}.author{font-size:12px}.meta{font-size:9px;line-height:11px;min-height:11px}.sticker{max-width:180px;max-height:180px}.attachment{min-width:220px}.audio-box{min-width:220px}}
 </style></head>
 <body><header class="header"><div class="avatar">${esc(String(displayTitle||'M').trim().charAt(0).toUpperCase()||'M')}</div><div><div class="title">${esc(displayTitle)}</div><div class="subtitle">${rows.length} сообщений</div></div></header>
 <main class="chat">${messages||'<div class="empty">В локальной истории сообщений пока нет</div>'}</main></body></html>`;
