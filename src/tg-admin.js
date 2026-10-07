@@ -72,6 +72,7 @@ const {
   getChat,
   pollUpdates,
   sendPhotoBuffer,
+  editPhotoBuffer,
   editMessageCaption,
   downloadTelegramFile,
   checkTelegramConnectivity,
@@ -752,10 +753,7 @@ function buildAboutKeyboard() {
   return {
     inline_keyboard: [
       buildLinksInlineRow(),
-      [
-        { text: 'Логи', callback_data: 'action:logs' },
-        { text: 'Изображение меню', callback_data: 'action:menuImage' },
-      ],
+      [{ text: 'Логи', callback_data: 'action:logs' }],
       [{ text: BUTTONS.backToMenu, callback_data: 'discover:menu' }],
     ],
   };
@@ -2650,20 +2648,33 @@ async function handleCallback(query) {
 
   if (data === 'action:about') {
     await answerCallback(query.id, 'О сервисе');
-    await replaceMenuPhotoWithText(query, `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`, {
-      reply_markup: buildAboutKeyboard(),
-    });
-    return;
-  }
-
-  if (data === 'action:menuImage') {
-    await answerCallback(query.id, 'Изображение меню');
+    const aboutText = `${START.about}\n\n<b>Нагрузка сервера</b>\n<code>${escapeHtml(serverLoadText())}</code>`;
     const image = getMenuImageBuffer();
-    if (!image) {
-      await sendMessage(chatId, 'Файл <code>menu.png</code> не найден.');
-      return;
+
+    if (image) {
+      const hasPhoto = Array.isArray(query.message.photo) && query.message.photo.length > 0;
+      if (hasPhoto) {
+        const result = await editPhotoBuffer(
+          chatId,
+          query.message.message_id,
+          image,
+          aboutText,
+          undefined,
+          { reply_markup: buildAboutKeyboard() }
+        );
+        if (result?.ok) return;
+      }
+
+      await deleteMessage(chatId, query.message.message_id).catch(() => {});
+      const sent = await sendPhotoBuffer(chatId, image, aboutText, undefined, {
+        reply_markup: buildAboutKeyboard(),
+      });
+      if (sent?.ok) return;
     }
-    await sendPhotoBuffer(chatId, image, 'Изображение главного меню');
+
+    await replaceMenuPhotoWithText(query, aboutText, {
+      reply_markup: buildAboutKeyboard(),
+    }).catch(() => {});
     return;
   }
 
