@@ -782,6 +782,29 @@ async function sendPinnedAboutOnce(chat) {
   return true;
 }
 
+function getMenuImageBuffer() {
+  const candidates = [
+    path.resolve(__dirname, '..', 'menu.png'),
+    path.resolve(process.cwd(), 'menu.png'),
+  ];
+  const imagePath = candidates.find((candidate) => fs.existsSync(candidate));
+  return imagePath ? fs.readFileSync(imagePath) : null;
+}
+
+async function sendMainMenu(chatId) {
+  const image = getMenuImageBuffer();
+  if (image) {
+    const result = await sendPhotoBuffer(chatId, image, START.panel, undefined, {
+      reply_markup: buildMenuKeyboard(),
+    });
+    if (result?.ok) return result;
+    console.warn('Не удалось отправить menu.png:', result?.description || 'Telegram API error');
+  }
+  return sendMessage(chatId, START.panel, {
+    reply_markup: buildMenuKeyboard(),
+  });
+}
+
 function buildMenuKeyboard() {
   const prefix = 'toggle:';
   const rows = [
@@ -2203,9 +2226,7 @@ async function handleMessage(message) {
         reply_markup: { remove_keyboard: true },
       });
     }
-    await sendMessage(chatId, START.panel, {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMainMenu(chatId);
     return;
   }
 
@@ -2213,9 +2234,7 @@ async function handleMessage(message) {
     waitingInput.delete(String(chatId));
     clearReplyAlbums(chatId);
     bindUserContext.delete(String(chatId));
-    await sendMessage(chatId, START.panel, {
-      reply_markup: buildMenuKeyboard(),
-    });
+    await sendMainMenu(chatId);
     return;
   }
 
