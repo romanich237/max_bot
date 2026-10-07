@@ -62,6 +62,9 @@ function formatDateDivider(value) {
 
 async function buildChatExport(chatUrl,title) {
   const rows=await rowsForChat(chatUrl);
+  const storedTitle=rows.map(row=>String(row.chat_title||'').trim()).find(Boolean);
+  const fallbackTitle=/^Чат\s+-?\d+$/i.test(String(title||'').trim()) || !String(title||'').trim();
+  const displayTitle=fallbackTitle && storedTitle ? storedTitle : String(title||storedTitle||'MAX').trim();
   let lastDate='';
   const messages=rows.map(row=>{
     const date=String(row.date_str||'').trim();
@@ -81,7 +84,7 @@ async function buildChatExport(chatUrl,title) {
 
   const html=`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title>
+<title>${esc(displayTitle)}</title>
 <style>
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#111}
 body{background:#8ec8ed}
@@ -101,8 +104,8 @@ img,video{display:block;width:auto;max-width:100%;max-height:620px;border-radius
 .empty{display:block;margin:30px auto;width:max-content;max-width:90%;background:#4da7d6cc;color:#fff;border-radius:15px;padding:7px 13px;font-size:14px}
 @media(max-width:600px){.header{height:58px;padding:0 12px}.avatar{width:38px;height:38px}.chat{padding:12px 7px 32px;min-height:calc(100vh - 58px)}.bubble{max-width:88%;padding:7px 9px 5px}.body{font-size:16px}.title{font-size:16px}}
 </style></head>
-<body><header class="header"><div class="avatar">${esc(String(title||'M').trim().charAt(0).toUpperCase()||'M')}</div><div><div class="title">${esc(title)}</div><div class="subtitle">${rows.length} сообщений</div></div></header>
+<body><header class="header"><div class="avatar">${esc(String(displayTitle||'M').trim().charAt(0).toUpperCase()||'M')}</div><div><div class="title">${esc(displayTitle)}</div><div class="subtitle">${rows.length} сообщений</div></div></header>
 <main class="chat">${messages||'<div class="empty">В локальной истории сообщений пока нет</div>'}</main></body></html>`;
-  return {html,count:rows.length};
+  return {html,count:rows.length,title:displayTitle};
 }
 module.exports={buildChatExport};

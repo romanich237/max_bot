@@ -3128,8 +3128,9 @@ async function handleCallback(query) {
     try {
       const title = chatLabelFromUrl(url);
       const exported = await buildChatExport(url, title);
-      const safeName = title.replace(/[^a-zа-яё0-9_-]+/gi, '_').slice(0, 60) || 'max-chat';
-      await sendHtmlDocument(chatId, exported.html, `${safeName}.html`, `MAX · ${title} · ${exported.count} сообщений`);
+      const exportTitle = exported.title || title;
+      const safeName = exportTitle.replace(/[^a-zа-яё0-9_-]+/gi, '_').slice(0, 60) || 'max-chat';
+      await sendHtmlDocument(chatId, exported.html, `${safeName}.html`, `MAX · ${exportTitle} · ${exported.count} сообщений`);
     } catch (err) {
       await sendMessage(chatId, `Не удалось скачать чат: <code>${escapeHtml(err.message)}</code>`);
     }

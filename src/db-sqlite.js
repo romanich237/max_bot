@@ -300,7 +300,7 @@ async function getMessagesForChat(chatUrl, limit = 20000) {
   const database = getDb();
   return database.prepare(
     `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
-            reply_author, reply_body, created_at
+            reply_author, reply_body, chat_title, created_at
      FROM messages
      WHERE chat_url = ?
      ORDER BY id ASC

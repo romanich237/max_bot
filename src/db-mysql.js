@@ -257,7 +257,7 @@ async function getMessagesForChat(chatUrl, limit = 20000) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 20000, 50000));
   const [rows] = await p.query(
     `SELECT author, body, time_str, date_str, clock_str, is_own, media_json,
-            reply_author, reply_body, created_at
+            reply_author, reply_body, chat_title, created_at
      FROM messages
      WHERE chat_url = ?
      ORDER BY id ASC
