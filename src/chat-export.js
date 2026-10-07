@@ -89,7 +89,7 @@ async function buildChatExport(chatUrl,title) {
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#111}
 body{background:#8ec8ed}
 body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cg fill='none' stroke='%230b78ba' stroke-width='2'%3E%3Cpath d='M25 22l9 7-9 7-9-7zM123 21c14 4 19 15 9 24-12 10-26-2-18-13 5-7 13-4 14 2M48 105c17-10 34 8 22 22-13 15-36 3-29-14 4-9 15-12 23-7M119 108l17 17m0-17l-17 17M19 151c11-8 23 5 14 14-10 10-25-3-14-14zM151 66l6 9 10 2-7 7 1 10-10-5-9 5 2-10-8-7 10-2z'/%3E%3C/g%3E%3C/svg%3E")}
-.header{position:sticky;top:0;z-index:5;height:64px;background:#fff;display:flex;align-items:center;padding:0 18px;box-shadow:0 1px 2px #0002}
+.header{position:relative;z-index:5;height:64px;background:#fff;display:flex;align-items:center;padding:0 18px;box-shadow:0 1px 2px #0002}
 .avatar{width:42px;height:42px;border-radius:50%;background:#eaf3fa;color:#1787d4;display:grid;place-items:center;font-weight:800;font-size:20px;margin-right:12px}
 .title{font-size:17px;font-weight:700;line-height:1.15}.subtitle{font-size:13px;color:#7b7f83;margin-top:3px}
 .chat{position:relative;z-index:1;max-width:760px;margin:auto;padding:18px 12px 50px;min-height:calc(100vh - 64px)}
