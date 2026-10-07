@@ -2121,8 +2121,18 @@ async function showChatInfo(chatId, messageId, targetChatId) {
 }
 
 function webPanelText(){const c=getWebAccess(),u=webUrl(c);if(!c.domain)return '<b>Веб-панель</b>\n\n🌐 Домен не привязан.\nОтправьте домен следующим сообщением, например:\n<code>panel.example.com</code>\n\nОтмена: /cancel';return ['<b>Веб-панель</b>','',c.enabled!==false?'Статус: ✅ включена':'Статус: ❌ выключена','Ссылка: <code>'+escapeHtml(u)+'</code>','Логин: <code>'+escapeHtml(c.user)+'</code>','Пароль: <code>'+escapeHtml(c.pass)+'</code>','','Путь и данные доступа меняются каждые 6 часов.'].join('\n')}
-function normalizeWebDomain(value){return String(value||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.$/,'')}
-function isValidWebDomain(domain){return /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)}
+function normalizeWebDomain(value){
+  let domain=String(value||'').trim().toLowerCase().replace(/^https?:\/\//,'').split(/[\/?#]/,1)[0].replace(/\.$/,'');
+  try{domain=require('url').domainToASCII(domain)||domain}catch{}
+  return domain;
+}
+function isValidWebDomain(domain){
+  if(!domain||domain.length>253||!domain.includes('.'))return false;
+  const labels=domain.split('.');
+  if(labels.some(label=>!label||label.length>63||!(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label))))return false;
+  const tld=labels[labels.length-1];
+  return /^(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})$/i.test(tld);
+}
 async function getWebPanelPublicIp(){
   const urls=['https://api.ipify.org','https://ipv4.icanhazip.com'];
   for(const url of urls){
