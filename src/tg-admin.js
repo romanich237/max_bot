@@ -2217,15 +2217,25 @@ async function bindWebDomain(chatId,text){
   await updateChecking('🔐 DNS подтверждён. Настраиваю отдельный SSL-сертификат для <code>'+escapeHtml(domain)+'</code>…');
   const tls=await configureWebPanelTls(domain);
   if(!tls.ok){
+    // Не сохраняем нерабочий домен и продолжаем ждать новый поддомен.
+    const raw=getRaw(),current=raw.webPanel||{};
+    if(current.domain===domain){
+      store.setPath(['webPanel'],{...current,domain:'',tlsVerifiedAt:0});
+    }
+    waitingInput.set(String(chatId),'webPanel:domain');
+    const privilegeError=/root-права|sudoers/i.test(tls.error);
     await updateChecking([
-      '❌ <b>Автоматическая настройка SSL не завершена.</b>',
+      '❌ <b>Не удалось подготовить HTTPS для этого поддомена.</b>',
       '',
-      'Домен: <code>'+escapeHtml(domain)+'</code>',
+      'Поддомен: <code>'+escapeHtml(domain)+'</code>',
       'Причина: <code>'+escapeHtml(tls.error)+'</code>',
       '',
-      /root-права|sudoers/i.test(tls.error)
-        ? 'Боту не хватает системного разрешения на управление nginx/Certbot. Это единственное действие, которое нельзя безопасно обойти из процесса без соответствующих прав.'
-        : 'Бот уже повторил настройку автоматически. Отправьте домен ещё раз после устранения указанной системной причины.'
+      privilegeError
+        ? 'Системе не хватает прав для настройки nginx/Certbot. После исправления прав отправьте другой поддомен.'
+        : 'Отправьте <b>другой поддомен</b> следующим сообщением — бот автоматически проверит DNS и попробует выпустить SSL заново.',
+      '',
+      'Например: <code>panel2.example.com</code>',
+      'Отмена: /cancel'
     ].join('\n'));
     return false;
   }
