@@ -15,14 +15,37 @@ async function rowsForChat(chatUrl) {
 }
 
 function mediaHtml(raw) {
-  let media=[]; try { media=typeof raw==='string'?JSON.parse(raw||'[]'):(raw||[]); } catch {}
+  let media=[];
+  try { media=typeof raw==='string'?JSON.parse(raw||'[]'):(raw||[]); } catch {}
   if(!Array.isArray(media)) return '';
-  return media.map(m=>{
-    const type=String(m.type||'файл'), src=String(m.url||m.sourceUrl||'');
-    if (/photo|image/i.test(type) && /^https?:/i.test(src)) return `<img src="${esc(src)}" loading="lazy">`;
-    if (/video/i.test(type) && /^https?:/i.test(src)) return `<video controls src="${esc(src)}"></video>`;
-    if (/voice|audio/i.test(type) && /^https?:/i.test(src)) return `<audio controls src="${esc(src)}"></audio>`;
-    return `<div class="media">📎 ${esc(type)}${src ? ` · <a href="${esc(src)}">медиа</a>` : ''}</div>`;
+
+  const validSrc=(value)=>/^(?:https?:|data:|blob:)/i.test(String(value||''));
+  return media.map((m)=>{
+    const type=String(m.type||'file').toLowerCase();
+    const src=String(m.url||m.sourceUrl||m.src||'');
+    const name=String(m.fileName||m.filename||m.name||'').trim();
+    const duration=String(m.duration||'').trim();
+
+    if(type==='sticker'){
+      if(validSrc(src)) return `<div class="sticker-wrap"><img class="sticker" src="${esc(src)}" loading="lazy" alt="Стикер"></div>`;
+      return '<div class="attachment sticker-file"><span class="file-icon">🙂</span><div><b>Стикер</b><small>изображение недоступно в сохранённой истории</small></div></div>';
+    }
+    if(/photo|image/.test(type) && validSrc(src))
+      return `<a class="media-link" href="${esc(src)}" target="_blank"><img class="photo" src="${esc(src)}" loading="lazy" alt="Фото"></a>`;
+    if(/gif|animation/.test(type) && validSrc(src))
+      return `<video class="gif" autoplay loop muted playsinline controls src="${esc(src)}"></video>`;
+    if(/video/.test(type) && validSrc(src))
+      return `<video controls playsinline preload="metadata" src="${esc(src)}"></video>`;
+    if(/voice|audio/.test(type) && validSrc(src))
+      return `<div class="audio-box"><span class="audio-icon">▶</span><audio controls preload="metadata" src="${esc(src)}"></audio>${duration?`<small>${esc(duration)}</small>`:''}</div>`;
+
+    if(type==='file'||name){
+      const label=name||'Файл';
+      const ext=(label.match(/\.([^.]+)$/)||[])[1]||'';
+      return `<div class="attachment"><span class="file-icon">↓</span><div class="file-info"><b>${esc(label)}</b><small>${esc(ext?ext.toUpperCase():'Файл')}</small></div>${validSrc(src)?`<a class="download" href="${esc(src)}" target="_blank" download>Скачать</a>`:''}</div>`;
+    }
+    if(validSrc(src)) return `<div class="attachment"><span class="file-icon">↓</span><div class="file-info"><b>${esc(type||'Медиа')}</b></div><a class="download" href="${esc(src)}" target="_blank">Открыть</a></div>`;
+    return `<div class="attachment"><span class="file-icon">📎</span><div class="file-info"><b>${esc(name||type||'Медиа')}</b></div></div>`;
   }).join('');
 }
 function formatDateDivider(value) {
@@ -100,7 +123,7 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;ba
 .reply{border-left:3px solid #27a4df;background:#00000008;border-radius:4px;padding:5px 8px;margin:2px 0 6px;font-size:13px;line-height:1.25}.reply strong{display:block;color:#168acd;margin-bottom:2px}
 .body{font-size:16px;line-height:1.3;overflow-wrap:anywhere;margin:2px 0}
 .meta{display:flex;justify-content:flex-end;align-items:center;gap:3px;color:#7e8589;font-size:11px;line-height:14px;margin:-1px 0 0 14px;min-height:14px}.own .meta{color:#679268}.checks{color:#3e9ed6;font-weight:700}
-img,video{display:block;width:auto;max-width:100%;max-height:620px;border-radius:9px;margin:2px 0 6px;object-fit:contain}audio{display:block;width:min(360px,100%);margin:6px 0}.media{font-size:14px;background:#00000008;border-radius:8px;padding:8px;margin:5px 0}.media a{color:#168acd;text-decoration:none}
+img,video{display:block;width:auto;max-width:100%;max-height:620px;border-radius:9px;margin:2px 0 6px;object-fit:contain}.media-link{display:block;text-decoration:none}.photo{max-width:100%}.gif{min-width:180px}.sticker-wrap{background:transparent;padding:2px 0}.sticker{width:auto;max-width:220px;max-height:220px;background:transparent;box-shadow:none}.audio-box{display:flex;align-items:center;gap:8px;min-width:280px;padding:5px 0}.audio-box audio{width:min(340px,100%);height:36px}.audio-box small{white-space:nowrap;color:#6d777d}.audio-icon{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:12px}.attachment{display:flex;align-items:center;gap:10px;min-width:260px;max-width:440px;padding:7px 2px}.file-icon{flex:0 0 40px;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:#168acd;color:#fff;font-size:22px;font-weight:700}.file-info{min-width:0;flex:1}.file-info b,.attachment>div>b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.file-info small,.attachment>div>small{display:block;color:#758087;margin-top:2px;font-size:12px}.download{color:#168acd;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}.own .file-icon,.own .audio-icon{background:#5da24d}.own .download{color:#438d36}
 .empty{display:block;margin:30px auto;width:max-content;max-width:90%;background:#4da7d6cc;color:#fff;border-radius:15px;padding:7px 13px;font-size:14px}
 @media(max-width:600px){.header{height:58px;padding:0 12px}.avatar{width:38px;height:38px}.chat{padding:12px 7px 32px;min-height:calc(100vh - 58px)}.bubble{max-width:88%;padding:7px 9px 5px}.body{font-size:16px}.title{font-size:16px}}
 </style></head>
