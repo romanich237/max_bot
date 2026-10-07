@@ -16,7 +16,26 @@ process.stdout.write(d);
 NODE
 )" || { echo "Некорректный домен" >&2; exit 2; }
 
-PORT="$(node -e "const c=require(process.argv[1]);const p=Number(c.webPanel&&c.webPanel.port);if(!Number.isInteger(p)||p<1024||p>65535)process.exit(2);process.stdout.write(String(p))" "$CFG")"
+PORT="$(node - "$CFG" <<'NODE'
+const fs=require('fs'),crypto=require('crypto');
+const file=process.argv[2];
+let c={};
+try{c=JSON.parse(fs.readFileSync(file,'utf8'))}catch(e){console.error('Не удалось прочитать config.json: '+e.message);process.exit(2)}
+c.webPanel=c.webPanel||{};
+let p=Number(c.webPanel.port);
+if(!Number.isInteger(p)||p<1024||p>65535){
+  // Высокий локальный порт; наружу он не публикуется, nginx проксирует на него с 443.
+  p=20000+crypto.randomInt(30000);
+  c.webPanel.port=p;
+  const tmp=file+'.tmp-'+process.pid;
+  fs.writeFileSync(tmp,JSON.stringify(c,null,2)+'\n',{mode:0o600});
+  fs.renameSync(tmp,file);
+  console.error('webPanel.port отсутствовал — автоматически назначен '+p);
+}
+process.stdout.write(String(p));
+NODE
+)" || { echo "Не удалось определить или создать внутренний порт веб-панели" >&2; exit 3; }
+echo "Внутренний порт веб-панели: $PORT" >&2
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif sudo -n true 2>/dev/null; then SUDO="sudo -n"; else echo "Автонастройке SSL нужны root-права. Запустите PM2/бот с разрешённым helper через sudoers." >&2; exit 4; fi
 
@@ -44,9 +63,11 @@ server {
 EOF
 $SUDO install -o root -g root -m 0644 "$TMP" /etc/nginx/sites-available/max-tg-panel
 $SUDO ln -sfn /etc/nginx/sites-available/max-tg-panel /etc/nginx/sites-enabled/max-tg-panel
+echo "Проверяю конфигурацию nginx…" >&2
 $SUDO nginx -t
 $SUDO systemctl reload nginx
 
+echo "Запрашиваю сертификат Let's Encrypt для $DOMAIN…" >&2
 CERT_NAME="max-tg-$DOMAIN"
 if ! $SUDO certbot --nginx --cert-name "$CERT_NAME" -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring; then
   echo "Certbot nginx не смог выпустить сертификат" >&2
