@@ -2142,6 +2142,48 @@ async function getWebPanelPublicIp(){
   }
   return '';
 }
+async function detectConfiguredWebPanelDomain(){
+  // Сертификаты helper создаёт как /etc/letsencrypt/live/max-tg-<domain>.
+  // Читаем только имена каталогов; приватные ключи никогда не открываем.
+  let names=[];
+  try{names=await fs.promises.readdir('/etc/letsencrypt/live')}catch{return ''}
+  const candidates=names
+    .filter(name=>name.startsWith('max-tg-'))
+    .map(name=>normalizeWebDomain(name.slice('max-tg-'.length)))
+    .filter(isValidWebDomain);
+  const serverIp=await getWebPanelPublicIp();
+  if(!serverIp)return '';
+  for(const domain of candidates.reverse()){
+    try{
+      const ips=await Promise.race([
+        require('dns').promises.resolve4(domain),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error('DNS timeout')),5000))
+      ]);
+      if(!ips.includes(serverIp))continue;
+      const {stdout}=await execFileAsync('openssl',[
+        's_client','-connect','127.0.0.1:443','-servername',domain,'-showcerts'
+      ],{timeout:7000,maxBuffer:1024*1024,input:''});
+      const match=String(stdout||'').match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+      if(!match)continue;
+      const tmp=path.join(require('os').tmpdir(),'max-tg-cert-'+process.pid+'-'+Date.now()+'.pem');
+      try{
+        await fs.promises.writeFile(tmp,match[0],{mode:0o600});
+        const checked=await execFileAsync('openssl',['x509','-in',tmp,'-noout','-ext','subjectAltName'],{timeout:5000});
+        if(String(checked.stdout||'').includes('DNS:'+domain))return domain;
+      }finally{await fs.promises.unlink(tmp).catch(()=>{})}
+    }catch{}
+  }
+  return '';
+}
+async function adoptConfiguredWebPanelDomain(){
+  const domain=await detectConfiguredWebPanelDomain();
+  if(!domain)return '';
+  const current=getRaw().webPanel||{};
+  if(current.domain!==domain||!current.tlsVerifiedAt){
+    store.setPath(['webPanel'],{...current,domain,enabled:true,tlsVerifiedAt:Date.now()});
+  }
+  return domain;
+}
 async function configureWebPanelTls(domain){
   const script=path.resolve(__dirname,'..','scripts','configure-web-panel-tls.sh');
   if(!fs.existsSync(script))return {ok:false,error:'Скрипт автоматической настройки SSL не найден'};
