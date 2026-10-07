@@ -2141,20 +2141,27 @@ async function bindWebDomain(chatId,text){
     return false;
   }
 
-  await sendMessage(chatId,'🔎 Проверяю домен <code>'+escapeHtml(domain)+'</code>…').catch(()=>{});
+  const checking=await sendMessage(chatId,'🔎 Проверяю домен <code>'+escapeHtml(domain)+'</code>…');
+  const checkingMessageId=checking?.result?.message_id;
+  const updateChecking=async(content,extra={})=>{
+    if(checkingMessageId){
+      try{return await editMessageText(chatId,checkingMessageId,content,extra)}catch{}
+    }
+    return sendMessage(chatId,content,extra);
+  };
 
   let dns=[];
   try{dns=await require('dns').promises.resolve4(domain)}catch{}
   const serverIp=await getWebPanelPublicIp();
 
   if(!serverIp){
-    await sendInputPrompt(chatId,'⚠️ Не удалось определить публичный IPv4 этого сервера.\n\nПроверьте доступ сервера в интернет и отправьте домен ещё раз.\nОтмена: /cancel');
+    await updateChecking('⚠️ Не удалось определить публичный IPv4 этого сервера.\n\nПроверьте доступ сервера в интернет и отправьте домен ещё раз.\nОтмена: /cancel');
     return false;
   }
 
   if(!dns.includes(serverIp)){
     const current=dns.length?dns.map(ip=>'<code>'+escapeHtml(ip)+'</code>').join(', '):'<i>A-запись отсутствует</i>';
-    await sendInputPrompt(chatId,[
+    await updateChecking([
       '❌ <b>Домен пока не направлен на этот сервер.</b>',
       '',
       'Нужно создать или изменить DNS-запись:',
@@ -2165,9 +2172,9 @@ async function bindWebDomain(chatId,text){
       '<b>Сейчас в DNS:</b> '+current,
       '<b>IP этого сервера:</b> <code>'+escapeHtml(serverIp)+'</code>',
       '',
-      'Откройте DNS-настройки у регистратора/провайдера домена, измените A-запись и дождитесь обновления DNS. Обычно это занимает от нескольких минут, но иногда дольше.',
-      '',
+      'Измените A-запись у регистратора/провайдера домена и дождитесь обновления DNS.',
       'После изменения просто отправьте <code>'+escapeHtml(domain)+'</code> ещё раз.',
+      '',
       'Отмена: /cancel'
     ].join('\n'));
     return false;
@@ -2177,8 +2184,18 @@ async function bindWebDomain(chatId,text){
   store.setPath(['webPanel'],{...current,domain});
   waitingInput.delete(String(chatId));
   await clearInputPrompt(chatId);
-  await sendMessage(chatId,'✅ Домен <code>'+escapeHtml(domain)+'</code> направлен на IP сервера и привязан.\n\nОткрываю данные веб-панели…');
-  await showWebPanel(chatId);
+  const c=getWebAccess(),u=webUrl(c);
+  await updateChecking([
+    '✅ <b>Домен привязан</b>',
+    '',
+    'Домен: <code>'+escapeHtml(domain)+'</code>',
+    'Статус: '+(c.enabled!==false?'✅ включена':'❌ выключена'),
+    'Ссылка: <code>'+escapeHtml(u)+'</code>',
+    'Логин: <code>'+escapeHtml(c.user)+'</code>',
+    'Пароль: <code>'+escapeHtml(c.pass)+'</code>',
+    '',
+    'Путь и данные доступа меняются каждые 6 часов.'
+  ].join('\n'),{reply_markup:webPanelKeyboard()});
   return true;
 }
 function webPanelKeyboard(){const c=getWebAccess(),u=webUrl(c),r=[];if(u&&c.enabled!==false)r.push([{text:'Открыть панель',url:u}]);r.push([{text:c.enabled!==false?'Отключить сайт':'Включить сайт',callback_data:'action:webPanelToggle'}]);r.push([{text:BUTTONS.backToMenu,callback_data:'discover:menu'}]);return{inline_keyboard:r}}
