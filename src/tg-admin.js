@@ -787,7 +787,11 @@ function buildMenuKeyboard() {
   const rows = [
     [
       buildToggleButton(prefix, TOGGLES[0]),
-      { text: TOGGLES[1].label, callback_data: 'action:profileBio' },
+      {
+        text: TOGGLES[1].label,
+        callback_data: 'action:profileBio',
+        style: getProfileBio().enabled ? 'success' : 'danger',
+      },
     ],
     [
       { text: BUTTONS.maxChats, callback_data: 'maxchat:list' },
