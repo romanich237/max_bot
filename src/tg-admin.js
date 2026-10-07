@@ -2683,8 +2683,8 @@ async function handleCallback(query) {
     try {
       const home = os.homedir();
       const logCandidates = [
-        path.join(getSettings().dataDir, 'logo.txt'),
-        path.resolve(process.cwd(), 'logo.txt'),
+        path.join(getSettings().dataDir, 'logs.txt'),
+        path.resolve(process.cwd(), 'logs.txt'),
         path.join(home, '.pm2', 'logs', 'max-tg-out.log'),
         path.join(home, '.pm2', 'logs', 'max-tg-error.log'),
         path.join(home, '.pm2', 'logs', 'max-tg-update-out.log'),
@@ -2709,7 +2709,7 @@ async function handleCallback(query) {
       }
       const form = new FormData();
       form.append('chat_id', String(chatId));
-      form.append('document', new File([Buffer.from(body.slice(-4_000_000), 'utf8')], 'logo.txt', { type: 'text/plain' }));
+      form.append('document', new File([Buffer.from(body.slice(-4_000_000), 'utf8')], 'logs.txt', { type: 'text/plain' }));
       const { token } = getTelegram();
       const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
       const result = await response.json();
@@ -3459,6 +3459,9 @@ async function registerBotCommands(tokenOverride) {
 
 const DEVELOPER_BROADCAST_CHANNEL = 'notificationsmax_in_tg';
 const DEVELOPER_BROADCAST_PREFIX = 'Рассылка от разработчика:\n';
+const DEVELOPER_BROADCAST_CHECK_MS = 30_000;
+let developerBroadcastTimer = null;
+let developerBroadcastCheckBusy = false;
 
 function developerBroadcastRecipients() {
   return listKnownChats()
@@ -3473,27 +3476,16 @@ function shiftedEntities(entities, shift) {
   }));
 }
 
-async function handleDeveloperBroadcast(post) {
-  const username = String(post?.chat?.username || '').replace(/^@/, '').toLowerCase();
-  if (username !== DEVELOPER_BROADCAST_CHANNEL) return;
-
-  const sourceText = String(post.text || post.caption || '');
-  if (!sourceText.trim()) {
-    console.log('Рассылка разработчика: публикация без текста пропущена');
-    return;
-  }
-
-  const sourceEntities = post.text ? post.entities : post.caption_entities;
+async function sendDeveloperBroadcast(sourceText, sourceEntities = [], postId = null) {
   const text = `${DEVELOPER_BROADCAST_PREFIX}${sourceText}`;
-  const prefixLength = DEVELOPER_BROADCAST_PREFIX.length;
   const entities = [
     { type: 'bold', offset: 0, length: 'Рассылка от разработчика:'.length },
-    ...shiftedEntities(sourceEntities, prefixLength),
+    ...shiftedEntities(sourceEntities, DEVELOPER_BROADCAST_PREFIX.length),
   ];
   const recipients = developerBroadcastRecipients();
-
   let sent = 0;
   let failed = 0;
+
   for (const chatId of recipients) {
     try {
       const result = await api('sendMessage', {
@@ -3510,7 +3502,87 @@ async function handleDeveloperBroadcast(post) {
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
 
+  if (postId != null) store.setPath(['telegram', 'developerBroadcastLastPostId'], Number(postId));
   console.log(`Рассылка разработчика: отправлено ${sent}, ошибок ${failed}, всего ${recipients.length}`);
+}
+
+async function handleDeveloperBroadcast(post) {
+  const username = String(post?.chat?.username || '').replace(/^@/, '').toLowerCase();
+  if (username !== DEVELOPER_BROADCAST_CHANNEL) return;
+  const postId = Number(post.message_id || 0);
+  const lastId = Number(store.getPath(['telegram', 'developerBroadcastLastPostId']) || 0);
+  if (postId && postId <= lastId) return;
+
+  const sourceText = String(post.text || post.caption || '');
+  if (!sourceText.trim()) {
+    if (postId) store.setPath(['telegram', 'developerBroadcastLastPostId'], postId);
+    return;
+  }
+  await sendDeveloperBroadcast(sourceText, post.text ? post.entities : post.caption_entities, postId);
+}
+
+function decodeTelegramHtml(text) {
+  return String(text || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractLatestChannelPost(html) {
+  const postRe = /<div class="tgme_widget_message[^>]*data-post="notificationsmax_in_tg\/(\d+)"[\s\S]*?<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>[\s\S]*?<\/div>\s*<\/div>/gi;
+  let match;
+  let latest = null;
+  while ((match = postRe.exec(html))) {
+    const id = Number(match[1]);
+    const raw = match[2];
+    const text = decodeTelegramHtml(
+      raw
+        .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 ($1)')
+        .replace(/<[^>]+>/g, '')
+    ).trim();
+    if (text && (!latest || id > latest.id)) latest = { id, text };
+  }
+  return latest;
+}
+
+async function checkDeveloperBroadcastChannel() {
+  if (developerBroadcastCheckBusy) return;
+  developerBroadcastCheckBusy = true;
+  try {
+    const response = await fetch(`https://t.me/s/${DEVELOPER_BROADCAST_CHANNEL}/`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 MAX-TG-Bot/1.0' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const latest = extractLatestChannelPost(await response.text());
+    if (!latest) return;
+
+    const lastId = Number(store.getPath(['telegram', 'developerBroadcastLastPostId']) || 0);
+    if (!lastId) {
+      store.setPath(['telegram', 'developerBroadcastLastPostId'], latest.id);
+      console.log(`Рассылка разработчика: начальная публикация #${latest.id} запомнена`);
+      return;
+    }
+    if (latest.id <= lastId) return;
+    await sendDeveloperBroadcast(latest.text, [], latest.id);
+  } catch (err) {
+    console.warn('Проверка канала рассылки:', err.message);
+  } finally {
+    developerBroadcastCheckBusy = false;
+  }
+}
+
+function startDeveloperBroadcastPolling() {
+  if (developerBroadcastTimer) return;
+  void checkDeveloperBroadcastChannel();
+  developerBroadcastTimer = setInterval(() => {
+    void checkDeveloperBroadcastChannel();
+  }, DEVELOPER_BROADCAST_CHECK_MS);
+  developerBroadcastTimer.unref?.();
+  console.log('Проверка канала рассылки запущена: каждые 30 секунд');
 }
 
 function startTelegramAdmin() {
@@ -3522,6 +3594,7 @@ function startTelegramAdmin() {
 
   console.log('Панель управления в Telegram запущена (/menu)');
   loadWaitingInput();
+  startDeveloperBroadcastPolling();
   deleteWebhook()
     .then(() => registerBotCommands())
     .catch((err) => {
