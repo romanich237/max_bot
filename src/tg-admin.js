@@ -2144,14 +2144,19 @@ async function getWebPanelPublicIp(){
 }
 async function configureWebPanelTls(domain){
   const script=path.resolve(__dirname,'..','scripts','configure-web-panel-tls.sh');
-  if(!fs.existsSync(script))return {ok:false,error:'Скрипт настройки SSL не найден'};
-  try{
-    const {stdout}=await execFileAsync('bash',[script,domain],{timeout:120000,maxBuffer:1024*1024});
-    return {ok:true,details:String(stdout||'').trim()};
-  }catch(err){
-    const detail=String(err.stderr||err.stdout||err.message||'').trim().slice(0,1200);
-    return {ok:false,error:detail||'Не удалось настроить SSL'};
+  if(!fs.existsSync(script))return {ok:false,error:'Скрипт автоматической настройки SSL не найден'};
+  let lastError='';
+  for(let attempt=1;attempt<=2;attempt++){
+    try{
+      const {stdout}=await execFileAsync('bash',[script,domain],{timeout:180000,maxBuffer:1024*1024});
+      return {ok:true,details:String(stdout||'').trim()};
+    }catch(err){
+      lastError=String(err.stderr||err.stdout||err.message||'').trim().slice(0,1200);
+      console.error('webPanel TLS attempt '+attempt+':',lastError);
+      if(attempt<2)await new Promise(resolve=>setTimeout(resolve,2500));
+    }
   }
+  return {ok:false,error:lastError||'Автоматическая настройка SSL завершилась ошибкой'};
 }
 async function bindWebDomain(chatId,text){
   const domain=normalizeWebDomain(text);
@@ -2213,15 +2218,14 @@ async function bindWebDomain(chatId,text){
   const tls=await configureWebPanelTls(domain);
   if(!tls.ok){
     await updateChecking([
-      '⚠️ <b>DNS настроен, но SSL ещё не готов.</b>',
+      '❌ <b>Автоматическая настройка SSL не завершена.</b>',
       '',
       'Домен: <code>'+escapeHtml(domain)+'</code>',
       'Причина: <code>'+escapeHtml(tls.error)+'</code>',
       '',
-      'Запустите на сервере от root:',
-      '<code>bash scripts/configure-web-panel-tls.sh '+escapeHtml(domain)+'</code>',
-      '',
-      'После успешного запуска отправьте домен ещё раз.'
+      /root-права|sudoers/i.test(tls.error)
+        ? 'Боту не хватает системного разрешения на управление nginx/Certbot. Это единственное действие, которое нельзя безопасно обойти из процесса без соответствующих прав.'
+        : 'Бот уже повторил настройку автоматически. Отправьте домен ещё раз после устранения указанной системной причины.'
     ].join('\n'));
     return false;
   }
