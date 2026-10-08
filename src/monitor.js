@@ -568,7 +568,7 @@ async function startMonitor() {
 
   let page = context.pages()[0] || (await context.newPage());
   setPage(page);
-  startWebPanel();
+  // Веб-панель временно отключена.
   await injectOnlineGuards(page);
   let watchdogFailures = 0;
   let watchdogBusy = false;

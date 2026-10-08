@@ -2467,7 +2467,7 @@ async function handleMessage(message) {
     return;
   }
 
-  if (/^\/link$/i.test(text)) { const c=getWebAccess(); if(!c.domain){waitingInput.set(String(chatId),'webPanel:domain');await sendInputPrompt(chatId,webPanelText());}else await showWebPanel(chatId); return; }
+  if (/^\/link$/i.test(text)) { await sendMessage(chatId, '🚧 Веб-панель в разработке.'); return; }
 
   if (/^\/status$/i.test(text)) {
     let maxOk = false;
@@ -2742,7 +2742,7 @@ async function handleCallback(query) {
     return;
   }
 
-  if (data === 'action:webPanel') { await answerCallback(query.id,'Веб-панель'); const c=getWebAccess(); if(!c.domain){waitingInput.set(String(chatId),'webPanel:domain');if(Array.isArray(query.message.photo)&&query.message.photo.length)await deleteMessage(chatId,query.message.message_id).catch(()=>{});await sendInputPrompt(chatId,webPanelText());}else if(Array.isArray(query.message.photo)&&query.message.photo.length){await deleteMessage(chatId,query.message.message_id).catch(()=>{});await showWebPanel(chatId)}else await showWebPanel(chatId,query.message.message_id); return; }
+  if (data === 'action:webPanel') { await answerCallback(query.id, 'В разработке'); await sendMessage(chatId, '🚧 Веб-панель в разработке.'); return; }
   if (data === 'action:webPanelToggle') { const c=getWebAccess();setWebEnabled(c.enabled===false);await answerCallback(query.id,c.enabled===false?'Сайт включён':'Сайт отключён');await showWebPanel(chatId,query.message.message_id);return; }
 
   if (data === 'action:webPanelResetLogin') { resetWebLogin(); await answerCallback(query.id,'Данные входа изменены'); await showWebPanel(chatId,query.message.message_id); return; }
