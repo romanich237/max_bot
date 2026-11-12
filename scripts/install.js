@@ -103,6 +103,11 @@ async function runTerminalSetup() {
   const data = await checkTelegramConnectivity();
   console.log(data.result?.username ? `Telegram API доступен (@${data.result.username})\n` : 'Telegram API доступен\n');
 
+  const botUsername = data.result?.username;
+  const botLink = botUsername ? `https://t.me/${botUsername}` : 'бота, указанного при установке';
+  console.log(`Откройте в Telegram ${botLink} и нажмите «Старт» или отправьте /start.`);
+  console.log('Дальнейшие инструкции по входу в MAX появятся в чате с ботом.');
+
   console.log('\n--- Установка базы данных ---\n');
   const dbCredentials = await provisionDatabase(store, {
     driver: process.env.DB_DRIVER || 'sqlite',
@@ -112,8 +117,9 @@ async function runTerminalSetup() {
   for (const chatId of adminChatIds) {
     try {
       await sendMessage(chatId, formatDatabaseTelegramMessage(dbCredentials));
+      await sendMessage(chatId, 'Для продолжения установки откройте этот чат. Здесь появятся инструкции по входу в MAX.');
     } catch (err) {
-      console.warn(`Не удалось отправить данные БД в Telegram (${chatId}): ${err.message}`);
+      console.warn(`Не удалось отправить сообщение в Telegram (${chatId}): ${err.message}. Проверьте, что вы нажали «Старт» и указали правильный TG_CHAT_ID.`);
     }
   }
 
@@ -143,7 +149,6 @@ async function runTerminalSetup() {
 
   setupPm2({ skipSessionCheck: true });
 
-  const botUsername = data.result?.username;
   for (const chatId of adminChatIds) {
     try {
       await sendMessage(
